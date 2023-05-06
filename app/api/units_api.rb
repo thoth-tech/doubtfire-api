@@ -193,17 +193,7 @@ class UnitsApi < Grape::API
     end
 
     teaching_period_id = unit_parameters[:teaching_period_id]
-    if teaching_period_id.blank?
-      if unit_parameters[:start_date].nil?
-        start_date = Date.parse('Monday')
-        delta = start_date > Date.today ? 0 : 7
-        unit_parameters[:start_date] = start_date + delta
-      end
-
-      if unit_parameters[:end_date].nil?
-        unit_parameters[:end_date] = unit_parameters[:start_date] + 16.weeks
-      end
-    else
+    if !teaching_period_id.blank?
       if unit_parameters[:start_date].present? || unit_parameters[:end_date].present?
         error!({ error: 'Cannot specify dates as teaching period is selected' }, 403)
       end
