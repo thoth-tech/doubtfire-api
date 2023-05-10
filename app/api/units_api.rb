@@ -194,7 +194,7 @@ class UnitsApi < Grape::API
 
     teaching_period_id = unit_parameters[:teaching_period_id]
     if !teaching_period_id.blank? && (unit_parameters[:start_date].present? || unit_parameters[:end_date].present?)
-        error!({ error: 'Cannot specify dates as teaching period is selected' }, 403)
+      error!({ error: 'Cannot specify dates as teaching period is selected' }, 403)
     end
 
     unit = Unit.create!(unit_parameters)
