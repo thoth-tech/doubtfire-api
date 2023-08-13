@@ -354,6 +354,23 @@ module FileHelper
     end
   end
 
+  # Check the length of the code then breaks it
+  def process_source_code(source_code, max_line_length = 200)
+    processed_code = ''
+    length = 0
+
+    source_code.each_char do |char|
+      if length >= max_line_length
+
+        processed_code += "\n"
+        length = 0
+      end
+      processed_code += char
+      length += 1
+    end
+    processed_code
+  end
+
   #
   # Read the file and return its contents as a string
   #
@@ -362,7 +379,7 @@ module FileHelper
     f = File.open(filename, 'r')
     begin
       f.each_line do |line|
-        result += line
+        result += process_source_code(line,20)
       end
     ensure
       f.close unless f.nil?
