@@ -377,7 +377,7 @@ module FileHelper
     f = File.open(filename, 'r')
     begin
       f.each_line do |line|
-        result += process_source_code(line,200) # can set the limit here by default its 200
+        result += process_source_code(line, 200) # can set the limit here by default its 200
       end
     ensure
       f.close unless f.nil?
