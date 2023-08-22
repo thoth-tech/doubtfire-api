@@ -352,23 +352,6 @@ module FileHelper
   end
 
   #
-  # Testing encrypted
-  #
-  # def pdf_encrypted?(filename)
-  #   return false unless File.exist? filename
-  # File.open(filename, 'rb') do |file|
-  #   while (line = file.gets)
-  #     return (line.include?("%%EOF") && line.include?("/Encrypt")) ? true : false
-  #   end
-  # end
-
-  #   false
-  # rescue Errno::ENOENT
-  #   puts "File not found: #{filename}"
-  #   false
-  # end
-
-  #
   # Copy a PDF into place
   #
   def copy_pdf(file, dest_path)
