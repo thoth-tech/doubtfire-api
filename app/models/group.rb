@@ -35,7 +35,8 @@ class Group < ApplicationRecord
   def self.permissions
     # What can students do with groups?
     student_role_permissions = [
-      :get_members
+      :get_members,
+      :lock_group
     ]
     # What can tutors do with groups?
     tutor_role_permissions = [
@@ -83,7 +84,7 @@ class Group < ApplicationRecord
   def specific_permission_hash(role, perm_hash, _other)
     result = perm_hash[role] unless perm_hash.nil?
     if result && role == :student
-      result << :manage_group if (!locked && !group_set.locked && group_set.allow_students_to_manage_groups)
+      result << :manage_group if group_set.allow_students_to_manage_groups
     end
     result
   end
