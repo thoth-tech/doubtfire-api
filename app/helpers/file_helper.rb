@@ -334,16 +334,14 @@ module FileHelper
   def pdf_valid?(filename)
     # Scan last 1024 bytes for the EOF mark
     return false unless File.exist? filename
-    
-    File.open(filename, "rb") do |f|
-      f.seek(-1024, IO::SEEK_END) unless f.size <= 1024
-      content = f.read
 
-      eof_found = content.include?('%%EOF')
-      encrypt_found = content.include?('/Encrypt')
-      
-      return eof_found && !encrypt_found
-    end
+    chunk_size = 1024 # Choose the size of the chunk you want to read
+    content = File.binread(filename, chunk_size, File.size(filename) - chunk_size)
+
+    eof_found = content.include?('%%EOF')
+    encrypt_found = content.include?('/Encrypt')
+
+    eof_found && !encrypt_found
   end
 
   #
