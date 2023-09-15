@@ -1068,20 +1068,17 @@ class Task < ApplicationRecord
       begin
         pdf_text = tac.make_pdf
       rescue => e
-        # Try again... with convert to ascic
-        #
+        # Try again... with code processing
         tac2 = TaskAppController.new
         tac2.init(self, true)
 
         begin
-          pdf_text = tac2.make_pdf
+          pdf_text = tac2.make_pdf_with_code_processing
         rescue => e2
           logger.error "Failed to create PDF for task #{log_details}. Error: #{e.message}"
 
           log_file = e.message.scan(/\/.*\.log/).first
-          # puts "log file is ... #{log_file}"
           if log_file && File.exist?(log_file)
-            # puts "exists"
             begin
               puts "--- Latex Log ---\n"
               puts File.read(log_file)
@@ -1090,11 +1087,11 @@ class Task < ApplicationRecord
             end
           end
 
-          raise 'Failed to convert your submission to PDF. Check code files submitted for invalid characters, that documents are valid pdfs, and that images are valid.'
+          raise 'Failed to convert your submission to PDF. Check code files submitted for invalid characters, that documents are valid PDFs, and that images are valid.'
         end
       end
 
-      # save the final pdf path to portfolio evidence - relative to student work folder
+      # Save the final PDF path to portfolio evidence - relative to student work folder
       if group_task?
         group_submission.tasks.each do |t|
           t.portfolio_evidence_path = final_pdf_path
@@ -1112,22 +1109,11 @@ class Task < ApplicationRecord
 
       FileHelper.compress_pdf(portfolio_evidence_path)
 
-      # if the task is the draft learning summary task
+      # If the task is the draft learning summary task
       if task_definition_id == unit.draft_task_definition_id
-        # if there is a learning summary, execute, if there isn't and a learning summary exists, don't execute
-        if project.uses_draft_learning_summary || project.portfolio_files.select { |f| f[:name] == "LearningSummaryReport.pdf" }.empty?
-          file_name = {
-            kind: 'document',
-            name: 'LearningSummaryReport.pdf',
-            idx: 0
-          }
-          # Creates tmp portfolio path (if it doesn't exist)
-          portfolio_tmp_dir = project.portfolio_temp_path
-          FileUtils.mkdir_p(portfolio_tmp_dir)
-
-          FileUtils.cp portfolio_evidence_path, project.portfolio_tmp_file_path(file_name)
-          project.uses_draft_learning_summary = true
-          project.save
+        # If there is a learning summary, execute it; if there isn't and a learning summary exists, don't execute
+        if project.uses_draft_learning_summary || !project.learning_summary_report_exists?
+          project.save_as_learning_summary_report portfolio_evidence_path
         end
       end
 
@@ -1141,6 +1127,44 @@ class Task < ApplicationRecord
       trigger_transition trigger: 'fix', by_user: project.tutor_for(task_definition)
       raise e
     end
+  end
+
+  def make_pdf_with_code_processing
+    logger.debug "Running QPDF on all documents before rendering to repair any potential broken files."
+    @files.each do |f|
+      if f[:type] == "document"
+        FileHelper.qpdf(f[:path])
+      end
+    end
+
+    pdf_text = render_to_string(template: '/task/task_pdf', layout: true)
+
+    # Process source code to ensure line lengths don't exceed a certain limit (e.g., 200 characters)
+    pdf_text = process_source_code(pdf_text)
+
+    pdf_text
+  end
+
+  def process_source_code(text, max_line_length = 200)
+    processed_text = ""
+    current_line_length = 0
+
+    text.each_char do |char|
+      if char == "\n"
+        current_line_length = 0
+      else
+        current_line_length += 1
+      end
+
+      processed_text << char
+
+      if current_line_length >= max_line_length
+        processed_text << "\n"
+        current_line_length = 0
+      end
+    end
+
+    processed_text
   end
 
   #
