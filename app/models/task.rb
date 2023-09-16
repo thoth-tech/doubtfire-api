@@ -286,9 +286,13 @@ class Task < ApplicationRecord
   end
 
   def due_date
-    return target_date if extensions == 0
+    if self.task_status == TaskStatus.fix_and_resubmit && to_same_day_anywhere_on_earth(Date.today) < (to_same_day_anywhere_on_earth(target_date + weeks_can_extend.weeks)) # target_date < (self.assessment_date + 7.days)
+      return self.assessment_date + 1.weeks
+    else
+      return target_date if extensions == 0
 
-    return extension_date
+      return extension_date
+    end
   end
 
   def complete?
