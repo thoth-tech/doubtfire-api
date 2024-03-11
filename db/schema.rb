@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.0].define(version: 2023_06_03_064217) do
+ActiveRecord::Schema[7.0].define(version: 2023_12_01_000245) do
   create_table "activity_types", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
     t.string "name", null: false
     t.string "abbreviation", null: false
@@ -54,7 +54,7 @@ ActiveRecord::Schema[7.0].define(version: 2023_06_03_064217) do
     t.index ["user_id"], name: "index_comments_read_receipts_on_user_id"
   end
 
-  create_table "criteria", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
+  create_table "criteria", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
     t.integer "order", null: false
     t.string "description", null: false
     t.string "help_text"
@@ -62,7 +62,7 @@ ActiveRecord::Schema[7.0].define(version: 2023_06_03_064217) do
     t.index ["stage_id"], name: "index_criteria_on_stage_id"
   end
 
-  create_table "criterion_options", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
+  create_table "criterion_options", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
     t.string "resolved_message_text"
     t.string "unresolved_message_text"
     t.bigint "criterion_id"
@@ -79,7 +79,7 @@ ActiveRecord::Schema[7.0].define(version: 2023_06_03_064217) do
     t.datetime "updated_at", null: false
   end
 
-  create_table "feedback_comment_templates", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
+  create_table "feedback_comment_templates", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
     t.string "comment_text_situation", null: false
     t.string "comment_text_next_action"
     t.bigint "criterion_option_id"
@@ -87,7 +87,7 @@ ActiveRecord::Schema[7.0].define(version: 2023_06_03_064217) do
     t.index ["criterion_option_id"], name: "index_feedback_comment_templates_on_criterion_option_id"
     t.index ["user_id"], name: "index_feedback_comment_templates_on_user_id"
   end
-  
+
   create_table "group_memberships", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
     t.bigint "group_id"
     t.bigint "project_id"
@@ -220,8 +220,7 @@ ActiveRecord::Schema[7.0].define(version: 2023_06_03_064217) do
     t.datetime "updated_at", null: false
   end
 
-  create_table "stages", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
-    t.string "title", null: false
+  create_table "stages", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
     t.integer "order", null: false
     t.string "title", null: false
     t.string "help_text"
@@ -231,7 +230,7 @@ ActiveRecord::Schema[7.0].define(version: 2023_06_03_064217) do
     t.bigint "task_definition_id"
     t.index ["task_definition_id"], name: "index_stages_on_task_definition_id"
   end
-  
+
   create_table "task_comments", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
     t.bigint "task_id", null: false
     t.bigint "user_id", null: false
