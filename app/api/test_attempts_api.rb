@@ -3,6 +3,11 @@ require 'grape'
 class TestAttemptsApi < Grape::API
   format :json
 
+  # Enforce authentication
+  before do
+    authenticated?
+  end
+
   # Assigning AuthenticationHelpers
   helpers AuthenticationHelpers
 
@@ -36,9 +41,24 @@ class TestAttemptsApi < Grape::API
   end
 
   # Get latest test or create a new one based on completion status
-  desc 'Get latest test or create a new one based on completion status'
-  get 'latest' do
-    test = TestAttempt.order(id: :desc).first
+  desc 'Get latest test attempt for a specific task or create a new one based on completion status'
+  params do
+    requires :task_id, type: Integer, desc: 'Task ID to fetch test attempts for'
+  end
+  get '/test_attempts/latest' do
+    # Ensure task exists
+    task = Task.find(params[:task_id])
+    if task.nil?
+      error!({ message: 'Task ID is invalid' }, 404)
+      return
+    else
+      test_attempts = TestAttempt.find_by(task_id: :task_id)
+    end
+
+    # Take the latest test attempt if there are any for this task
+    unless test_attempts.nil?
+      test = test_attempts.order(id: :desc).first
+    end
 
     if test.nil?
       test = TestAttempt.create!(
@@ -69,11 +89,26 @@ class TestAttemptsApi < Grape::API
 
   # Fetch the latest completed test result
   desc 'Get the latest completed test result'
-  get 'completed-latest' do
-    test = TestAttempt.where(completed: true).order(id: :desc).first
+  params do
+    requires :task_id, type: Integer, desc: 'Task ID to fetch completed test attempt for'
+  end
+  get '/test_attempts/completed-latest' do
+    # Ensure task exists
+    task = Task.find(params[:task_id])
+    if task.nil?
+      error!({ message: 'Task ID is invalid' }, 404)
+      return
+    else
+      test_attempts = TestAttempt.find_by(task_id: :task_id)
+    end
+
+    # Take the latest completed test attempt if there are any for this task
+    unless test_attempts.nil?
+      test = test_attempts.where(completed: true).order(id: :desc).first
+    end
 
     if test.nil?
-      error!({ message: 'No completed tests found' }, 404)
+      error!({ message: 'No completed tests found for this task' }, 404)
     else
       present test, with: TestAttemptEntity
     end
@@ -84,7 +119,7 @@ class TestAttemptsApi < Grape::API
   params do
     requires :id, type: String, desc: 'ID of the test'
   end
-  get ':id' do
+  get '/test_attempts/:id' do
     present TestAttempt.find(params[:id]), with: TestAttemptEntity
   end
 
@@ -117,7 +152,7 @@ class TestAttemptsApi < Grape::API
     optional :cmi_entry, type: String, desc: 'CMI Entry'
     optional :task_id, type: Integer, desc: 'ID of the associated task'
   end
-  put ':id' do
+  put '/test_attempts/:id' do
     test = TestAttempt.find(params[:id])
     test.update!(declared(params, include_missing: false))
     present test, with: TestAttemptEntity
@@ -128,7 +163,7 @@ class TestAttemptsApi < Grape::API
   params do
     requires :id, type: String, desc: 'ID of the test'
   end
-  delete ':id' do
+  delete '/test_attempts/:id' do
     TestAttempt.find(params[:id]).destroy!
   end
 
@@ -137,7 +172,7 @@ class TestAttemptsApi < Grape::API
   params do
     requires :id, type: String, desc: 'ID of the test'
   end
-  put ':id/exam_data' do
+  put '/test_attempts/:id/exam_data' do
     test = TestAttempt.find_by(id: params[:id])
 
     error!('Test not found', 404) unless test
