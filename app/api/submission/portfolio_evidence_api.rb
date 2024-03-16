@@ -22,6 +22,7 @@ module Submission
       optional :contributions, type: JSON, desc: "Contribution details JSON, eg: [ { project_id: 1, pct:'0.44', pts: 4 }, ... ]"
       optional :alignment_data, type: JSON, desc: "Data for task alignment, eg: [ { ilo_id: 1, rating: 5, rationale: 'Hello' }, ... ]"
       optional :trigger, type: String, desc: 'Can be need_help to indicate upload is not a ready to mark submission'
+      optional :accepted_tii_eula, type: Boolean, desc: 'Whether or not the user has accepted the TII EULA as part of the submission.'
     end
     post '/projects/:id/task_def_id/:task_definition_id/submission' do
       project = Project.find(params[:id])
@@ -49,7 +50,7 @@ module Submission
       student = task.project.student
 
       # Copy files to be PDFed
-      task.accept_submission(current_user, scoop_files(params, upload_reqs), student, self, params[:contributions], trigger, alignments)
+      task.accept_submission(current_user, scoop_files(params, upload_reqs), student, self, params[:contributions], trigger, alignments, accepted_tii_eula: params[:accepted_tii_eula])
 
       overseer_assessment = OverseerAssessment.create_for(task)
       if overseer_assessment.present?
@@ -263,26 +264,6 @@ module Submission
       if File.exist? "#{path}/run-diff.txt"
         result << { label: 'run-diff', result: File.read("#{path}/run-diff.txt") }
       end
-
-      present result, with: Grape::Presenters::Presenter
-    end
-
-    # TODO: Remove the dependency on units - figure out how to authorise
-    desc 'Get the list of supported overseer images'
-    get '/units/:unit_id/overseer/docker/images' do
-      unless Doubtfire::Application.config.overseer_enabled
-        error!({ error: 'Overseer is not enabled' }, 403)
-      end
-
-      unit = Unit.find(params[:unit_id])
-
-      unless authorise? current_user, unit, :add_task_def
-        error!({ error: 'Not authorised to download task details of unit' }, 403)
-      end
-
-      result = {
-        result: Doubtfire::Application.config.overseer_images
-      }
 
       present result, with: Grape::Presenters::Presenter
     end

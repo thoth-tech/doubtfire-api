@@ -18,7 +18,7 @@ class ApiRoot < Grape::API
 
   rescue_from :all do |e|
     case e
-    when ActiveRecord::RecordInvalid, Grape::Exceptions::ValidationErrors
+    when ActiveRecord::RecordInvalid, Grape::Exceptions::ValidationErrors, ActiveRecord::RecordNotDestroyed
       message = e.message
       status = 400
     when ActiveRecord::InvalidForeignKey
@@ -27,9 +27,6 @@ class ApiRoot < Grape::API
     when Grape::Exceptions::MethodNotAllowed
       message = e.message
       status = 405
-    when ActiveRecord::RecordNotDestroyed
-      message = e.message
-      status = 400
     when ActiveRecord::RecordNotFound
       message = "Unable to find requested #{e.message[/(Couldn't find )(.*)( with)/, 2]}"
       status = 404
@@ -37,6 +34,8 @@ class ApiRoot < Grape::API
       message = "Missing value for #{e.param}"
       status = 400
     else
+      puts e.inspect unless Rails.env.production?
+
       logger.error "Unhandled exception: #{e.class}"
       logger.error e.inspect
       logger.error e.backtrace.join("\n")
@@ -69,8 +68,15 @@ class ApiRoot < Grape::API
   mount TaskCommentsApi
   mount TaskDefinitionsApi
   mount TasksApi
+  mount Similarity::TaskSimilarityApi
   mount TeachingPeriodsPublicApi
   mount TeachingPeriodsAuthenticatedApi
+
+  mount Tii::TurnItInApi
+  mount Tii::TurnItInHooksApi
+  mount Tii::TiiGroupAttachmentApi
+  mount Tii::TiiActionApi
+
   mount CampusesPublicApi
   mount CampusesAuthenticatedApi
   mount TutorialsApi
@@ -101,9 +107,15 @@ class ApiRoot < Grape::API
   AuthenticationHelpers.add_auth_to Submission::PortfolioEvidenceApi
   AuthenticationHelpers.add_auth_to Submission::BatchTaskApi
   AuthenticationHelpers.add_auth_to TasksApi
+  AuthenticationHelpers.add_auth_to Similarity::TaskSimilarityApi
   AuthenticationHelpers.add_auth_to TaskCommentsApi
   AuthenticationHelpers.add_auth_to TaskDefinitionsApi
   AuthenticationHelpers.add_auth_to TeachingPeriodsAuthenticatedApi
+
+  AuthenticationHelpers.add_auth_to Tii::TurnItInApi
+  AuthenticationHelpers.add_auth_to Tii::TiiGroupAttachmentApi
+  AuthenticationHelpers.add_auth_to Tii::TiiActionApi
+
   AuthenticationHelpers.add_auth_to CampusesAuthenticatedApi
   AuthenticationHelpers.add_auth_to TutorialsApi
   AuthenticationHelpers.add_auth_to TutorialStreamsApi

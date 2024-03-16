@@ -35,7 +35,7 @@ class UnitsApi < Grape::API
 
     units = units.where('active = true') unless params[:include_in_active]
 
-    present units, with: Entities::UnitEntity, user: current_user, summary_only: true
+    present units, with: Entities::UnitEntity, user: current_user, summary_only: true, in_unit: true
   end
 
   desc "Get a unit's details"
@@ -89,7 +89,7 @@ class UnitsApi < Grape::API
       optional :assessment_enabled, type: Boolean
 
       mutually_exclusive :teaching_period_id, :start_date
-      all_or_none_of :start_date, :end_date
+      mutually_exclusive :teaching_period_id, :end_date
     end
   end
   put '/units/:id' do
@@ -119,8 +119,9 @@ class UnitsApi < Grape::API
                                                           :overseer_image_id,
                                                           :assessment_enabled)
 
-    if unit.teaching_period_id.present? && unit_parameters.key?(:start_date)
+    if unit.teaching_period_id.present? && (unit_parameters.key?(:start_date) || unit_parameters['teaching_period_id'] == -1)
       unit.teaching_period = nil
+      unit_parameters.delete('teaching_period_id')
     end
 
     if unit_parameters[:draft_task_definition_id].present?
@@ -150,7 +151,7 @@ class UnitsApi < Grape::API
       optional :teaching_period_id, type: Integer
       optional :start_date, type: Date
       optional :end_date, type: Date
-      optional :main_convenor_id, type: Integer
+      optional :main_convenor_user_id, type: Integer
       optional :auto_apply_extension_before_deadline, type: Boolean, desc: 'Indicates if extensions before the deadline should be automatically applied', default: true
       optional :send_notifications, type: Boolean, desc: 'Indicates if emails should be sent on updates each week', default: true
       optional :enable_sync_timetable, type: Boolean, desc: 'Sync to timetable automatically if supported by deployment', default: true
@@ -162,6 +163,7 @@ class UnitsApi < Grape::API
 
       mutually_exclusive :teaching_period_id, :start_date
       mutually_exclusive :teaching_period_id, :end_date
+      all_or_none_of :start_date, :end_date
     end
   end
   post '/units' do
@@ -188,6 +190,13 @@ class UnitsApi < Grape::API
                                                     :allow_student_change_tutorial,
                                                   )
 
+    # Identify main convenor
+    main_convenor_user = unit_parameters[:main_convenor_user_id].present? ? User.find(unit_parameters[:main_convenor_user_id]) : main_convenor_user = current_user
+
+    unless authorise? current_user, User, :convene_units
+      error!({ error: 'Main convenor is not authorised to manage units' }, 403)
+    end
+
     if unit_parameters[:description].nil?
       unit_parameters[:description] = unit_parameters[:name]
     end
@@ -211,8 +220,8 @@ class UnitsApi < Grape::API
 
     unit = Unit.create!(unit_parameters)
 
-    # Employ current user as convenor
-    unit.employ_staff(current_user, Role.convenor)
+    # Employ the main convenor
+    unit.employ_staff(main_convenor_user, Role.convenor)
     present unit, with: Entities::UnitEntity, my_role: Role.convenor, in_unit: true
   end
 
@@ -243,7 +252,7 @@ class UnitsApi < Grape::API
 
     my_role = result.role_for(current_user)
 
-    present result, with: Entities::UnitEntity, my_role: my_role, user: current_user
+    present result, with: Entities::UnitEntity, my_role: my_role, user: current_user, in_unit: true
   end
 
   desc 'Download the tasks that are awaiting feedback for a unit'

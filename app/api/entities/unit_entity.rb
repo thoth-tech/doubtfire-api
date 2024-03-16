@@ -20,7 +20,11 @@ module Entities
       role = unit.role_for(options[:user]) if role.nil?
       role.name unless role.nil?
     end
-    expose :main_convenor_id
+    expose :main_convenor_id, unless: :summary_only
+    expose :main_convenor_user_id, if: :summary_only do |unit, options|
+      unit.main_convenor.user_id
+    end
+
     expose :description
     expose :teaching_period_id, expose_nil: false
 
@@ -46,12 +50,14 @@ module Entities
 
     expose :learning_outcomes, using: LearningOutcomeEntity, as: :ilos, unless: :summary_only
     expose :tutorial_streams, using: TutorialStreamEntity, unless: :summary_only
+
+    # Expose staff before tutorials, so that their details are available
+    expose :staff, using: UnitRoleEntity, unless: :summary_only
     expose :tutorials, using: TutorialEntity, unless: :summary_only
     # expose :tutorial_enrolments, using: TutorialEnrolmentEntity, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
 
     expose :task_definitions, using: TaskDefinitionEntity, unless: :summary_only
     expose :task_outcome_alignments, using: TaskOutcomeAlignmentEntity, unless: :summary_only
-    expose :staff, using: UnitRoleEntity, unless: :summary_only
     expose :group_sets, using: GroupSetEntity, unless: :summary_only
     expose :groups, using: GroupEntity, unless: :summary_only
     # expose :group_memberships, using: GroupMembershipEntity, unless: :summary_only do |unit, options|
