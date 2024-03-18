@@ -225,9 +225,18 @@ class TaskDefinitionTest < ActiveSupport::TestCase
       trigger: 'ready_for_feedback'
     }
 
-    data_to_post = with_file('test_files/unit_files/sample-learning-summary.pdf', 'application/pdf', data_to_post)
-
     project = unit.active_projects.first
+
+    # Check we can't auto generate if we do not have a learning summary report
+    refute project.learning_summary_report_exists?
+    refute project.auto_generate_portfolio
+    refute project.compile_portfolio
+    refute project.portfolio_auto_generated
+
+    path = File.join(project.portfolio_temp_path, '000-document-LearningSummaryReport.pdf')
+    refute File.exist? path
+
+    data_to_post = with_file('test_files/unit_files/sample-learning-summary.pdf', 'application/pdf', data_to_post)
 
     add_auth_header_for user: project.user
 
@@ -246,8 +255,23 @@ class TaskDefinitionTest < ActiveSupport::TestCase
     # Check if pdf was copied over
     project.reload
     assert project.uses_draft_learning_summary
-    path = File.join(project.portfolio_temp_path, '000-document-LearningSummaryReport.pdf')
     assert File.exist? path
+    assert project.learning_summary_report_exists?
+
+    # Check we can auto generate
+    project.auto_generate_portfolio
+    assert project.compile_portfolio
+    assert project.portfolio_auto_generated
+
+    project.compile_portfolio = false
+    project.portfolio_auto_generated = false
+    project.save
+
+    # Check auto generate doesn't work if we are not enrolled
+    project.enrolled = false
+    refute project.auto_generate_portfolio
+    refute project.compile_portfolio
+    refute project.portfolio_auto_generated
 
     unit.destroy
     assert_not File.exist? path
@@ -291,4 +315,51 @@ class TaskDefinitionTest < ActiveSupport::TestCase
     unit.destroy
     assert_not File.exist? path
   end
+
+  def test_ipynb_to_pdf
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
+    td = TaskDefinition.new({
+        unit_id: unit.id,
+        tutorial_stream: unit.tutorial_streams.first,
+        name: 'Task with ipynb',
+        description: 'Code task',
+        weighting: 4,
+        target_grade: 0,
+        start_date: unit.start_date + 1.week,
+        target_date: unit.start_date + 2.weeks,
+        abbreviation: 'TaskPdfWithIpynb',
+        restrict_status_updates: false,
+        upload_requirements: [ { "key" => 'file0', "name" => 'A notebook', "type" => 'code' } ],
+        plagiarism_warn_pct: 0.8,
+        is_graded: false,
+        max_quality_pts: 0
+      })
+    td.save!
+
+    data_to_post = {
+      trigger: 'ready_for_feedback'
+    }
+
+    data_to_post = with_file('test_files/submissions/vectorial_graph.ipynb', 'application/json', data_to_post)
+
+    project = unit.active_projects.first
+
+    add_auth_header_for user: unit.main_convenor_user
+
+    post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission", data_to_post
+
+    assert_equal 201, last_response.status, last_response_body
+
+    task = project.task_for_task_definition(td)
+    assert task.convert_submission_to_pdf
+    path = task.zip_file_path_for_done_task
+    assert path
+    assert File.exist? path
+    assert File.exist? task.final_pdf_path
+
+    td.destroy
+    assert_not File.exist? path
+    unit.destroy!
+  end
+
 end

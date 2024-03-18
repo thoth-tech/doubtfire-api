@@ -1,10 +1,18 @@
 require 'zip'
 require 'tmpdir'
+require 'open3'
 
 module FileHelper
   extend LogHelper
   extend TimeoutHelper
   extend MimeCheckHelpers
+
+  def known_extension?(extn)
+    allow_extensions = %w(pdf ps csv xls xlsx pas cpp c cs csv h hpp java py js html coffee scss yaml yml xml json ts r rb rmd rnw rhtml rpres tex vb sql txt md jack hack asm hdl tst out cmp vm sh bat dat ipynb css png bmp tiff tif jpeg jpg gif zip gz tar wav ogg mp3 mp4 webm aac pcm aiff flac wma alac)
+
+    # Allow empty or nil extensions for blobs otherwise check that it matches the allowed list
+    extn.nil? || extn.empty? || allow_extensions.include?(extn)
+  end
 
   #
   # Test if a file should be accepted based on an expected kind
@@ -17,10 +25,10 @@ module FileHelper
     when 'image'
       accept = ['image/png', 'image/gif', 'image/bmp', 'image/tiff', 'image/jpeg', 'image/x-ms-bmp']
     when 'code'
-      accept = ['text/x-pascal', 'text/x-c', 'text/x-c++', 'text/plain', 'text/', 'application/javascript', 'text/html',
+      accept = ['text/x-pascal', 'text/x-c', 'text/x-c++', 'application/csv', 'text/plain', 'text/', 'application/javascript', 'text/html',
                 'text/css', 'text/x-ruby', 'text/coffeescript', 'text/x-scss', 'application/json', 'text/xml', 'application/xml',
                 'text/x-yaml', 'application/xml', 'text/x-typescript', 'text/x-vhdl', 'text/x-asm', 'text/x-jack', 'application/x-httpd-php',
-                'application/tst', 'text/x-cmp', 'text/x-vm', 'application/x-sh', 'application/x-bat', 'application/dat']
+                'application/tst', 'text/x-cmp', 'text/x-vm', 'application/x-sh', 'application/x-bat', 'application/dat', 'application/x-wine-extension-ini']
     when 'document'
       accept = [ # -- one day"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         # --"application/msword",
@@ -38,7 +46,7 @@ module FileHelper
       return false
     end
 
-    mime_in_list?(file["tempfile"].path, accept) && valid
+    mime_in_list?(file["tempfile"].path, accept) && valid && FileHelper.known_extension?(File.extname(file["tempfile"]).downcase[1..])
   end
 
   #
@@ -84,7 +92,7 @@ module FileHelper
   def tmp_file_dir()
     file_server = Doubtfire::Application.config.student_work_dir
     dst = "#{file_server}/tmp/" # trust the server config and passed in type for paths
-    FileUtils.mkdir_p dst if !Dir.exist? dst
+    FileUtils.mkdir_p dst
 
     dst
   end
@@ -106,9 +114,7 @@ module FileHelper
 
     if type == :pdf
       dst << sanitized_path("#{unit.code}-#{unit.id}", "Group-#{group.id}", type.to_s) << '/'
-    elsif type == :done
-      dst << sanitized_path("#{unit.code}-#{unit.id}", "Group-#{group.id}", type.to_s, group_submission.id.to_s) << '/'
-    elsif type == :plagarism
+    elsif [:done, :plagarism].include? type
       dst << sanitized_path("#{unit.code}-#{unit.id}", "Group-#{group.id}", type.to_s, group_submission.id.to_s) << '/'
     else # new and in_process -- just have task id -- will link to group when done etc.
       # Add task id to dst if we want task
@@ -133,16 +139,10 @@ module FileHelper
       dst = "#{file_server}/" # trust the server config and passed in type for paths
 
       if !(type.nil? || task.nil?)
-        if type == :discussion
+        if [:discussion, :pdf, :comment].include? type
           dst << sanitized_path("#{task.project.unit.code}-#{task.project.unit.id}", task.project.student.username.to_s, type.to_s) << '/'
-        elsif type == :pdf
-          dst << sanitized_path("#{task.project.unit.code}-#{task.project.unit.id}", task.project.student.username.to_s, type.to_s) << '/'
-        elsif type == :done
+        elsif [:done, :plagarism].include? type
           dst << sanitized_path("#{task.project.unit.code}-#{task.project.unit.id}", task.project.student.username.to_s, type.to_s, task.id.to_s) << '/'
-        elsif type == :plagarism
-          dst << sanitized_path("#{task.project.unit.code}-#{task.project.unit.id}", task.project.student.username.to_s, type.to_s, task.id.to_s) << '/'
-        elsif type == :comment
-          dst << sanitized_path("#{task.project.unit.code}-#{task.project.unit.id}", task.project.student.username.to_s, type.to_s) << '/'
         else # new and in_process -- just have task id
           # Add task id to dst if we want task
           dst << "#{type}/#{task.id}/"
@@ -221,21 +221,41 @@ module FileHelper
     did_compress = system_try_within 40, 'compressing image using convert', exec
   end
 
-  def compress_pdf(path, max_size = 2_500_000)
+  def compress_pdf(path, max_size: 2_500_000, timeout_seconds: 30)
+    return unless File.exist? path
+
     # trusting path... as it needs to be replaced
     # only compress things over max_size -- defaults to 2.5mb
+
     current_filesize = File.size?(path)
     if current_filesize < max_size
       logger.debug "PDF #{path} (#{current_filesize} bytes) is smaller than #{max_size}, skipping compression."
       return
-    else
-      logger.debug "Compressing PDF #{path} (#{current_filesize} bytes) using GhostScript"
     end
 
     begin
-      tmp_file = File.join(Dir.tmpdir, 'doubtfire', 'compress', "#{File.dirname(path).split(File::Separator).last}-file.pdf")
       FileUtils.mkdir_p(File.join(Dir.tmpdir, 'doubtfire', 'compress'))
 
+      tmp_file = File.join(Dir.tmpdir, 'doubtfire', 'compress', "#{File.dirname(path).split(File::Separator).last}-file.pdf")
+
+      # Pass 1 - qpdf
+      logger.debug "Compressing PDF #{path} (#{current_filesize} bytes) using qpdf"
+      exec = "qpdf --recompress-flate --object-streams=generate #{path} #{tmp_file} >>/dev/null 2>>/dev/null"
+      did_compress = system_try_within timeout_seconds, 'compressing PDF using qpdf', exec
+
+      if did_compress
+        if File.exist?(tmp_file) && File.size?(tmp_file) < current_filesize
+          FileUtils.mv tmp_file, path
+        else
+          FileUtils.rm_f tmp_file
+        end
+      end
+
+      return did_compress if File.size?(path) < max_size
+
+      # Pass 2 - ghostscript
+
+      logger.debug "Compressing PDF #{path} (#{current_filesize} bytes) using gs"
       exec = "gs -sDEVICE=pdfwrite \
                  -dDetectDuplicateImages=true \
                  -dPDFSETTINGS=/printer \
@@ -247,30 +267,28 @@ module FileHelper
                  >>/dev/null 2>>/dev/null"
 
       # try with ghostscript
-      did_compress = system_try_within 30, 'compressing PDF using ghostscript', exec
+      did_compress = system_try_within timeout_seconds, 'compressing PDF using ghostscript', exec
 
       unless did_compress
-        logger.info "Failed to compress PDF #{path} using GhostScript. Trying with convert"
-
-        exec = "convert \"#{path}\" \
-                -compress Zip \
-                \"#{tmp_file}\" \
-                >>/dev/null 2>>/dev/null"
-
-        # try with convert
-        did_compress = system_try_within 40, 'compressing PDF using convert', exec
-
-        unless did_compress
-          logger.error "Failed to compress PDF #{path} using convert. Cannot compress this PDF. Command was:\n\t#{exec}"
-        end
+        logger.error "Failed to compress PDF #{path} using convert. Cannot compress this PDF. Command was:\n\t#{exec}"
       end
 
-      FileUtils.mv tmp_file, path if did_compress
+      FileUtils.mv tmp_file, path if did_compress && File.size?(tmp_file) < current_filesize
     rescue => e
       logger.error "Failed to compress PDF #{path}. Rescued with error:\n\t#{e.message}"
     end
 
-    FileUtils.rm tmp_file if File.exist? tmp_file
+    FileUtils.rm_f tmp_file
+  end
+
+  def pages_in_pdf(path)
+    exec = "qpdf --show-npages #{path}"
+
+    out_text, error_text, exit_status = Open3.capture3(exec)
+    result = out_text.to_i # will default to 0 if not a number
+  rescue => e
+    logger.error "Failed to run QPDF on #{path}. Rescued with error:\n\t#{e.message}"
+    0
   end
 
   def qpdf(path)
@@ -288,7 +306,7 @@ module FileHelper
     # move into the new dir - and mv files to the in_process_dir
     pwd = FileUtils.pwd
     begin
-      FileUtils.mkdir_p(to_path) unless Dir.exist? to_path
+      FileUtils.mkdir_p(to_path)
       Dir.chdir(from_path)
       FileUtils.mv Dir.glob('*'), to_path, force: true
       Dir.chdir(to_path)
@@ -352,17 +370,17 @@ module FileHelper
     result
   end
 
-  def path_to_plagarism_html(match_link)
-    to_dir = student_work_dir(:plagarism, match_link.task)
+  def path_to_plagarism_html(similarity)
+    to_dir = student_work_dir(:plagarism, similarity.task)
 
-    File.join(to_dir, "link_#{match_link.other_task.id}.html")
+    File.join(to_dir, "link_#{similarity.other_task.id}.html")
   end
 
   #
   # Save the passed in html to a file.
   #
-  def save_plagiarism_html(match_link, html)
-    File.open(path_to_plagarism_html(match_link), 'w') do |out_file|
+  def save_plagiarism_html(similarity, html)
+    File.open(path_to_plagarism_html(similarity), 'w') do |out_file|
       out_file.puts html
     end
   end
@@ -370,11 +388,11 @@ module FileHelper
   #
   # Delete the html for a plagarism link
   #
-  def delete_plagarism_html(match_link)
-    rm_file = path_to_plagarism_html(match_link)
+  def delete_plagarism_html(similarity)
+    rm_file = path_to_plagarism_html(similarity)
     if File.exist? rm_file
       FileUtils.rm(rm_file)
-      to_dir = student_work_dir(:plagarism, match_link.task)
+      to_dir = student_work_dir(:plagarism, similarity.task)
 
       FileUtils.rm_rf(to_dir) if Dir[File.join(to_dir, '*.html')].count.zero?
     end
@@ -385,10 +403,10 @@ module FileHelper
   def delete_group_submission(group_submission)
     pdf_file = PortfolioEvidence.final_pdf_path_for_group_submission(group_submission)
     logger.debug "Deleting group submission PDF file #{pdf_file}"
-    FileUtils.rm pdf_file if File.exist? pdf_file
+    FileUtils.rm_f pdf_file
 
     done_file = zip_file_path_for_group_done_task(group_submission)
-    FileUtils.rm done_file if File.exist? done_file
+    FileUtils.rm_f done_file
     self
   end
 
@@ -412,7 +430,7 @@ module FileHelper
     zip_file = zip_file_path_for_done_task(task)
     return if zip_file.nil? || (!Dir.exist? task_dir)
 
-    FileUtils.rm(zip_file) if File.exist? zip_file
+    FileUtils.rm_f(zip_file)
 
     input_files = Dir.entries(task_dir).select { |f| (f =~ /^\d{3}\.(cover|document|code|image)/).zero? }
 
@@ -442,7 +460,7 @@ module FileHelper
       else
         # puts "Adding file: #{disk_file_path} -- #{File.exist? disk_file_path}"
         zip.get_output_stream(zip_file_path) do |f|
-          f.puts(File.open(disk_file_path, 'rb').read)
+          f.puts(File.binread(disk_file_path))
         end
       end
     end
@@ -467,7 +485,7 @@ module FileHelper
   #
   def ensure_utf8_code(output_filename, force_ascii)
     # puts "Converting #{output_filename} to utf8"
-    tmp_filename = Dir::Tmpname.create(["new", ".code"]) {}
+    tmp_filename = Dir::Tmpname.create(["new", ".code"]) { |name| raise Errno::EEXIST if File.exist?(name)  }
 
     # Convert to utf8 from read encoding
     if force_ascii
@@ -487,7 +505,7 @@ module FileHelper
   end
 
   def sorted_timestamp_entries_in_dir(path)
-    Dir.entries(path).reject { |entry| entry !~ /\d+/ }.sort_by { |x| File.basename(x) }.reverse
+    Dir.entries(path).grep(/\d+/).sort_by { |x| File.basename(x) }.reverse
   end
 
   def latest_submission_timestamp_entry_in_dir(path)
@@ -543,4 +561,6 @@ module FileHelper
   module_function :latest_submission_timestamp_entry_in_dir
   module_function :task_submission_identifier_path
   module_function :task_submission_identifier_path_with_timestamp
+  module_function :known_extension?
+  module_function :pages_in_pdf
 end

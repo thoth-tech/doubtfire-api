@@ -9,18 +9,86 @@ class UnitModelTest < ActiveSupport::TestCase
   setup do
     @unit = FactoryBot.create :unit, code: 'COS10001', with_students: false, task_count: 0, tutorials: 0, outcome_count: 0, staff_count: 0, campus_count: 0, teaching_period: TeachingPeriod.find(3)
     @unit.add_tutorial_stream('Import-Tasks', 'import-tasks', ActivityType.first)
+    @unit.update(portfolio_auto_generation_date: @unit.end_date - 1.day)
   end
 
   teardown do
     @unit.destroy
   end
 
-  test 'import tasks worked' do
+  def test_sync_unit
+    import_settings = {
+      replace_existing_campus: false,
+      replace_existing_tutorial: false
+    }
+
+    student = FactoryBot.create :user, :student
+    campus2 = FactoryBot.create :campus
+
+    student_list = [
+      {
+        unit_code: 'COS10001',
+        username: student.username,
+        student_id: student.student_id,
+        first_name: student.first_name,
+        last_name: student.last_name,
+        nickname: student.nickname,
+        email: student.email,
+        tutorials: [],
+        enrolled: true,
+        campus: Campus.first.abbreviation
+      }
+    ]
+
+    result = {
+      success: [],
+      ignored: [],
+      errors: []
+    }
+
+    @unit.sync_enrolment_with(student_list, import_settings, result)
+
+    assert_equal 0, result[:ignored].count, result.inspect
+    assert_equal 0, result[:errors].count, result.inspect
+    assert_equal 1, result[:success].count, result.inspect
+
+    result[:success].clear
+
+    student_list[0][:campus] = campus2.abbreviation
+
+    @unit.sync_enrolment_with(student_list, import_settings, result)
+
+    assert_equal 1, result[:ignored].count, result.inspect
+    assert_equal 0, result[:errors].count, result.inspect
+    assert_equal 0, result[:success].count, result.inspect
+
+    assert_equal 1, @unit.projects.count
+    assert_equal Campus.first, @unit.projects.first.campus, result.inspect
+
+    result[:ignored].clear
+
+    import_settings[:replace_existing_campus] = true
+
+    @unit.sync_enrolment_with(student_list, import_settings, result)
+
+    assert_equal 0, result[:ignored].count, result.inspect
+    assert_equal 0, result[:errors].count, result.inspect
+    assert_equal 1, result[:success].count, result.inspect
+
+    assert_equal @unit.projects.first.campus, campus2, result.inspect
+
+    result[:success].clear
+
+    @unit.projects.first.destroy
+    campus2.destroy!
+  end
+
+  def test_import_tasks_worked
     @unit.import_tasks_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Tasks.csv"))
     assert_equal 36, @unit.task_definitions.count, 'imported all task definitions'
   end
 
-  test 'import task files' do
+  def test_import_task_files
     @unit.import_tasks_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Tasks.csv"))
     @unit.import_task_files_from_zip Rails.root.join('test_files',"#{@unit.code}-Tasks.zip")
 
@@ -31,7 +99,7 @@ class UnitModelTest < ActiveSupport::TestCase
     assert File.exist? @unit.task_definitions.first.task_resources
   end
 
-  test 'rollover of task files' do
+  def test_rollover_of_task_files
     @unit.import_tasks_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Tasks.csv"))
     @unit.import_task_files_from_zip Rails.root.join('test_files',"#{@unit.code}-Tasks.zip")
 
@@ -46,7 +114,30 @@ class UnitModelTest < ActiveSupport::TestCase
     unit2.destroy
   end
 
-  test 'rollover of group tasks' do
+  def test_rollover_of_learning_summary
+    lsr = FactoryBot.create(:task_definition, unit: @unit, upload_requirements: [{'key' => 'file0','name' => 'LSR','type' => 'document'}])
+    assert lsr.valid?, lsr.errors.full_messages
+    @unit.draft_task_definition = lsr
+    @unit.save
+
+    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil
+
+    assert_not_nil unit2.draft_task_definition
+    refute_equal lsr, unit2.draft_task_definition
+
+    unit2.destroy
+  end
+
+  def test_rollover_of_portfolio_generation
+    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil
+
+    assert unit2.portfolio_auto_generation_date.present?
+    assert unit2.portfolio_auto_generation_date > unit2.start_date && unit2.portfolio_auto_generation_date < unit2.end_date
+
+    unit2.destroy
+  end
+
+  def test_rollover_of_group_tasks
     unit = FactoryBot.create(:unit,
       code: 'SIT102',
       teaching_period: TeachingPeriod.find(3),
@@ -66,7 +157,7 @@ class UnitModelTest < ActiveSupport::TestCase
     unit2.destroy
   end
 
-  test 'rollover of task ilo links' do
+  def test_rollover_of_task_ilo_links
     @unit.import_tasks_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Tasks.csv"))
     @unit.import_outcomes_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Outcomes.csv"))
     @unit.import_task_alignment_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Alignment.csv")), nil
@@ -88,7 +179,7 @@ class UnitModelTest < ActiveSupport::TestCase
     unit2.destroy!
   end
 
-  test 'rollover of tasks have same start week and day' do
+  def test_rollover_of_tasks_have_same_start_week_and_day
     @unit.import_tasks_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Tasks.csv"))
 
     unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil
@@ -106,7 +197,7 @@ class UnitModelTest < ActiveSupport::TestCase
     unit2.destroy!
   end
 
-  test 'rollover of tasks have same target week and day' do
+  def test_rollover_of_tasks_have_same_target_week_and_day
     @unit.import_tasks_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Tasks.csv"))
 
     unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil
@@ -595,7 +686,7 @@ class UnitModelTest < ActiveSupport::TestCase
 
     unit.active_projects.each do |p|
       DatabasePopulator.generate_portfolio(p)
-      assert p.has_portfolio
+      assert p.portfolio_exists?
       assert File.exist?(p.portfolio_path)
       paths << p.portfolio_path
     end

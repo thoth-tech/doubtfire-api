@@ -87,7 +87,7 @@ class ProjectsApi < Grape::API
       unless authorise? current_user, project, :change
         error!({ error: "You do not have permissions to change Project with id=#{params[:id]}" }, 403)
       end
-      if project.has_portfolio
+      if project.portfolio_exists?
         error!({ error: "You cannot change your submitted grade after portfolio submission" }, 403)
       end
 
@@ -172,7 +172,7 @@ class ProjectsApi < Grape::API
           compile_portfolio: false,
           grade: proj.grade,
           grade_rationale: proj.grade_rationale,
-          max_pct_copy: 0,
+          similarity_flag: false,
           has_portfolio: false,
           stats: Project::DEFAULT_TASK_STATS
         }

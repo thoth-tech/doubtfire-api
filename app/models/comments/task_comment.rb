@@ -15,8 +15,6 @@ class TaskComment < ApplicationRecord
 
   belongs_to :recipient, class_name: 'User', optional: false
 
-  has_one :discussion_comment, class_name: 'DiscussionComment', required: false
-
   has_many :comments_read_receipts, class_name: 'CommentsReadReceipts', dependent: :destroy, inverse_of: :task_comment
 
   # Can optionally be a reply to a comment
@@ -47,7 +45,7 @@ class TaskComment < ApplicationRecord
   end
 
   def delete_associated_files
-    FileUtils.rm attachment_path if File.exist? attachment_path
+    FileUtils.rm_f attachment_path
   end
 
   def serialize(user)

@@ -25,7 +25,6 @@ rails_best_practices_output.html
 spec/reports
 
 config/initializers/pdfkit.rb
-config/ldap.yml
 student_work/
 student-work/
 
@@ -38,3 +37,4 @@ student-work/
 .byebug_history
 coverage/
 .vscode
+_history
