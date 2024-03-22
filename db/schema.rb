@@ -555,5 +555,4 @@ ActiveRecord::Schema[7.0].define(version: 2024_03_22_021829) do
     t.index ["user_id"], name: "index_webcals_on_user_id", unique: true
   end
 
-  add_foreign_key "test_attempts", "tasks"
 end
