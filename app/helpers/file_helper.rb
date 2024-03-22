@@ -1,6 +1,7 @@
 require 'zip'
 require 'tmpdir'
 require 'open3'
+require 'shellwords'
 require 'pdf-reader'
 
 module FileHelper
@@ -576,6 +577,23 @@ module FileHelper
     "#{task_submission_identifier_path(type, task)}/#{timestamp.to_s}"
   end
 
+  def text_line_length_limit(path, width: 200)
+    tempfile = Tempfile.new('processed-source')
+    begin
+      # run fold (from coreutils) on the source file, write the output to the temporary file
+      fold_cmd = "fold --width #{width} #{path.shellescape} > #{tempfile.path}"
+      logger.debug "Running fold on #{path} to limit line width to #{width}"
+      system_try_within 5, "Failed running fold on #{path} to limit line width to #{width}", fold_cmd
+      # copy the output file to the input file path
+      FileUtils.cp tempfile.path, path
+    rescue => e
+      logger.error "Failed to run fold on #{path} to limit line width to #{width}. Rescued with error:\n\t#{e.message}"
+    ensure
+      # ensure the temporary file is closed and deleted immediately
+      tempfile.close
+      tempfile.unlink
+    end
+  end
   # Export functions as module functions
   module_function :accept_file
   module_function :sanitized_path
@@ -619,4 +637,5 @@ module FileHelper
   module_function :task_submission_identifier_path_with_timestamp
   module_function :known_extension?
   module_function :pages_in_pdf
+  module_function :text_line_length_limit
 end

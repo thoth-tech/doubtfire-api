@@ -998,6 +998,8 @@ class Task < ApplicationRecord
       @files.each do |f|
         if f[:type] == "document"
           FileHelper.qpdf(f[:path])
+        elsif f[:type] == "code"
+          FileHelper.text_line_length_limit(f[:path])
         end
       end
       render_to_string(template: '/task/task_pdf', layout: true)
