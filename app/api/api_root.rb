@@ -87,9 +87,9 @@ class ApiRoot < Grape::API
   mount WebcalApi
   mount WebcalPublicApi
 
-  mount CourseApi
-  mount CourseMapApi
-  mount CourseMapUnitApi
+  mount Courseflow::CourseApi
+  mount Courseflow::CourseMapApi
+  mount Courseflow::CourseMapUnitApi
 
   #
   # Add auth details to all end points
