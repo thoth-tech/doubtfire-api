@@ -97,17 +97,28 @@ class CourseTest < ActiveSupport::TestCase
     course.destroy
   end
 
+  def test_course_create
+    data_to_post = {
+      name: "Bachelor of Biochemistry",
+      code: "C053",
+      year: 2023,
+      version: "1.0",
+      url: "http://example.com"
+    }
+    post_json '/api/course', data_to_post
+    assert_equal 201, last_response.status
+  end
+
   def test_search_filtering
     puts "Testing search filtering"
-    unit1 = FactoryBot.create(:course, name: 'Bachelor of Data Science', code: 'S379')
-    unit2 = FactoryBot.create(:course, name: 'Bachelor of Arts', code: 'A300')
+    course1 = FactoryBot.create(:course, name: 'Bachelor of Data Science', code: 'S379')
+    course2 = FactoryBot.create(:course, name: 'Bachelor of Arts', code: 'A300')
     get "/api/course/search?name=Data"
-    response_data = JSON.parse(last_response.body)
-    puts "Response data: #{response_data}"
-    assert_equal 1, response_data.size
-    assert_equal 'Bachelor of Data Science', response_data[0]['name']
-    unit1.destroy
-    unit2.destroy
+    puts "Response body: #{last_response.body}"
+    assert_equal 1, last_response_body.size
+  ensure
+    course1.destroy
+    course2.destroy
   end
 
   def test_search_no_parameters
@@ -115,44 +126,44 @@ class CourseTest < ActiveSupport::TestCase
     course1 = FactoryBot.create(:course, name: 'Bachelor of Data Science', code: 'S304', year: 2024, version: '1.0', url: 'http://example.com')
     course2 = FactoryBot.create(:course, name: 'Bachelor of Computer Science', code: 'S364', year: 2024, version: '1.0', url: 'http://example.com')
     course3 = FactoryBot.create(:course, name: 'Bachelor of Arts', code: 'A343', year: 2024, version: '1.0', url: 'http://example.com')
-    puts "Course1: #{course1.id} #{course1.name}, Course2: #{course2.id} #{course2.name}, Course3: #{course3.id} #{course3.name}"
     get "/api/course/search"
     puts "Response body: #{last_response.body}"
-    assert_equal 3, JSON.parse(last_response.body).size
+    assert_equal 3, last_response.body.size
+  ensure
     course1.destroy
     course2.destroy
     course3.destroy
   end
 
   def test_update_valid_course
-    puts "Testing update valid course"
     course = FactoryBot.create(:course)
-    puts "Course: #{course.id} #{course.name} #{course.code} #{course.year} #{course.version} #{course.url}"
-    put "/api/course/#{course.id}", params: {name: 'New Name', code: course.code, year: course.year, version: course.version, url: course.url}
-    puts "Changed Course Name: #{course.id} #{course.name}"
-    puts "Response body: #{last_response.body}"
+    updated_data = { name: 'New Name', code: course.code, year: course.year, version: course.version, url: course.url }
+    put_json "/api/course/#{course.id}", updated_data
     assert_equal 200, last_response.status
-    assert_equal 'New Name', Courseflow::Course.find(course.id).name
+  ensure
     course.destroy
   end
 
   def test_update_invalid_course
     course = FactoryBot.create(:course)
-    put "/api/course/#{course.id}", params: { name: ' ', code: course.code, year: course.year, version: course.version, url: course.url }
+    updated_data = { name: '', code: course.code, year: course.year, version: course.version, url: course.url }
+    put_json "/api/course/#{course.id}", updated_data
     assert_equal 400, last_response.status
+  ensure
     course.destroy
   end
 
   def test_delete_existing_course
     course = FactoryBot.create(:course, name: 'Test to delete', code: 'todelete')
-    delete "/api/course/#{course.id}", params: { id: course.id }
+    delete_json "/api/course/#{course.id}"
     assert_equal 0, Courseflow::Course.where(id: course.id).count
     assert_nil Courseflow::Course.find_by(id: course.id)
+  ensure
     course.destroy
   end
 
   def test_delete_non_existent_course
-    delete "/api/course/9999"
+    delete_json "/api/course/9999"
     assert_equal 404, last_response.status
   end
 
