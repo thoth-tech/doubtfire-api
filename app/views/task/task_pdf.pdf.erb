@@ -118,8 +118,12 @@ No Tutor % Supervisor's Name
       name = File.basename(file[:path])
       pygments_lang = Task.pygments_lang(File.extname(file[:path])[1..-1])
       wrapped_file = File.join(dir, "WRAPPED-" + name)
-      # [TODO] add notice about line-wrapped files, files that aren't line-wrapped will be a symlink
   %>
+    <% unless File.symlink?(wrapped_file) %>
+\begin{tcolorbox}[colback=blue!5!white,colframe=blue!75!black]
+  This file has additional line breaks applied by <%= @doubtfire_product_name %> because they contain lines longer than the configured limit. The orginal submission can be retrieved via the "Download Uploaded Files" function.
+\end{tcolorbox}
+    <% end %>
 \inputminted[breaklines,linenos,breakanywhere,tabsize=4]{<%= pygments_lang %>}{<%= wrapped_file %>}
   <%  else %>
 \jupynotex{<%= file[:path] %>}
