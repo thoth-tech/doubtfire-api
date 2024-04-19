@@ -578,7 +578,8 @@ module FileHelper
     "#{task_submission_identifier_path(type, task)}/#{timestamp.to_s}"
   end
 
-  def line_wrap(path, width: 200)
+  # Apply line wrapping to a given file. The default 160-character limit is about two lines in the rendered PDF.
+  def line_wrap(path, width: 160)
     dir = File.dirname(path)
     basename = File.basename(path)
     output = File.join(dir, "WRAPPED-#{basename}")
