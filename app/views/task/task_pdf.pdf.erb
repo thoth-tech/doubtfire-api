@@ -112,8 +112,15 @@ No Tutor % Supervisor's Name
   <%
     if file[:type] == 'code'
       if (File.extname(file[:path])[1..-1]) != 'ipynb'
+      # for code files (except Jupyter Notebook), always use files with a WRAPPED- prefix in the filename
+      # Jupyter Notebooks are not processed with line wraps
+      dir = File.dirname(file[:path])
+      name = File.basename(file[:path])
+      pygments_lang = Task.pygments_lang(File.extname(file[:path])[1..-1])
+      wrapped_file = File.join(dir, "WRAPPED-" + name)
+      # [TODO] add notice about line-wrapped files, files that aren't line-wrapped will be a symlink
   %>
-\inputminted[breaklines,linenos,breakanywhere,tabsize=4]{<%= Task.pygments_lang(File.extname(file[:path])[1..-1]) %>}{<%= file[:path] %>}
+\inputminted[breaklines,linenos,breakanywhere,tabsize=4]{<%= pygments_lang %>}{<%= wrapped_file %>}
   <%  else %>
 \jupynotex{<%= file[:path] %>}
   <%

@@ -1,3 +1,4 @@
+require 'English'
 require 'zip'
 require 'tmpdir'
 require 'open3'
@@ -582,9 +583,20 @@ module FileHelper
     basename = File.basename(path)
     output = File.join(dir, "WRAPPED-#{basename}")
     begin
-      fold_cmd = "fold --width #{width} #{path.shellescape} > #{output}"
       logger.debug "Running fold on #{path} to limit line width to #{width}"
-      system_try_within 5, "Failed running fold on #{path} to limit line width to #{width}", fold_cmd
+      system("fold --width #{width} #{path.shellescape} > #{output}", exception: true)
+      # compare input and output files, replace the output with a symlink if they are identical
+      system "diff #{path.shellescape} #{output}"
+      case $CHILD_STATUS.exitstatus
+      when 0
+        logger.debug "File #{path} does not contain lines longer than #{width}"
+        File.unlink(output)
+        File.symlink(path, output)
+      when 1
+        logger.debug "File #{path} contains lines longer than #{width}, line wrapping will be applied"
+      else
+        raise "Error comparing original and line-wrapped files!"
+      end
     rescue => e
       logger.error "Failed to run fold on #{path} to limit line width to #{width}. Rescued with error:\n\t#{e.message}"
     end
