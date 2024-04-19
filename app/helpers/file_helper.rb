@@ -586,7 +586,7 @@ module FileHelper
       logger.debug "Running fold on #{path} to limit line width to #{width}"
       system("fold --width #{width} #{path.shellescape} > #{output}", exception: true)
       # compare input and output files, replace the output with a symlink if they are identical
-      system "diff #{path.shellescape} #{output}"
+      system "diff #{path.shellescape} #{output} > /dev/null"
       case $CHILD_STATUS.exitstatus
       when 0
         logger.debug "File #{path} does not contain lines longer than #{width}"
