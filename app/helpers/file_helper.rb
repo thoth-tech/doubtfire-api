@@ -578,14 +578,20 @@ module FileHelper
     "#{task_submission_identifier_path(type, task)}/#{timestamp.to_s}"
   end
 
-  # Apply line wrapping to a given file. The default 160-character limit is about two lines in the rendered PDF.
+  # Apply line wrapping to a given file.
+  # The default 160-character limit is about two lines in the rendered PDF.
+  # There is also a hard limit of 1000 characters, anything longer will be truncated to 1000 characters.
   def line_wrap(path, width: 160)
+    hard_limit = 1000
     dir = File.dirname(path)
     basename = File.basename(path)
+    temp_file = Tempfile.new('truncated_file')
     output = File.join(dir, "WRAPPED-#{basename}")
     begin
-      logger.debug "Running fold on #{path} to limit line width to #{width}"
-      system("fold --width #{width} #{path.shellescape} > #{output}", exception: true)
+      logger.debug "Applying hard column width limit of #{hard_limit} to #{path}"
+      system("cut -c-#{hard_limit} #{path.shellescape} > #{temp_file.path}", exception: true)
+      logger.debug "Applying line wrapping on #{temp_file.path} to limit line width to #{width}"
+      system("fold --width #{width} #{temp_file.path} > #{output}", exception: true)
       # compare input and output files, replace the output with a symlink if they are identical
       system "diff #{path.shellescape} #{output} > /dev/null"
       case $CHILD_STATUS.exitstatus
@@ -594,13 +600,16 @@ module FileHelper
         File.unlink(output)
         File.symlink(path, output)
       when 1
-        logger.debug "File #{path} contains lines longer than #{width}, line wrapping will be applied"
+        logger.debug "File #{path} contains lines longer than #{width}, line wrapping has been applied"
       else
         raise "Error comparing original and line-wrapped files!"
       end
     rescue => e
-      logger.error "Failed to run fold on #{path} to limit line width to #{width}. Rescued with error:\n\t#{e.message}"
+      logger.error "Failed to apply line wrapping on #{path}. Rescued with error:\n\t#{e.message}"
     end
+  ensure
+    temp_file.close
+    temp_file.unlink
   end
   # Export functions as module functions
   module_function :accept_file

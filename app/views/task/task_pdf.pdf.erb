@@ -121,7 +121,7 @@ No Tutor % Supervisor's Name
   %>
     <% unless File.symlink?(wrapped_file) %>
 \begin{tcolorbox}[colback=blue!5!white,colframe=blue!75!black]
-  This file has additional line breaks applied by <%= @doubtfire_product_name %> because they contain lines longer than the configured limit. The orginal submission can be retrieved via the "Download Uploaded Files" function.
+  This file has additional line breaks applied by <%= @doubtfire_product_name %> because they contain lines longer than the configured limit. Lines over 1000 characters long have been truncated to limit PDF page count. The orginal submission can be retrieved via the "Download Uploaded Files" function.
 \end{tcolorbox}
     <% end %>
 \inputminted[breaklines,linenos,breakanywhere,tabsize=4]{<%= pygments_lang %>}{<%= wrapped_file %>}
