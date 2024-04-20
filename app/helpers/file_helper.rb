@@ -586,7 +586,7 @@ module FileHelper
     dir = File.dirname(path)
     basename = File.basename(path)
     temp_file = Tempfile.new('truncated_file')
-    output = File.join(dir, "WRAPPED-#{basename}")
+    output = File.join(dir, "#{basename}.tmp")
     begin
       logger.debug "Applying hard column width limit of #{hard_limit} to #{path}"
       system("cut -c-#{hard_limit} #{path.shellescape} > #{temp_file.path}", exception: true)

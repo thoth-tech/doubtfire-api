@@ -1018,7 +1018,7 @@ class Task < ApplicationRecord
         next unless f[:type] == "code"
         name = File.basename(f[:path])
         dir = File.dirname(f[:path])
-        tempfile_path = File.join(dir, "WRAPPED-" + name)
+        tempfile_path = File.join(dir, "#{name}.tmp")
         if File.exist? tempfile_path
           File.unlink(tempfile_path)
           logger.debug "Deleted #{tempfile_path}"

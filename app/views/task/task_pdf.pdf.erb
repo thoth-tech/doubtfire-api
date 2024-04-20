@@ -117,7 +117,7 @@ No Tutor % Supervisor's Name
       dir = File.dirname(file[:path])
       name = File.basename(file[:path])
       pygments_lang = Task.pygments_lang(File.extname(file[:path])[1..-1])
-      wrapped_file = File.join(dir, "WRAPPED-" + name)
+      wrapped_file = File.join(dir, "#{name}.tmp")
   %>
     <% unless File.symlink?(wrapped_file) %>
 \begin{tcolorbox}[colback=blue!5!white,colframe=blue!75!black]
