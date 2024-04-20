@@ -409,6 +409,29 @@ class TaskDefinitionTest < ActiveSupport::TestCase
     reader = PDF::Reader.new(task.final_pdf_path)
     assert reader.pages[1].text.include? "This file has additional line breaks applied"
 
+    # submit a normal file and ensure the notice is not included in the PDF
+    data_to_post = {
+      trigger: 'ready_for_feedback'
+    }
+
+    data_to_post = with_file('test_files/submissions/normal.py', 'application/json', data_to_post)
+    project = unit.active_projects.first
+    add_auth_header_for user: unit.main_convenor_user
+    post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission", data_to_post
+    assert_equal 201, last_response.status, last_response_body
+
+    # test submission generation
+    task = project.task_for_task_definition(td)
+    assert task.convert_submission_to_pdf
+    path = task.zip_file_path_for_done_task
+    assert path
+    assert File.exist? path
+    assert File.exist? task.final_pdf_path
+
+    # ensure the notice is not included
+    reader = PDF::Reader.new(task.final_pdf_path)
+    assert_not reader.pages[1].text.include? "This file has additional line breaks applied"
+
     td.destroy
     assert_not File.exist? path
     unit.destroy!
