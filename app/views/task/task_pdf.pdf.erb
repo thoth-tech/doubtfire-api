@@ -112,7 +112,8 @@ No Tutor % Supervisor's Name
   <%
     if file[:type] == 'code'
       if (File.extname(file[:path])[1..-1]) != 'ipynb'
-      # for code files (except Jupyter Notebook), always use files with a WRAPPED- prefix in the filename
+      # for code files (except Jupyter Notebook), always use files with the .tmp suffix
+      # if the file has not been modified, it will be a symlink instead
       # Jupyter Notebooks are not processed with line wraps
       dir = File.dirname(file[:path])
       name = File.basename(file[:path])
