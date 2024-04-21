@@ -84,7 +84,7 @@ class UnitsApi < Grape::API
       optional :portfolio_auto_generation_date, type: Date, desc: 'Indicates a date where student portfolio will automatically compile'
       optional :allow_student_extension_requests, type: Boolean, desc: 'Can turn on/off student extension requests'
       optional :allow_student_change_tutorial, type: Boolean, desc: 'Can turn on/off student ability to change tutorials'
-      optional :extension_weeks_on_resubmit_request, type: Integer, desc: 'Determines the number of weeks extension on a resubmit request'
+      optional :extension_days_on_resubmit_request, type: Integer, desc: 'Determines the number of days extension on a resubmit request'
       optional :overseer_image_id, type: Integer, desc: 'The id of the docker image used with '
       optional :assessment_enabled, type: Boolean
 
@@ -114,7 +114,7 @@ class UnitsApi < Grape::API
                                                           :draft_task_definition_id,
                                                           :portfolio_auto_generation_date,
                                                           :allow_student_extension_requests,
-                                                          :extension_weeks_on_resubmit_request,
+                                                          :extension_days_on_resubmit_request,
                                                           :allow_student_change_tutorial,
                                                           :overseer_image_id,
                                                           :assessment_enabled)
@@ -157,7 +157,7 @@ class UnitsApi < Grape::API
       optional :enable_sync_timetable, type: Boolean, desc: 'Sync to timetable automatically if supported by deployment', default: true
       optional :enable_sync_enrolments, type: Boolean, desc: 'Sync student enrolments automatically if supported by deployment', default: true
       optional :allow_student_extension_requests, type: Boolean, desc: 'Can turn on/off student extension requests', default: true
-      optional :extension_weeks_on_resubmit_request, type: Integer, desc: 'Determines the number of weeks extension on a resubmit request', default: 1
+      optional :extension_days_on_resubmit_request, type: Integer, desc: 'Determines the number of weeks extension on a resubmit request', default: 1
       optional :portfolio_auto_generation_date, type: Date, desc: 'Indicates a date where student portfolio will automatically compile'
       optional :allow_student_change_tutorial, type: Boolean, desc: 'Can turn on/off student ability to change tutorials', default: true
 
@@ -185,7 +185,7 @@ class UnitsApi < Grape::API
                                                     :enable_sync_timetable,
                                                     :enable_sync_enrolments,
                                                     :allow_student_extension_requests,
-                                                    :extension_weeks_on_resubmit_request,
+                                                    :extension_days_on_resubmit_request,
                                                     :portfolio_auto_generation_date,
                                                     :allow_student_change_tutorial,
                                                   )

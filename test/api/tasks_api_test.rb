@@ -152,13 +152,13 @@ class TasksApiTest < ActiveSupport::TestCase
     # Get the task... check it is now time exceeded
     task = project.task_for_task_definition(td)
     assert_equal TaskStatus.time_exceeded, task.task_status
-    assert_equal 2, task.weeks_can_extend
+    assert_equal 14, task.days_can_extend
     assert task.can_apply_for_extension?
     refute task.submitted_before_due?
 
     data_to_post = {
       comment: 'Help me!',
-      weeks_requested: 2
+      days_requested: 14
     }
 
     # Add username and auth_token to Header
@@ -181,9 +181,9 @@ class TasksApiTest < ActiveSupport::TestCase
 
     # After extension... no more extensions are possible
     task.reload
-    assert_equal 0, task.weeks_can_extend
+    assert_equal 0, task.days_can_extend
     refute task.can_apply_for_extension?
-    assert_equal 2, task.extensions
+    assert_equal 14, task.extensions
     assert task.submitted_before_due?
 
     assert_equal TaskStatus.ready_for_feedback, task.task_status
@@ -230,13 +230,13 @@ class TasksApiTest < ActiveSupport::TestCase
     # Get the task... check it is now time exceeded
     task = project.task_for_task_definition(td)
     assert_equal TaskStatus.time_exceeded, task.task_status
-    assert_equal 2, task.weeks_can_extend
+    assert_equal 14, task.days_can_extend
     assert task.can_apply_for_extension?
     refute task.submitted_before_due?
 
     data_to_post = {
       comment: 'Help me!',
-      weeks_requested: 2
+      days_requested: 14
     }
 
     # Add username and auth_token to Header
@@ -248,9 +248,9 @@ class TasksApiTest < ActiveSupport::TestCase
 
     # After extension... no more extensions are possible
     task.reload
-    assert_equal 0, task.weeks_can_extend
+    assert_equal 0, task.days_can_extend
     refute task.can_apply_for_extension?
-    assert_equal 2, task.extensions
+    assert_equal 14, task.extensions
     assert task.submitted_before_due?
 
     assert_equal TaskStatus.ready_for_feedback, task.task_status

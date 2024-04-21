@@ -175,7 +175,7 @@ class GroupModelTest < ActiveSupport::TestCase
     t2 = p2.task_for_task_definition(td)
     t3 = p3.task_for_task_definition(td)
 
-    duration = t1.weeks_can_extend
+    duration = t1.days_can_extend
 
     t1.apply_for_extension(p1.student, "Test comment", duration)
     t1.reload
@@ -193,7 +193,7 @@ class GroupModelTest < ActiveSupport::TestCase
     t3.reload
 
     assert t2.valid?
-    assert_equal 2, t1.extensions
+    assert_equal 14, t1.extensions
     assert_equal 0, t2.extensions
     assert_equal :ready_for_feedback, t1.status
     assert_equal :ready_for_feedback, t2.status
@@ -212,7 +212,7 @@ class GroupModelTest < ActiveSupport::TestCase
     assert t2.valid?
     assert_equal :complete, t1.status
     assert_equal :complete, t2.status
-    assert_equal 2, t1.extensions
+    assert_equal 14, t1.extensions
     assert_equal 0, t2.extensions
     assert_equal 1, t1.comments.count
     assert_equal 2, t2.comments.count

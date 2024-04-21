@@ -114,7 +114,7 @@ class WebcalTest < ActiveSupport::TestCase
     # Apply for an extension on one task
     td = @current_unit_1.task_definitions.first
     task = @current_project_1.task_for_task_definition(td)
-    comment = task.apply_for_extension(@student, 'extension', 1)
+    comment = task.apply_for_extension(@student, 'extension', 7)
 
     # Detect corresponding Ical event
     cal = @webcal.to_ical
@@ -159,7 +159,7 @@ class WebcalTest < ActiveSupport::TestCase
     checks.each do |check|
       @webcal.update(reminder_time: time, reminder_unit: check[:unit])
       cal = @webcal.to_ical
-  
+
       per_task_def.call do |td, ev|
 
         assert_equal 1, ev.alarms.count, 'Error: Specified alarm does not exist.'

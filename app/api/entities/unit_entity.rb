@@ -45,7 +45,7 @@ module Entities
     expose :enable_sync_timetable, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
     expose :draft_task_definition_id, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
     expose :allow_student_extension_requests, unless: :summary_only
-    expose :extension_weeks_on_resubmit_request, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
+    expose :extension_days_on_resubmit_request, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
     expose :allow_student_change_tutorial, unless: :summary_only
 
     expose :learning_outcomes, using: LearningOutcomeEntity, as: :ilos, unless: :summary_only

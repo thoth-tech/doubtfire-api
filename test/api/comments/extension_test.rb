@@ -33,7 +33,7 @@ class ExtensionTest < ActiveSupport::TestCase
       })
     td.save!
     data_to_post = {
-      weeks_requested: '1',
+      days_requested: '7',
       comment: "I need a lot of help"
     }
 
@@ -44,12 +44,12 @@ class ExtensionTest < ActiveSupport::TestCase
     post_json "/api/projects/#{project.id}/task_def_id/#{td.id}/request_extension", data_to_post
     response = last_response_body
     assert_equal 201, last_response.status
-    assert response["weeks_requested"] == 1, "Error: Deadline less than a week, requested weeks should be 1, found #{response["weeks_requested"]}."
+    assert response["days_requested"] == 1, "Error: Requested days should be 1, found #{response["days_requested"]}."
 
     # Request a 2 week extension on the day
     td.due_date = Time.zone.now + 2.weeks
     td.save!
-    data_to_post["weeks_requested"] = '2'
+    data_to_post["days_requested"] = '14'
 
     # Add auth_token and username to header
     add_auth_header_for(user: user)
@@ -57,13 +57,13 @@ class ExtensionTest < ActiveSupport::TestCase
     post_json "/api/projects/#{project.id}/task_def_id/#{td.id}/request_extension", data_to_post
     response = last_response_body
     assert_equal 201, last_response.status
-    assert response["weeks_requested"] == 2, "Error: Weeks requested weeks should be 2, found #{response["weeks_requested"]}."
+    assert response["days_requested"] == 14, "Error: Days requested should be 14, found #{response["days_requested"]}."
 
     # Add auth_token and username to header
     add_auth_header_for(user: user)
 
     # Ask for too long an extension
-    data_to_post["weeks_requested"] = '5'
+    data_to_post["days_requested"] = '35'
     post_json "/api/projects/#{project.id}/task_def_id/#{td.id}/request_extension", data_to_post
     response = last_response_body
     assert_equal 403, last_response.status, "Error: Allowed too long of a request to be applied."
@@ -72,11 +72,11 @@ class ExtensionTest < ActiveSupport::TestCase
     # Add auth_token and username to header
     add_auth_header_for(user: user)
 
-    # Ask for 0 week extension
-    data_to_post["weeks_requested"] = '0'
+    # Ask for 0 day extension
+    data_to_post["days_requested"] = '0'
     post_json "/api/projects/#{project.id}/task_def_id/#{td.id}/request_extension", data_to_post
     response = last_response_body
-    assert_equal 403, last_response.status, "Error: Should not allow 0 week extension requests"
+    assert_equal 403, last_response.status, "Error: Should not allow 0 day extension requests"
 
     td.destroy!
     unit.destroy!
@@ -110,7 +110,7 @@ class ExtensionTest < ActiveSupport::TestCase
 
     main_tutor = project.tutor_for(td)
     data_to_post = {
-      weeks_requested: '1',
+      days_requested: '7',
       comment: "I need a lot of help"
     }
 
@@ -121,7 +121,7 @@ class ExtensionTest < ActiveSupport::TestCase
     post_json "/api/projects/#{project.id}/task_def_id/#{td.id}/request_extension", data_to_post
     response = last_response_body
     assert_equal 201, last_response.status
-    assert response["weeks_requested"] == 1, "Error: Deadline less than a week, requested weeks should be 1, found #{response["weeks_requested"]}."
+    assert response["days_requested"] == 2, "Error: deadline is in 2 days, requested days should be 2, found #{response["days_requested"]}."
 
     tc = TaskComment.find(response['id'])
 
@@ -168,7 +168,7 @@ class ExtensionTest < ActiveSupport::TestCase
 
     main_tutor = project.tutor_for(td)
     data_to_post = {
-      weeks_requested: '1',
+      days_requested: '7',
       comment: "I need a lot of help"
     }
 
@@ -182,7 +182,7 @@ class ExtensionTest < ActiveSupport::TestCase
     post_json "/api/projects/#{project.id}/task_def_id/#{td.id}/request_extension", data_to_post
     response = last_response_body
     assert_equal 201, last_response.status
-    assert response["weeks_requested"] == 1, "Error: Deadline less than a week, requested weeks should be 1, found #{response["weeks_requested"]}."
+    assert response["days_requested"] == 2, "Error: Deadline less than 7 days, requested days should be 2, found #{response["days_requested"]}."
 
     tc = ExtensionComment.find(response['id'])
 
@@ -195,7 +195,7 @@ class ExtensionTest < ActiveSupport::TestCase
   end
 
   def test_extension_on_resubmit
-    unit = FactoryBot.create(:unit, extension_weeks_on_resubmit_request: 2)
+    unit = FactoryBot.create(:unit, extension_days_on_resubmit_request: 14)
     td = TaskDefinition.new({
         unit_id: unit.id,
         tutorial_stream: unit.tutorial_streams.first,
@@ -231,14 +231,14 @@ class ExtensionTest < ActiveSupport::TestCase
     # Get the task... check it is ready for feedback
     task = project.task_for_task_definition(td)
     assert_equal TaskStatus.ready_for_feedback, task.task_status
-    assert_equal 3, task.weeks_can_extend
+    assert_equal 21, task.days_can_extend
     assert task.can_apply_for_extension?
 
     # Ask for resubmit
     task.assess TaskStatus.fix_and_resubmit, tutor
 
     # Now check that the 2 weeks was added
-    assert_equal 1, task.weeks_can_extend
+    assert_equal 7, task.days_can_extend
 
     td.destroy
     unit.destroy
@@ -272,7 +272,7 @@ class ExtensionTest < ActiveSupport::TestCase
     td.save!
 
     data_to_post = {
-      weeks_requested: '1',
+      days_requested: '7',
       comment: "I need a lot of help"
     }
 
@@ -284,7 +284,7 @@ class ExtensionTest < ActiveSupport::TestCase
     post_json "/api/projects/#{project.id}/task_def_id/#{td.id}/request_extension", data_to_post
     response = last_response_body
     assert_equal 201, last_response.status
-    assert response["weeks_requested"] == 1, "Error: Deadline less than a week, requested weeks should be 1, found #{response["weeks_requested"]}."
+    assert response["days_requested"] == 7, "Error: requested weeks should be 1, found #{response["days_requested"]}."
 
     unit.reload
     task = unit.tasks.last

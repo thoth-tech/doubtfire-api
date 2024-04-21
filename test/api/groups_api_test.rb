@@ -50,7 +50,7 @@ class GroupsApiTest < ActiveSupport::TestCase
 
     data_to_post = {
       comment: 'I need more time',
-      weeks_requested: 2
+      days_requested: 14
     }
 
     project = group.projects.first

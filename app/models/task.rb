@@ -219,9 +219,9 @@ class Task < ApplicationRecord
     end
   end
 
-  # Get the raw extension date - with extensions representing weeks
+  # Get the raw extension date - with extensions representing days
   def raw_extension_date
-    target_date + extensions.weeks
+    target_date + extensions.days
   end
 
   # Get the adjusted extension date, which ensures it is never past the due date
@@ -243,14 +243,14 @@ class Task < ApplicationRecord
   end
 
   # Applying for an extension will create an extension comment
-  def apply_for_extension(user, text, weeks)
+  def apply_for_extension(user, text, days)
     extension = ExtensionComment.create
     extension.task = self
-    extension.extension_weeks = weeks
+    extension.extension_days = days
     extension.user = user
     extension.content_type = :extension
     extension.comment = text
-    if weeks <= weeks_can_extend
+    if days <= days_can_extend
       extension.recipient = tutor
     else
       extension.recipient = unit.main_convenor_user
@@ -258,7 +258,7 @@ class Task < ApplicationRecord
     extension.save!
 
     # Check and apply either auto extensions, or those requested by staff
-    if (unit.auto_apply_extension_before_deadline && weeks <= weeks_can_extend) || role_for(user) == :tutor
+    if (unit.auto_apply_extension_before_deadline && days <= days_can_extend) || role_for(user) == :tutor
       if role_for(user) == :tutor
         extension.assess_extension user, true, true
       else
@@ -269,20 +269,19 @@ class Task < ApplicationRecord
     extension
   end
 
-  def weeks_can_extend
+  def days_can_extend
     deadline = task_definition.due_date.to_date
     current_due = raw_extension_date.to_date
 
     diff = deadline - current_due
-    (diff.to_f / 7).ceil
   end
 
   # Add an extension to the task
-  def grant_extension(by_user, weeks)
-    weeks_to_extend = [weeks, weeks_can_extend].min
-    return false unless weeks_to_extend > 0
+  def grant_extension(by_user, days)
+    days_to_extend = [days, days_can_extend].min
+    return false unless days_to_extend > 0
 
-    if update(extensions: self.extensions + weeks_to_extend)
+    if update(extensions: self.extensions + days_to_extend)
       # Was the task previously assessed as time exceeded? ... with the extension should this change?
       if self.task_status == TaskStatus.time_exceeded && submitted_before_due?
         update(task_status: TaskStatus.ready_for_feedback)
@@ -530,11 +529,11 @@ class Task < ApplicationRecord
     else
       self.completion_date = nil
 
-      # Grant an extension on fix if due date is within 1 week
+      # Grant an extension on fix if due date is within 7 days
       case task_status
       when TaskStatus.fix_and_resubmit, TaskStatus.discuss, TaskStatus.demonstrate
-        if to_same_day_anywhere_on_earth(due_date) < Time.zone.now + 7.days && can_apply_for_extension? && unit.extension_weeks_on_resubmit_request > 0
-          grant_extension(assessor, unit.extension_weeks_on_resubmit_request)
+        if to_same_day_anywhere_on_earth(due_date) < Time.zone.now + 7.days && can_apply_for_extension? && unit.extension_days_on_resubmit_request > 0
+          grant_extension(assessor, unit.extension_days_on_resubmit_request)
         end
       end
     end

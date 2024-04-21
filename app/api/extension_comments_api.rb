@@ -7,7 +7,7 @@ class ExtensionCommentsApi < Grape::API
   desc 'Request an extension for a task'
   params do
     requires :comment, type: String, desc: 'The details of the request'
-    requires :weeks_requested, type: Integer, desc: 'The details of the request'
+    requires :days_requested, type: Integer, desc: 'The details of the request'
   end
   post '/projects/:project_id/task_def_id/:task_definition_id/request_extension' do
     project = Project.find(params[:project_id])
@@ -19,11 +19,11 @@ class ExtensionCommentsApi < Grape::API
       error!({ error: 'Not authorised to request an extension for this task' }, 403)
     end
 
-    error!({ error: 'Extension weeks can not be 0.' }, 403) if params[:weeks_requested] == 0
+    error!({ error: 'Extension days can not be 0.' }, 403) if params[:days_requested] == 0
 
-    max_duration = task.weeks_can_extend
-    duration = params[:weeks_requested]
-    duration = max_duration unless params[:weeks_requested] <= max_duration
+    max_duration = task.days_can_extend
+    duration = params[:days_requested]
+    duration = max_duration unless params[:days_requested] <= max_duration
 
     error!({ error: 'Extensions cannot be granted beyond task deadline.' }, 403) if duration <= 0
 

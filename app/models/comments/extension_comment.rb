@@ -6,7 +6,7 @@ class ExtensionComment < TaskComment
     json[:granted] = extension_granted
     json[:assessed] = date_extension_assessed.present?
     json[:date_assessed] = date_extension_assessed
-    json[:weeks_requested] = extension_weeks
+    json[:days_requested] = extension_days
     json[:extension_response] = extension_response
     json[:task_status] = task.status
     json
@@ -38,7 +38,7 @@ class ExtensionComment < TaskComment
     self.extension_granted = granted && self.task.can_apply_for_extension?
 
     if self.extension_granted
-      self.task.grant_extension(user, extension_weeks)
+      self.task.grant_extension(user, extension_days)
       if automatic
         self.extension_response = "Time extended to #{self.task.due_date.strftime('%a %b %e')}"
       else
