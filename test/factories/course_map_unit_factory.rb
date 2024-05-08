@@ -1,5 +1,5 @@
 FactoryBot.define do
-  factory :coursemapunit, class: 'Courseflow::CourseMapUnit' do
+  factory :course_map_unit, class: 'Courseflow::CourseMapUnit' do
     courseMapId { 1 }
     unitId { 1 }
     yearSlot { 1 }

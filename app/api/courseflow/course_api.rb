@@ -19,13 +19,15 @@ module Courseflow
       present course, with: Entities::CourseEntity      # present the course using the CourseEntity
     end
 
+    #CREATE MESSAGE TO CHANGE THE ENDPOINT DEFINITIONS
+
     desc "Get courses that partially match the search params"
     params do # define the parameters that can be used to filter the courses, all optional, if none given it'll return every course
       optional :name, type: String, desc: "Course name"
       optional :code, type: String, desc: "Course code"
       optional :year, type: Integer, desc: "Course year"
     end
-    get '/course/search' do
+    get '/course/search/params' do
       courses = Course.all # gets all courses initially
 
       courses = courses.where("name LIKE :name", name: "%#{params[:name]}%") if params[:name].present?  # if name is provided, filter by name, even partially

@@ -4,7 +4,6 @@ class CourseTest < ActiveSupport::TestCase
   include Rack::Test::Methods
   include TestHelpers::JsonHelper
 
-
   def app
     Rails.application
   end
@@ -110,25 +109,21 @@ class CourseTest < ActiveSupport::TestCase
   end
 
   def test_search_filtering
-    puts "Testing search filtering"
     course1 = FactoryBot.create(:course, name: 'Bachelor of Data Science', code: 'S379')
     course2 = FactoryBot.create(:course, name: 'Bachelor of Arts', code: 'A300')
-    get "/api/course/search?name=Data"
-    puts "Response body: #{last_response.body}"
-    assert_equal 1, last_response_body.size
+    get "/api/course/search/params?name=Data"
+    assert_equal 1, JSON.parse(last_response.body).size
   ensure
     course1.destroy
     course2.destroy
   end
 
   def test_search_no_parameters
-    puts "Testing search with no parameters"
     course1 = FactoryBot.create(:course, name: 'Bachelor of Data Science', code: 'S304', year: 2024, version: '1.0', url: 'http://example.com')
     course2 = FactoryBot.create(:course, name: 'Bachelor of Computer Science', code: 'S364', year: 2024, version: '1.0', url: 'http://example.com')
     course3 = FactoryBot.create(:course, name: 'Bachelor of Arts', code: 'A343', year: 2024, version: '1.0', url: 'http://example.com')
-    get "/api/course/search"
-    puts "Response body: #{last_response.body}"
-    assert_equal 3, last_response.body.size
+    get "/api/course/search/params"
+    assert_equal 3, JSON.parse(last_response.body).size
   ensure
     course1.destroy
     course2.destroy

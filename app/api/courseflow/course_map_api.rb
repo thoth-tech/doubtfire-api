@@ -7,10 +7,10 @@ module Courseflow
     params do
       requires :userId, type: Integer, desc: "User ID"
     end
-    get '/coursemap/:userId' do
-      coursemap = Coursemap.find_by(userId: params[:userId])
-      if coursemap
-        present coursemap, with: CourseMapEntity
+    get '/coursemap/user/:userId' do
+      course_map = Coursemap.find_by(userId: params[:userId])
+      if course_map
+        present course_map, with: Entities::CourseMapEntity
       else
         error!({ error: "Course map #{params[:userId]} not found" }, 404)
       end
@@ -20,9 +20,13 @@ module Courseflow
     params do
       requires :courseId, type: Integer, desc: "Course ID"
     end
-    get '/coursemap/:courseId' do
-      coursemaps = Coursemap.where(courseId: params[:courseId])
-      present coursemaps, with: CourseMapEntity
+    get '/coursemap/course/:courseId' do
+      course_map = Coursemap.where(courseId: params[:courseId])
+      if course_map
+        present course_map, with: Entities::CourseMapEntity
+      else
+        error!({ error: "Course map #{params[:courseId]} not found" }, 404)
+      end
     end
 
     desc "Add a new course map"
@@ -31,11 +35,11 @@ module Courseflow
       requires :courseId, type: Integer
     end
     post '/coursemap' do
-      coursemap = Coursemap.new(params)
-      if coursemap.save
-        present coursemap, with: CourseMapEntity
+      course_map = Coursemap.new(params)
+      if course_map.save
+        present course_map, with: Entities::CourseMapEntity
       else
-        error!({ error: "Failed to create course map", details: course_map.errors.full_messages }, 400)
+        error!({ error: "Failed to create course map", details: coursemap.errors.full_messages }, 400)
       end
     end
 
@@ -46,11 +50,11 @@ module Courseflow
       requires :courseId, type: Integer
     end
     put '/coursemap/:courseMapId' do
-      coursemap = Coursemap.find(params[:courseMapId])
-      if coursemap.update(params.except(:courseMapId))
-        present coursemap, with: CourseMapEntity
+      course_map = Coursemap.find(params[:courseMapId])
+      if course_map.update(params.except(:courseMapId))
+        present course_map, with: Entities::CourseMapEntity
       else
-        error!({ error: "Failed to update course map", details: course_map.errors.full_messages }, 400)
+        error!({ error: "Failed to update course map", details: coursemap.errors.full_messages }, 400)
       end
     end
 
@@ -59,11 +63,24 @@ module Courseflow
       requires :courseMapId, type: Integer, desc: "Course map ID"
     end
     delete '/coursemap/:courseMapId' do
-      coursemaps = Coursemap.where(courseId: params[:courseMapId])
-      if coursemaps
-        coursemaps.destroy_all
+      course_map = Coursemap.find(params[:courseMapId])
+      if course_map
+        course_map.destroy
       else
         error!({ error: "Course map #{params[:courseMapId]} not found" }, 404)
+      end
+    end
+
+    desc "Delete all course map units via its associated user ID"
+    params do
+      requires :userId, type: Integer, desc: "User ID"
+    end
+    delete '/coursemap/user/:userId' do
+      course_map = Coursemap.find(params[:userId])
+      if course_map
+        course_map.destroy
+      else
+        error!({ error: "Course map #{params[:userId]} not found" }, 404)
       end
     end
   end
