@@ -16,6 +16,8 @@ class TurnItIn
   def self.load_config(config)
     config.tii_enabled = ENV['TII_ENABLED'].present? && (ENV['TII_ENABLED'].to_s.downcase == "true" || ENV['TII_ENABLED'].to_i == 1)
 
+    config.tii_add_submissions_to_index = ENV['TII_INDEX_SUBMISSIONS'].present? && (ENV['TII_INDEX_SUBMISSIONS'].to_s.downcase == "true" || ENV['TII_INDEX_SUBMISSIONS'].to_i == 1)
+
     if config.tii_enabled
       # Turn-it-in TII configuration
       require 'tca_client'
@@ -29,8 +31,7 @@ class TurnItIn
         tii_config.host = ENV.fetch('TCA_HOST', nil)
         tii_config.base_path = 'api/v1'
         tii_config.server_index = nil
-        require_relative '../../config/environments/doubtfire_logger'
-        tii_config.logger = DoubtfireLogger.logger
+        tii_config.logger = Rails.logger
       end
     end
   end
@@ -38,10 +39,20 @@ class TurnItIn
   # Launch the tii background jobs
   def self.launch_tii(with_webhooks: true)
     TiiRegisterWebHookJob.perform_async if with_webhooks
+    load_tii_features
+    load_tii_eula
+  end
 
-    (TiiActionFetchFeaturesEnabled.last || TiiActionFetchFeaturesEnabled.create).perform
+  # Check if the features are up to date, and update if required
+  def self.check_and_update_features
+    # Get or create the
+    feature_job = TiiActionFetchFeaturesEnabled.last || TiiActionFetchFeaturesEnabled.create
+    feature_job.perform if feature_job.update_required?
+  end
 
-    (TiiActionFetchEula.last || TiiActionFetchEula.create).perform
+  def self.load_tii_features
+    feature_job = TiiActionFetchFeaturesEnabled.last || TiiActionFetchFeaturesEnabled.create
+    feature_job.fetch_features_enabled
   end
 
   # A global error indicates that tii is not configured correctly or a change in the
@@ -93,7 +104,7 @@ class TurnItIn
   # @param action [String] the action that was being performed
   # @param error [TCAClient::ApiError] the error that was raised
   def self.handle_tii_error(action, error)
-    Doubtfire::Application.config.logger.error "TII failed. #{action}. #{error}"
+    Rails.logger.error "TII failed. #{action}. #{error}"
 
     case error.code
     when 429 # rate limit
@@ -109,10 +120,8 @@ class TurnItIn
   def self.eula_version
     return nil unless Doubtfire::Application.config.tii_enabled
 
-    unless Rails.cache.exist?('tii.eula_version')
-      action = TiiActionFetchEula.last || TiiActionFetchEula.create
-      action.perform
-    end
+    action = TiiActionFetchEula.last || TiiActionFetchEula.create
+    action.fetch_eula_version unless action.eula?
 
     eula = Rails.cache.fetch('tii.eula_version')
 
@@ -124,6 +133,19 @@ class TurnItIn
     return nil unless Doubtfire::Application.config.tii_enabled
 
     Rails.cache.fetch("tii.eula_html.#{TurnItIn.eula_version}")
+  end
+
+  # Check if an update of the eula is required, and update when needed
+  def self.check_and_update_eula
+    # Get or create the
+    eula_job = TiiActionFetchEula.last || TiiActionFetchEula.create
+    eula_job.fetch_eula_version unless eula_job.eula? # Load into cache if not loaded
+    eula_job.perform if eula_job.update_required? # Update if needed
+  end
+
+  def self.load_tii_eula
+    eula_job = TiiActionFetchEula.last || TiiActionFetchEula.create
+    eula_job.fetch_eula_version
   end
 
   # Return the url used for webhook callbacks
@@ -173,6 +195,6 @@ class TurnItIn
   private
 
   def logger
-    Doubtfire::Application.config.logger
+    Rails.logger
   end
 end

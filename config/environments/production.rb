@@ -2,6 +2,18 @@
 Doubtfire::Application.configure do
   # Code is not reloaded between requests
   config.cache_classes = true
+  config.cache_store = :redis_cache_store, { url: ENV.fetch('DF_REDIS_CACHE_URL', 'redis://localhost:6379/0'),
+
+    connect_timeout:    30,  # Defaults to 1 second
+    read_timeout:       0.2, # Defaults to 1 second
+    write_timeout:      0.2, # Defaults to 1 second
+    reconnect_attempts: 2,   # Defaults to 1
+
+    error_handler: lambda { |method:, returning:, exception:|
+      # Report errors to Sentry as warnings
+      Sentry.capture_exception exception, level: 'warning',
+        tags: { method: method, returning: returning }
+    } }
 
   # Full error reports are disabled and caching is turned on
   config.consider_all_requests_local = false
@@ -30,9 +42,6 @@ Doubtfire::Application.configure do
   # pdfgen log verbosity
   config.pdfgen_quiet = true
 
-  require_relative 'doubtfire_logger'
-  config.logger = DoubtfireLogger.logger
-  Rails.logger = DoubtfireLogger.logger
   config.log_level = :info
 
   config.action_mailer.perform_deliveries = (ENV['DF_MAIL_PERFORM_DELIVERIES'] || 'yes') == 'yes'
@@ -40,12 +49,12 @@ Doubtfire::Application.configure do
 
   if config.action_mailer.delivery_method == :smtp
     config.action_mailer.smtp_settings = {
-      address: (ENV['DF_SMTP_ADDRESS'] || 'localhost'),
-      port: (ENV['DF_SMTP_PORT'] || 25),
+      address: ENV.fetch('DF_SMTP_ADDRESS', 'localhost'),
+      port: ENV.fetch('DF_SMTP_PORT', 25),
       domain: ENV.fetch('DF_SMTP_DOMAIN', nil),
       user_name: ENV.fetch('DF_SMTP_USERNAME', nil),
       password: ENV.fetch('DF_SMTP_PASSWORD', nil),
-      authentication: (ENV['DF_SMTP_AUTHENTICATION'] || 'plain'),
+      authentication: ENV.fetch('DF_SMTP_AUTHENTICATION', 'plain'),
       enable_starttls_auto: true
     }
   end

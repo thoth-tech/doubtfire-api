@@ -8,25 +8,22 @@ class TiiCheckProgressJob
 
   def perform
     run_waiting_actions
-    check_update_eula
-  end
-
-  # Make sure we have the latest eula version
-  def check_update_eula
-    last_eula_check = TiiActionFetchEula.last&.last_run
-
-    run = !Rails.cache.exist?('tii.eula_version') ||
-          last_eula_check.nil? ||
-          last_eula_check < DateTime.now - 1.day
-
-    # Get or create the
-    (TiiActionFetchEula.last || TiiActionFetchEula.create).perform if run
+    TurnItIn.check_and_update_eula
+    TurnItIn.check_and_update_features
   end
 
   def run_waiting_actions
     # Get the actions waiting to retry, where last run is more than 30 minutes ago, and run them
     TiiAction.where(retry: true, complete: false)
              .where('(last_run IS NULL AND created_at < :date) OR last_run < :date', date: DateTime.now - 30.minutes)
-             .each(&:perform)
+             .each do |action|
+      action.perform
+
+      # Stop if the service is not available
+      break if action.error_code == :service_not_available
+
+      # Sleep to ensure requests are performed at a rate of well below 100 per minute
+      sleep(2)
+    end
   end
 end

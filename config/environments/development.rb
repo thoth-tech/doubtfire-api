@@ -16,14 +16,24 @@ Doubtfire::Application.configure do
   # Enable/disable caching. By default caching is disabled.
   # Run rails dev:cache to toggle caching.
   if ENV['CACHE'] == 'true' || Rails.root.join('tmp', 'caching-dev.txt').exist?
+    skip_first = true
     ActiveSupport::Reloader.to_prepare do
-      puts "CLEARING CACHE"
-      Rails.cache.clear
+      if skip_first
+        skip_first = false
+      else
+        puts "CLEARING CACHE"
+        Rails.cache.clear
+      end
     end
     config.action_controller.perform_caching = true
     config.action_controller.enable_fragment_cache_logging = true
 
-    config.cache_store = :memory_store
+    config.cache_store = if ENV.fetch('DF_REDIS_CACHE_URL', nil).present?
+                           [:redis_cache_store, { url: ENV.fetch('DF_REDIS_CACHE_URL', 'redis://localhost:6379/0') }]
+                         else
+                           :memory_store
+                         end
+
     config.public_file_server.headers = {
       'Cache-Control' => "public, max-age=#{2.days.to_i}"
     }
@@ -86,20 +96,6 @@ Doubtfire::Application.configure do
 
   # pdfgen log verbosity
   config.pdfgen_quiet = false
-
-  require_relative 'doubtfire_logger'
-  config.logger = DoubtfireLogger.logger
-  Rails.logger = DoubtfireLogger.logger
-
-  if config.tii_enabled
-    # Turn-it-in TII configuration
-    require 'tca_client'
-
-    # Setup authorization
-    TCAClient.configure do |tii_config|
-      tii_config.debugging = true
-    end
-  end
 
   config.active_record.encryption.key_derivation_salt = ENV['DF_ENCRYPTION_KEY_DERIVATION_SALT'] || 'U9jurHMfZbMpzlbDTMe5OSAhUJYHla9Z'
   config.active_record.encryption.deterministic_key = ENV['DF_ENCRYPTION_DETERMINISTIC_KEY'] || 'zYtzYUlLFaWdvdUO5eIINRT6ZKDddcgx'

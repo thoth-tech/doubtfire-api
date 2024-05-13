@@ -81,14 +81,18 @@ module Similarity
         path = similarity.similarity_pdf_path
       end
 
-      if params[:as_attachment]
-        header['Content-Disposition'] = "attachment; filename=#{filename}"
-        header['Access-Control-Expose-Headers'] = 'Content-Disposition'
+      if File.exist?(path)
+        if params[:as_attachment]
+          header['Content-Disposition'] = "attachment; filename=#{filename}"
+          header['Access-Control-Expose-Headers'] = 'Content-Disposition'
+        end
+
+        env['api.format'] = :binary
+
+        File.read(path)
+      else
+        error!({ error: "No details to download for task '#{params[:id]}'" }, 404)
       end
-
-      env['api.format'] = :binary
-
-      File.read(path)
     end
 
     desc 'Get viewer url for a turn it in similarity'
@@ -109,10 +113,14 @@ module Similarity
       similarity = task.task_similarities.find(params[:id])
 
       if similarity.present? && similarity.type == 'TiiTaskSimilarity'
-        result = similarity.create_viewer_url(current_user)
-        present result, with: Grape::Presenters::Presenter
+        if similarity.ready_for_viewer?
+          result = similarity.create_viewer_url(current_user)
+          present result, with: Grape::Presenters::Presenter
+        else
+          error!({ error: "Similarity report is not yet ready to be viewed for this submission" }, 404)
+        end
       else
-        error!({ error: "No details to download for task '#{params[:id]}'" }, 404)
+        similarity.plagiarism_report_url
       end
     end
   end
