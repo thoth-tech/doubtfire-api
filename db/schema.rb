@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.0].define(version: 2024_04_14_021537) do
+ActiveRecord::Schema[7.0].define(version: 2024_05_13_085719) do
   create_table "activity_types", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
     t.string "name", null: false
     t.string "abbreviation", null: false
@@ -217,6 +217,12 @@ ActiveRecord::Schema[7.0].define(version: 2024_04_14_021537) do
   create_table "roles", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
     t.string "name"
     t.text "description"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
+  create_table "specializations", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
+    t.string "specialization"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
   end
