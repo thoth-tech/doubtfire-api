@@ -9,15 +9,11 @@ class CourseMapUnitTest < ActiveSupport::TestCase
   end
 
   def test_get_course_map_units_by_course_map_id
-    puts "test_get_course_map_units_by_course_map_id"
-    course_id = 101
-    course_map = FactoryBot.create(:course_map, courseId: course_id, userId: 1043)
-    course_map_unit1 = FactoryBot.create(:course_map_unit, courseMapId: course_id)
-    course_map_unit2 = FactoryBot.create(:course_map_unit, courseMapId: course_id)
-    course_map_unit3 = FactoryBot.create(:course_map_unit, courseMapId: course_id)
-
-    get "/api/coursemapunit/#{course_map.id}"
-    puts "response.body: #{last_response.body}"
+    course_map = FactoryBot.create(:course_map)
+    course_map_unit1 = FactoryBot.create(:course_map_unit, courseMapId: course_map.id)
+    course_map_unit2 = FactoryBot.create(:course_map_unit, courseMapId: course_map.id)
+    course_map_unit3 = FactoryBot.create(:course_map_unit, courseMapId: course_map.id)
+    get "/api/coursemapunit/courseMapId/#{course_map.id}"
     assert_equal 3, JSON.parse(last_response.body).size
   ensure
     course_map.destroy
@@ -27,7 +23,6 @@ class CourseMapUnitTest < ActiveSupport::TestCase
   end
 
   def test_create_course_map_unit
-    puts "test_create_course_map_unit"
     course_map = FactoryBot.create(:course_map)
     unit_id = 100
     data_to_post = { courseMapId: course_map.id, unitId: unit_id, yearSlot: 2022, teachingPeriodSlot: 1, unitSlot: 1 }
@@ -40,7 +35,7 @@ class CourseMapUnitTest < ActiveSupport::TestCase
   def test_update_course_map_unit
     course_map_unit = FactoryBot.create(:course_map_unit)
     updated_data = { courseMapId: course_map_unit.courseMapId, unitId: course_map_unit.unitId, yearSlot: 2023, teachingPeriodSlot: course_map_unit.teachingPeriodSlot, unitSlot: course_map_unit.unitSlot }
-    put_json "/api/coursemapunit/#{course_map_unit.id}", updated_data
+    put_json "/api/coursemapunit/courseMapUnitId/#{course_map_unit.id}", updated_data
     assert_equal 200, last_response.status
   ensure
     course_map_unit.destroy
@@ -48,21 +43,18 @@ class CourseMapUnitTest < ActiveSupport::TestCase
 
   def test_delete_course_map_unit_by_id
     course_map_unit = FactoryBot.create(:course_map_unit)
-    delete "/api/coursemapunit/#{course_map_unit.id}"
+    delete "/api/coursemapunit/courseMapUnitId/#{course_map_unit.id}"
     assert_equal 0, Courseflow::Coursemapunit.where(id: course_map_unit.id).count
   ensure
     course_map_unit.destroy
   end
 
   def test_delete_course_map_units_by_course_map_id
-    puts "test_delete_course_map_units_by_course_map_id"
     course_map = FactoryBot.create(:course_map)
     coursemapunit1 = FactoryBot.create(:course_map_unit, courseMapId: course_map.id)
     coursemapunit2 = FactoryBot.create(:course_map_unit, courseMapId: course_map.id)
     coursemapunit3 = FactoryBot.create(:course_map_unit, courseMapId: course_map.id)
-
-    delete "/api/coursemapunit/coursemap/#{course_map.id}"
-    puts "response.body: #{last_response.body}"
+    delete "/api/coursemapunit/courseMapId/#{course_map.id}"
     assert_equal 0, Courseflow::Coursemapunit.where(courseMapId: course_map.id).count
   ensure
     course_map.destroy

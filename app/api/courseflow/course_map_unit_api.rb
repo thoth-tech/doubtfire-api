@@ -8,9 +8,9 @@ module Courseflow
     params do
       requires :courseMapId, type: Integer, desc: "Course map ID"
     end
-    get '/coursemapunit/:courseMapId' do
-      course_map_unit = Coursemapunit.find(courseMapId: params[:courseMapId]) # get all course map units associated with the course map ID
-      present course_map_unit, with: Entities::CourseMapUnitEntity # present the course map units using the CourseMapUnitEntity
+    get '/coursemapunit/courseMapId/:courseMapId' do
+      course_map_units = Coursemapunit.where(courseMapId: params[:courseMapId]) # get all course map units associated with the course map ID
+      present course_map_units, with: Entities::CourseMapUnitEntity # present the course map units using the CourseMapUnitEntity
     end
 
     desc "Add a new course map unit"
@@ -39,7 +39,7 @@ module Courseflow
       requires :teachingPeriodSlot, type: Integer
       requires :unitSlot, type: Integer
     end
-    put '/coursemapunit/:courseMapUnitId' do
+    put '/coursemapunit/courseMapUnitId/:courseMapUnitId' do
       course_map_unit = Coursemapunit.find(params[:courseMapUnitId])
       error!({ error: "Course map unit not found" }, 404) unless course_map_unit
 
@@ -54,17 +54,17 @@ module Courseflow
     params do
       requires :courseMapId, type: Integer, desc: "Course map ID"
     end
-    delete '/coursemapunit/coursemap/:courseMapId' do
-      course_map_unit = Coursemapunit.find(params[:courseMapId]) # delete all course map units associated with the course map ID
-      course_map_unit.destroy
-      { message: "Course map units with course map ID #{params[:courseMapId]} have been deleted"}
+    delete '/coursemapunit/courseMapId/:courseMapId' do
+      course_map_units = Coursemapunit.where(courseMapId: params[:courseMapId]) # delete all course map units associated with the course map ID
+      course_map_units.destroy_all
+      { message: "Course map units with course map ID #{params[:courseMapId]} have been deleted" }
     end
 
     desc "Delete a course map unit via its ID"
     params do
       requires :courseMapUnitId, type: Integer, desc: "Course map unit ID"
     end
-    delete '/coursemapunit/:courseMapUnitId' do
+    delete '/coursemapunit/courseMapUnitId/:courseMapUnitId' do
       course_map_unit = Coursemapunit.find(params[:courseMapUnitId]) # delete the course map unit by ID
       course_map_unit.destroy
       { message: "Course map unit with ID #{params[:courseMapUnitId]} has been deleted" } # return a message saying the course map unit was deleted
