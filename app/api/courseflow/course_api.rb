@@ -14,12 +14,10 @@ module Courseflow
     params do
       requires :courseId, type: Integer, desc: "Course ID"
     end
-    get '/course/:courseId' do
+    get '/course/courseId/:courseId' do
       course = Course.find(params[:courseId]) # find the course by ID
       present course, with: Entities::CourseEntity      # present the course using the CourseEntity
     end
-
-    #CREATE MESSAGE TO CHANGE THE ENDPOINT DEFINITIONS
 
     desc "Get courses that partially match the search params"
     params do # define the parameters that can be used to filter the courses, all optional, if none given it'll return every course
@@ -27,7 +25,7 @@ module Courseflow
       optional :code, type: String, desc: "Course code"
       optional :year, type: Integer, desc: "Course year"
     end
-    get '/course/search/params' do
+    get '/course/search' do
       courses = Course.all # gets all courses initially
 
       courses = courses.where("name LIKE :name", name: "%#{params[:name]}%") if params[:name].present?  # if name is provided, filter by name, even partially
@@ -63,7 +61,7 @@ module Courseflow
       requires :version, type: String
       requires :url, type: String
     end
-    put '/course/:courseId' do
+    put '/course/courseId/:courseId' do
       course = Course.find(params[:courseId]) # find the course by ID
       error!({ error: "Course not found" }, 404) unless course # return an error if the course is not found
 
@@ -78,7 +76,7 @@ module Courseflow
     params do
       requires :courseId, type: Integer, desc: "Course ID"
     end
-    delete '/course/:courseId' do
+    delete '/course/courseId/:courseId' do
       course = Course.find(params[:courseId]) # find the course by ID
       course.destroy
       { message: "Course with ID #{params[:courseId]} has been deleted" } # return a message saying the course was deleted

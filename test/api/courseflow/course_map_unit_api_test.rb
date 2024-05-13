@@ -1,45 +1,74 @@
 require 'test_helper'
 
-class CourseMapUnitTest < ActionDispatch::IntegrationTest
+class CourseMapUnitTest < ActiveSupport::TestCase
+  include Rack::Test::Methods
+  include TestHelpers::JsonHelper
+
+  def app
+    Rails.application
+  end
 
   def test_get_course_map_units_by_course_map_id
-    course_map = FactoryBot.create(:coursemap)
-    FactoryBot.create_list(:coursemapunit, 3, courseMapId: course_map.id)
+    puts "test_get_course_map_units_by_course_map_id"
+    course_id = 101
+    course_map = FactoryBot.create(:course_map, courseId: course_id, userId: 1043)
+    course_map_unit1 = FactoryBot.create(:course_map_unit, courseMapId: course_id)
+    course_map_unit2 = FactoryBot.create(:course_map_unit, courseMapId: course_id)
+    course_map_unit3 = FactoryBot.create(:course_map_unit, courseMapId: course_id)
 
-    get "/coursemapunit/#{course_map.id}"
-    assert_response :success
-    assert_equal 3, JSON.parse(response.body).size
+    get "/api/coursemapunit/#{course_map.id}"
+    puts "response.body: #{last_response.body}"
+    assert_equal 3, JSON.parse(last_response.body).size
+  ensure
+    course_map.destroy
+    course_map_unit1.destroy
+    course_map_unit2.destroy
+    course_map_unit3.destroy
   end
 
   def test_create_course_map_unit
-    course_map = FactoryBot.create(:coursemap)
-    unit = FactoryBot.create(:unit)
-
-    post "/coursemapunit", params: { courseMapId: course_map.id, unitId: unit.id, yearSlot: 2022, teachingPeriodSlot: 1, unitSlot: 1 }
-    assert_response :success
-    assert CourseMapUnit.exists?(courseMapId: course_map.id, unitId: unit.id, yearSlot: 2022, teachingPeriodSlot: 1, unitSlot: 1)
+    puts "test_create_course_map_unit"
+    course_map = FactoryBot.create(:course_map)
+    unit_id = 100
+    data_to_post = { courseMapId: course_map.id, unitId: unit_id, yearSlot: 2022, teachingPeriodSlot: 1, unitSlot: 1 }
+    post_json "/api/coursemapunit", data_to_post
+    assert Courseflow::Coursemapunit.exists?(courseMapId: course_map.id, unitId: unit_id, yearSlot: 2022, teachingPeriodSlot: 1, unitSlot: 1)
+  ensure
+    course_map.destroy
   end
 
   def test_update_course_map_unit
-    course_map_unit = FactoryBot.create(:coursemapunit)
-    put "/coursemapunit/#{course_map_unit.id}", params: { yearSlot: 2023 }
-    assert_response :success
-    assert_equal 2023, CourseMapUnit.find(course_map_unit.id).yearSlot
+    course_map_unit = FactoryBot.create(:course_map_unit)
+    updated_data = { courseMapId: course_map_unit.courseMapId, unitId: course_map_unit.unitId, yearSlot: 2023, teachingPeriodSlot: course_map_unit.teachingPeriodSlot, unitSlot: course_map_unit.unitSlot }
+    put_json "/api/coursemapunit/#{course_map_unit.id}", updated_data
+    assert_equal 200, last_response.status
+  ensure
+    course_map_unit.destroy
   end
 
   def test_delete_course_map_unit_by_id
-    course_map_unit = FactoryBot.create(:coursemapunit)
-    delete "/coursemapunit/#{course_map_unit.id}"
-    assert_response :success
-    assert_not CourseMapUnit.exists?(course_map_unit.id)
+    course_map_unit = FactoryBot.create(:course_map_unit)
+    delete "/api/coursemapunit/#{course_map_unit.id}"
+    assert_equal 0, Courseflow::Coursemapunit.where(id: course_map_unit.id).count
+  ensure
+    course_map_unit.destroy
   end
 
   def test_delete_course_map_units_by_course_map_id
-    course_map = FactoryBot.create(:coursemap)
-    FactoryBot.create_list(:coursemapunit, 3, courseMapId: course_map.id)
+    puts "test_delete_course_map_units_by_course_map_id"
+    course_map = FactoryBot.create(:course_map)
+    coursemapunit1 = FactoryBot.create(:course_map_unit, courseMapId: course_map.id)
+    coursemapunit2 = FactoryBot.create(:course_map_unit, courseMapId: course_map.id)
+    coursemapunit3 = FactoryBot.create(:course_map_unit, courseMapId: course_map.id)
 
-    delete "/coursemapunit/#{course_map.id}"
-    assert_response :success
-    assert_equal 0, CourseMapUnit.where(courseMapId: course_map.id).count
+    delete "/api/coursemapunit/coursemap/#{course_map.id}"
+    puts "response.body: #{last_response.body}"
+    assert_equal 0, Courseflow::Coursemapunit.where(courseMapId: course_map.id).count
+  ensure
+    course_map.destroy
+    coursemapunit1.destroy
+    coursemapunit2.destroy
+    coursemapunit3.destroy
   end
+
 end

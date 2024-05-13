@@ -7,7 +7,7 @@ module Courseflow
     params do
       requires :userId, type: Integer, desc: "User ID"
     end
-    get '/coursemap/user/:userId' do
+    get '/coursemap/userId/:userId' do
       course_map = Coursemap.find_by(userId: params[:userId])
       if course_map
         present course_map, with: Entities::CourseMapEntity
@@ -20,7 +20,7 @@ module Courseflow
     params do
       requires :courseId, type: Integer, desc: "Course ID"
     end
-    get '/coursemap/course/:courseId' do
+    get '/coursemap/courseId/:courseId' do
       course_map = Coursemap.where(courseId: params[:courseId])
       if course_map
         present course_map, with: Entities::CourseMapEntity
@@ -49,12 +49,12 @@ module Courseflow
       requires :userId, type: Integer
       requires :courseId, type: Integer
     end
-    put '/coursemap/:courseMapId' do
+    put '/coursemap/courseMapId/:courseMapId' do
       course_map = Coursemap.find(params[:courseMapId])
       if course_map.update(params.except(:courseMapId))
         present course_map, with: Entities::CourseMapEntity
       else
-        error!({ error: "Failed to update course map", details: coursemap.errors.full_messages }, 400)
+        error!({ error: "Failed to update course map", details: course_map.errors.full_messages }, 400)
       end
     end
 
@@ -62,7 +62,7 @@ module Courseflow
     params do
       requires :courseMapId, type: Integer, desc: "Course map ID"
     end
-    delete '/coursemap/:courseMapId' do
+    delete '/coursemap/courseMapId/:courseMapId' do
       course_map = Coursemap.find(params[:courseMapId])
       if course_map
         course_map.destroy
@@ -75,7 +75,7 @@ module Courseflow
     params do
       requires :userId, type: Integer, desc: "User ID"
     end
-    delete '/coursemap/user/:userId' do
+    delete '/coursemap/userId/:userId' do
       course_map = Coursemap.find(params[:userId])
       if course_map
         course_map.destroy
