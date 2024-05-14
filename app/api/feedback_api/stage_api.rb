@@ -1,4 +1,5 @@
 require 'grape'
+require_relative '../../models/feedback/stage'
 
 module FeedbackApi
   class StageApi < Grape::API
@@ -20,6 +21,7 @@ module FeedbackApi
         .permit(:title, :order)
 
       stage_parameters[:task_definition] = task_definition
+
 
       result = Stage.create!(stage_parameters)
 
@@ -43,7 +45,7 @@ module FeedbackApi
     desc 'This endpoint allows you to update the name and order of a stage.'
     params do
       optional :title, type: String,  desc: 'The new title for the stage'
-      optional :order, type: Integer,  desc: 'The order value for the stage'
+      optional :order, type: Integer, desc: 'The order value for the stage'
     end
     put '/stages/:id' do
       # Get the stage from the task definition
@@ -54,7 +56,7 @@ module FeedbackApi
       end
 
       stage_params = ActionController::Parameters.new(params)
-        .permit(:title, :order)
+                                                 .permit(:title, :order)
 
       stage.update!(stage_params)
 
