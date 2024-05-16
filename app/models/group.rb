@@ -1,6 +1,4 @@
 class Group < ApplicationRecord
-  include LogHelper
-
   belongs_to :group_set, optional: false
   belongs_to :tutorial, optional: false
 
@@ -83,7 +81,7 @@ class Group < ApplicationRecord
   def specific_permission_hash(role, perm_hash, _other)
     result = perm_hash[role] unless perm_hash.nil?
     if result && role == :student
-      result << :manage_group if (!locked && !group_set.locked && group_set.allow_students_to_manage_groups)
+      result << :manage_group if !locked && !group_set.locked && group_set.allow_students_to_manage_groups
     end
     result
   end

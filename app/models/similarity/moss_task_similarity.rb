@@ -3,7 +3,7 @@
 class MossTaskSimilarity < TaskSimilarity
   belongs_to :other_task, class_name: 'Task'
 
-  def html_path
+  def file_path
     FileHelper.path_to_plagarism_html(self)
   end
 
@@ -42,5 +42,9 @@ class MossTaskSimilarity < TaskSimilarity
   def other_tutorial
     tute = other_task.project.tutorial_for(other_task.task_definition) unless other_task.nil?
     tute.nil? ? 'None' : tute.abbreviation
+  end
+
+  def ready_for_viewer?
+    true
   end
 end
