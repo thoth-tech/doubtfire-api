@@ -17,11 +17,9 @@ module FeedbackApi
         error!({ error: 'Not authorised to create a stage for this unit' }, 403)
       end
 
-      stage_parameters = ActionController::Parameters.new(params)
-        .permit(:title, :order)
+      stage_parameters = ActionController::Parameters.new(params).permit(:title, :order)
 
       stage_parameters[:task_definition] = task_definition
-
 
       result = Stage.create!(stage_parameters)
 
