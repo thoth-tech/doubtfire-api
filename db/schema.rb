@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.0].define(version: 2023_06_03_064217) do
+ActiveRecord::Schema[7.0].define(version: 2023_12_01_000245) do
   create_table "activity_types", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
     t.string "name", null: false
     t.string "abbreviation", null: false
@@ -192,6 +192,13 @@ ActiveRecord::Schema[7.0].define(version: 2023_06_03_064217) do
     t.text "description"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+  end
+
+  create_table "stages", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
+    t.string "title", null: false
+    t.integer "order", null: false
+    t.bigint "task_definition_id"
+    t.index ["task_definition_id"], name: "index_stages_on_task_definition_id"
   end
 
   create_table "task_comments", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
