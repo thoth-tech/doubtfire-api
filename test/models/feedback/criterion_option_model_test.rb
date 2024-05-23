@@ -7,7 +7,6 @@ class CriterionOptionModelTest < ActiveSupport::TestCase
     
     # Setup objects for testing
     setup do
-        DatabaseCleaner.start
         @criterion = FactoryBot.create(:criterion)
         @task_status = TaskStatus.new
     end

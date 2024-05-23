@@ -7,7 +7,6 @@ class FeedbackCommentTemplateModelTest < ActiveSupport::TestCase
 
     # Setup objects for testing
     def setup
-        DatabaseCleaner.start
         task_status = TaskStatus.new
         @criterion_option = CriterionOption.create(task_status: task_status)
     end

@@ -1,9 +1,10 @@
 module Entities
-  # entities present the data in a specific format to the user
-  class CriterionEntity < Grape::Entity
-    expose :id
-    expose :help_text
-    expose :description
-    expose :order
+  module FeedbackEntities
+    class CriterionEntity < Grape::Entity
+      expose :id
+      expose :order
+      expose :description
+      expose :help_text
+    end
   end
 end

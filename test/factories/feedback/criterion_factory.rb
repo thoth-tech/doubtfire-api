@@ -5,7 +5,7 @@ FactoryBot.define do
             number_of_criterion_options {0}
         end
 
-        stage
+        association :stage
 
         sequence(:order)            { |n| n }
         description                 { Faker::Lorem.sentence }

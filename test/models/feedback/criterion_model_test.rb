@@ -6,7 +6,6 @@ require 'test_helper'
 class CriterionModelTest < ActiveSupport::TestCase
 
     setup do
-        DatabaseCleaner.start
         @stage = FactoryBot.create(:stage)
     end
     
@@ -14,21 +13,20 @@ class CriterionModelTest < ActiveSupport::TestCase
     def test_valid_criterion_creation
         criterion = Criterion.create(stage: @stage, description: 'Criterion 1', order: 1)
     
-        assert criterion
-        assert criterion.stage
+        assert criterion.valid?
+        assert criterion.stage == @stage
         assert criterion.description == 'Criterion 1'
         assert criterion.order == 1
     end
     
     # Test you cannot create an invalid criterion
     def test_criterion_order_and_description_are_required
-        # stage = FactoryBot.create(:stage)
         criterion = Criterion.create(stage: @stage)
     
         refute criterion.valid? # "refute": fail if true, pass if false
-        # Validator is included in criterion model (@ doubtfire-api/app/models/feedback/criterion.rb)
+        # Validator is included in criterion model at doubtfire-api/app/models/feedback/criterion.rb
         criterion.description = 'Criterion 1'
-        refute criterion.valid? # still shoul not be valid until order is added
+        refute criterion.valid? # still should not be valid until order is added
         criterion.order = 1
         assert criterion.valid?
         criterion.description = nil

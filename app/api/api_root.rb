@@ -56,6 +56,9 @@ class ApiRoot < Grape::API
   mount DiscussionCommentApi
   mount ExtensionCommentsApi
   mount FeedbackApi::StageApi
+  mount FeedbackApi::FeedbackCommentTemplateApi
+  mount FeedbackApi::CriterionApi
+  mount FeedbackApi::CriterionOptionApi
   mount GroupSetsApi
   mount LearningOutcomesApi
   mount LearningAlignmentApi
@@ -103,6 +106,9 @@ class ApiRoot < Grape::API
   AuthenticationHelpers.add_auth_to ProjectsApi
   AuthenticationHelpers.add_auth_to StudentsApi
   AuthenticationHelpers.add_auth_to FeedbackApi::StageApi
+  AuthenticationHelpers.add_auth_to FeedbackApi::FeedbackCommentTemplateApi
+  AuthenticationHelpers.add_auth_to FeedbackApi::CriterionApi
+  AuthenticationHelpers.add_auth_to FeedbackApi::CriterionOptionApi
   AuthenticationHelpers.add_auth_to Submission::PortfolioApi
   AuthenticationHelpers.add_auth_to Submission::PortfolioEvidenceApi
   AuthenticationHelpers.add_auth_to Submission::BatchTaskApi

@@ -67,6 +67,7 @@ ActiveRecord::Schema[7.0].define(version: 2023_06_03_064217) do
     t.string "unresolved_message_text"
     t.bigint "criterion_id"
     t.bigint "task_status_id"
+    t.string "outcome_status"
     t.index ["criterion_id"], name: "index_criterion_options_on_criterion_id"
     t.index ["task_status_id"], name: "index_criterion_options_on_task_status_id"
   end
@@ -82,9 +83,7 @@ ActiveRecord::Schema[7.0].define(version: 2023_06_03_064217) do
   create_table "feedback_comment_templates", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
     t.string "comment_text_situation", null: false
     t.string "comment_text_next_action"
-    t.bigint "criterion_option_id"
     t.bigint "user_id"
-    t.index ["criterion_option_id"], name: "index_feedback_comment_templates_on_criterion_option_id"
     t.index ["user_id"], name: "index_feedback_comment_templates_on_user_id"
   end
   

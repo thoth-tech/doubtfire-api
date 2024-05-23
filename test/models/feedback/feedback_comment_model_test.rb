@@ -7,7 +7,6 @@ class FeedbackCommentModelTest < ActiveSupport::TestCase
 
     # Setup objects for testing
     def setup
-        DatabaseCleaner.start
         criterion = FactoryBot.create(:criterion)
         task_status = TaskStatus.new
         @criterion_option = CriterionOption.create(criterion: criterion, task_status: task_status)

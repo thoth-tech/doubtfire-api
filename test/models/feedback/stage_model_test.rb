@@ -5,7 +5,7 @@ require 'test_helper'
 #
 class StageModelTest < ActiveSupport::TestCase
 
-  # # Set up variables for testing
+  # Set up variables for testing
   setup do
     @td = FactoryBot.create(:task_definition)
     @title = Faker::Lorem.sentence
@@ -14,7 +14,6 @@ class StageModelTest < ActiveSupport::TestCase
 
   # Test that you can create a valid stage
   def test_valid_stage_creation
-    DatabaseCleaner.start
     stage = Stage.create!(task_definition: @td, title: @title, order: @order)
 
     assert stage.valid? # "assert": pass if true, i.e. pass if stage exists

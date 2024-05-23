@@ -1,6 +1,8 @@
 module Entities
-  class FeedbackCommentEntity < Grape::Entity
-    expose :id
-    expose :comment
+  module FeedbackEntities
+    class FeedbackCommentEntity < Grape::Entity
+      expose :id
+      expose :comment
+    end
   end
 end

@@ -6,7 +6,10 @@ module FeedbackApi
     params do
       requires :task_definition_id, type: Integer, desc: 'The task definition to which the stage belongs'
       requires :title, type: String,  desc: 'The title of the new stage'
-      requires :order, type: Integer, desc: 'The order to determine the order in which to display stages'
+      requires :order, type: Integer, desc: 'The order in which to display the stages'
+      optional :entry_message, type: String, desc: 'The message to display to students when they enter the stage'
+      optional :exit_message_good, type: String, desc: 'The message to display to students who have achieved a passable level of work'
+      optional :exit_message_resubmit, type: String, desc: 'The message to display to students who have not achieved a passable level of work'
     end
     post '/stages' do
       task_definition = TaskDefinition.find(params[:task_definition_id])
@@ -16,13 +19,13 @@ module FeedbackApi
       end
 
       stage_parameters = ActionController::Parameters.new(params)
-        .permit(:title, :order)
+                                                     .permit(:title, :order) # only `:title` and `:order` fields of the Stage model can be set directly from the user input.
 
       stage_parameters[:task_definition] = task_definition
 
       result = Stage.create!(stage_parameters)
 
-      present result, with: Entities::StageEntity
+      present result, with: Entities::FeedbackEntities::StageEntity
     end
 
     desc 'This endpoint allows you to get all the stages for a given task definition.'
@@ -36,7 +39,7 @@ module FeedbackApi
         error!({ error: 'Not authorised to get feedback stages for this unit' }, 403)
       end
 
-      present task_definition.stages, with: Entities::StageEntity
+      present task_definition.stages, with: Entities::FeedbackEntities::StageEntity
     end
 
     desc 'This endpoint allows you to update the name and order of a stage.'
@@ -53,11 +56,11 @@ module FeedbackApi
       end
 
       stage_params = ActionController::Parameters.new(params)
-        .permit(:title, :order)
+                                                 .permit(:title, :order)
 
       stage.update!(stage_params)
 
-      present stage, with: Entities::StageEntity
+      present stage, with: Entities::FeedbackEntities::StageEntity
     end
 
     desc 'This endpoint allows you to delete a stage.'
