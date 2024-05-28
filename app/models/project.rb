@@ -70,6 +70,11 @@ class Project < ApplicationRecord
       :get,
       :get_submission
     ]
+    # What can auditors do with projects?
+    auditor_role_permissions = [
+      :get,
+      :get_submission
+    ]
     # What can nil users do with projects?
     nil_role_permissions = []
 
@@ -78,6 +83,7 @@ class Project < ApplicationRecord
       student: student_role_permissions,
       tutor: tutor_role_permissions,
       admin: admin_role_permissions,
+      auditor: auditor_role_permissions,
       nil: nil_role_permissions
     }
   end
@@ -229,6 +235,7 @@ class Project < ApplicationRecord
     if user == student then :student
     elsif user.present? && unit.tutors.where(id: user.id).count != 0 then :tutor
     elsif user.present? && user.role.id == Role.admin_id then :admin
+    elsif user.present? && user.role.id == Role.auditor_id then :auditor
     else nil
     end
   end
