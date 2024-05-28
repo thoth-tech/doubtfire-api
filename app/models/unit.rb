@@ -63,6 +63,7 @@ class Unit < ApplicationRecord
       :employ_staff,
       :add_tutorial,
       :add_task_def,
+      :provide_feedback,
       :download_stats,
       :download_unit_csv,
       :download_grades,
@@ -73,6 +74,7 @@ class Unit < ApplicationRecord
     auditor_role_permissions = [
       :get_unit,
       :get_students,
+      :provide_feedback,
       :download_stats,
       :download_unit_csv,
       :download_grades
