@@ -2,6 +2,7 @@ require "test_helper"
 
 class CourseTest < ActiveSupport::TestCase
   include Rack::Test::Methods
+  include TestHelpers::AuthHelper
   include TestHelpers::JsonHelper
 
   def app
@@ -104,14 +105,18 @@ class CourseTest < ActiveSupport::TestCase
       version: "1.0",
       url: "http://example.com"
     }
+    add_auth_header_for user: User.first
     post_json '/api/course', data_to_post
+    puts last_response.body
     assert_equal 201, last_response.status
   end
 
   def test_search_filtering
     course1 = FactoryBot.create(:course, name: 'Bachelor of Data Science', code: 'S379')
     course2 = FactoryBot.create(:course, name: 'Bachelor of Arts', code: 'A300')
+    add_auth_header_for user: User.first
     get "/api/course/search?name=Data"
+    puts last_response.body
     assert_equal 1, JSON.parse(last_response.body).size
   ensure
     course1.destroy
@@ -122,7 +127,9 @@ class CourseTest < ActiveSupport::TestCase
     course1 = FactoryBot.create(:course, name: 'Bachelor of Data Science', code: 'S304', year: 2024, version: '1.0', url: 'http://example.com')
     course2 = FactoryBot.create(:course, name: 'Bachelor of Computer Science', code: 'S364', year: 2024, version: '1.0', url: 'http://example.com')
     course3 = FactoryBot.create(:course, name: 'Bachelor of Arts', code: 'A343', year: 2024, version: '1.0', url: 'http://example.com')
+    add_auth_header_for user: User.first
     get "/api/course/search"
+    puts last_response.body
     assert_equal 3, JSON.parse(last_response.body).size
   ensure
     course1.destroy
@@ -133,7 +140,9 @@ class CourseTest < ActiveSupport::TestCase
   def test_update_valid_course
     course = FactoryBot.create(:course)
     updated_data = { name: 'New Name', code: course.code, year: course.year, version: course.version, url: course.url }
+    add_auth_header_for user: User.first
     put_json "/api/course/courseId/#{course.id}", updated_data
+    puts last_response.body
     assert_equal 200, last_response.status
   ensure
     course.destroy
@@ -142,7 +151,9 @@ class CourseTest < ActiveSupport::TestCase
   def test_update_invalid_course
     course = FactoryBot.create(:course)
     updated_data = { name: '', code: course.code, year: course.year, version: course.version, url: course.url }
+    add_auth_header_for user: User.first
     put_json "/api/course/courseId/#{course.id}", updated_data
+    puts last_response.body
     assert_equal 400, last_response.status
   ensure
     course.destroy
@@ -150,7 +161,9 @@ class CourseTest < ActiveSupport::TestCase
 
   def test_delete_existing_course
     course = FactoryBot.create(:course, name: 'Test to delete', code: 'todelete')
+    add_auth_header_for user: User.first
     delete_json "/api/course/courseId/#{course.id}"
+    puts last_response.body
     assert_equal 0, Courseflow::Course.where(id: course.id).count
     assert_nil Courseflow::Course.find_by(id: course.id)
   ensure
@@ -158,8 +171,23 @@ class CourseTest < ActiveSupport::TestCase
   end
 
   def test_delete_non_existent_course
+    add_auth_header_for user: User.first
     delete_json "/api/course/courseId/9999"
+    puts last_response.body
     assert_equal 404, last_response.status
+  end
+
+  def test_course_create_unauthorised
+    data_to_post = {
+      name: "Bachelor of Biochemistry",
+      code: "C053",
+      year: 2023,
+      version: "1.0",
+      url: "http://example.com"
+    }
+    post_json '/api/course', data_to_post
+    puts last_response.body
+    assert_equal 419, last_response.status
   end
 
 end

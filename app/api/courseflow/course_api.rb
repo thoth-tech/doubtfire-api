@@ -3,6 +3,12 @@ module Courseflow
   class CourseApi < Grape::API
 
     format :json
+    helpers AuthenticationHelpers
+    helpers AuthorisationHelpers
+
+    before do
+      authenticated?
+    end
 
     desc "Get all course data"
     get '/course' do
@@ -44,6 +50,9 @@ module Courseflow
       requires :url, type: String
     end
     post '/course' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to create a course' }, 403)
+      end
       course = Course.new(params) # create a new course with the provided params
       if course.save
         present course, with: Entities::CourseEntity # if the course is saved, present the course using the CourseEntity
@@ -62,6 +71,9 @@ module Courseflow
       requires :url, type: String
     end
     put '/course/courseId/:courseId' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to update a course' }, 403)
+      end
       course = Course.find(params[:courseId]) # find the course by ID
       error!({ error: "Course not found" }, 404) unless course # return an error if the course is not found
 
@@ -77,6 +89,9 @@ module Courseflow
       requires :courseId, type: Integer, desc: "Course ID"
     end
     delete '/course/courseId/:courseId' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to delete a course' }, 403)
+      end
       course = Course.find(params[:courseId]) # find the course by ID
       course.destroy
       { message: "Course with ID #{params[:courseId]} has been deleted" } # return a message saying the course was deleted
