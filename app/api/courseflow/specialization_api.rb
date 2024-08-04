@@ -3,6 +3,12 @@ module Courseflow
   class SpecializationApi < Grape::API
 
     format :json
+    helpers AuthenticationHelpers
+    helpers AuthorisationHelpers
+
+    before do
+      authenticated?
+    end
 
     desc "Get all specialization data"
     get '/specialization' do
@@ -24,6 +30,9 @@ module Courseflow
       requires :specialization, type: String
     end
     post '/specialization' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to add a specialization' }, 403)
+      end
       specialization = Specialization.new(params) # create a new specialization with the provided params
       if specialization.save
         present specialization, with: Entities::SpecializationEntity # if the specialization is saved, present the specialization using the SpecializationEntity
@@ -38,6 +47,9 @@ module Courseflow
       requires :specialization, type: String
     end
     put '/specialization/specializationId/:specializationId' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to update specializations' }, 403)
+      end
       specialization = Specialization.find(params[:specializationId]) # find the specialization by ID
       if specialization.update(specialization: params{:specialization}) # update the specialization with the provided params
         present specialization, with: Entities::SpecializationEntity # if the specialization is updated, present the specialization using the SpecializationEntity
@@ -51,6 +63,9 @@ module Courseflow
       requires :specializationId, type: Integer, desc: "Specialization ID"
     end
     delete '/specialization/specializationId/:specializationId' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to delete specializations' }, 403)
+      end
       specialization = Specialization.find(params[:specializationId]) # find the specialization by ID
       specialization.destroy # delete the specialization
       { message: "Specialization with ID #{params[:specializationId]} has been deleted" } # return a message saying the course was deleted
