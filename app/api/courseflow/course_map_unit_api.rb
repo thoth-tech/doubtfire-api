@@ -3,6 +3,12 @@ module Courseflow
   class CourseMapUnitApi < Grape::API
 
     format :json
+    helpers AuthenticationHelpers
+    helpers AuthorisationHelpers
+
+    before do
+      authenticated?
+    end
 
     desc "Get course map unit via course map ID"
     params do
@@ -22,6 +28,9 @@ module Courseflow
       requires :unitSlot, type: Integer
     end
     post '/coursemapunit' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to add new course map unit' }, 403)
+      end
       course_map_unit = CourseMapUnit.new(params) # create a new course map unit with the provided params
       if course_map_unit.save
         present course_map_unit, with: Entities::CourseMapUnitEntity # if the course map unit is saved, present the course map unit using the CourseMapUnitEntity
@@ -40,6 +49,9 @@ module Courseflow
       requires :unitSlot, type: Integer
     end
     put '/coursemapunit/courseMapUnitId/:courseMapUnitId' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to update a course map unit' }, 403)
+      end
       course_map_unit = CourseMapUnit.find(params[:courseMapUnitId])
       error!({ error: "Course map unit not found" }, 404) unless course_map_unit
 
@@ -55,6 +67,9 @@ module Courseflow
       requires :courseMapId, type: Integer, desc: "Course map ID"
     end
     delete '/coursemapunit/courseMapId/:courseMapId' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to delete course map units' }, 403)
+      end
       course_map_units = CourseMapUnit.where(courseMapId: params[:courseMapId]) # delete all course map units associated with the course map ID
       course_map_units.destroy_all
       { message: "Course map units with course map ID #{params[:courseMapId]} have been deleted" }
@@ -65,6 +80,9 @@ module Courseflow
       requires :courseMapUnitId, type: Integer, desc: "Course map unit ID"
     end
     delete '/coursemapunit/courseMapUnitId/:courseMapUnitId' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to delete course map units' }, 403)
+      end
       course_map_unit = CourseMapUnit.find(params[:courseMapUnitId]) # delete the course map unit by ID
       course_map_unit.destroy
       { message: "Course map unit with ID #{params[:courseMapUnitId]} has been deleted" } # return a message saying the course map unit was deleted

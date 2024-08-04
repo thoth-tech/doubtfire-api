@@ -1,7 +1,14 @@
 require 'grape'
 module Courseflow
   class CourseMapApi < Grape::API
+
     format :json
+    helpers AuthenticationHelpers
+    helpers AuthorisationHelpers
+
+    before do
+      authenticated?
+    end
 
     desc "Get course map via user ID"
     params do
@@ -35,6 +42,9 @@ module Courseflow
       requires :courseId, type: Integer
     end
     post '/coursemap' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to add a new course map' }, 403)
+      end
       course_map = CourseMap.new(params)
       if course_map.save
         present course_map, with: Entities::CourseMapEntity
@@ -43,13 +53,16 @@ module Courseflow
       end
     end
 
-    desc "Update an existing course map unit via its ID"
+    desc "Update an existing course map via its ID"
     params do
       requires :courseMapId, type: Integer, desc: "Course map ID"
       requires :userId, type: Integer
       requires :courseId, type: Integer
     end
     put '/coursemap/courseMapId/:courseMapId' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to update course maps' }, 403)
+      end
       course_map = CourseMap.find(params[:courseMapId])
       if course_map.update(params.except(:courseMapId))
         present course_map, with: Entities::CourseMapEntity
@@ -58,11 +71,14 @@ module Courseflow
       end
     end
 
-    desc "Delete all course map units via its associated course map ID"
+    desc "Delete all course maps via its associated course map ID"
     params do
       requires :courseMapId, type: Integer, desc: "Course map ID"
     end
     delete '/coursemap/courseMapId/:courseMapId' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to delete course maps' }, 403)
+      end
       course_map = CourseMap.find(params[:courseMapId])
       if course_map
         course_map.destroy
@@ -71,11 +87,14 @@ module Courseflow
       end
     end
 
-    desc "Delete all course map units via its associated user ID"
+    desc "Delete all course maps via its associated user ID"
     params do
       requires :userId, type: Integer, desc: "User ID"
     end
     delete '/coursemap/userId/:userId' do
+      unless authorise? current_user, User, :handle_courseflow
+        error!({ error: 'Not authorised to delete course maps' }, 403)
+      end
       course_map = CourseMap.find(params[:userId])
       if course_map
         course_map.destroy
