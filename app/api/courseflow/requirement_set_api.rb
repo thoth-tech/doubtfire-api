@@ -1,8 +1,13 @@
 require 'grape'
 module Courseflow
   class RequirementSetApi < Grape::API
-
     format :json
+    helpers AuthenticationHelpers
+    helpers AuthorisationHelpers
+
+    before do
+      authenticated?
+    end
 
     desc "Get all requirement set data"
     get '/requirementset' do
@@ -16,6 +21,9 @@ module Courseflow
     end
     get '/requirementset/requirementSetGroupId/:requirementSetGroupId' do
       requirement_set = RequirementSet.where(requirementSetGroupId: params[:requirementSetGroupId]) # find the requirement set by ID
+      if requirement_set.empty?
+        error!({ error: "Requirement Set with group ID #{params[:requirementSetGroupId]} not found" }, 404) # if the requirement set group is not found, return an error
+      end
       present requirement_set, with: Entities::RequirementSetEntity      # present the requirement set using the RequirementSetEntity
     end
 
@@ -27,6 +35,9 @@ module Courseflow
       requires :requirementId, type: Integer
     end
     post '/requirementset' do
+      unless authorise? current_user, User, :handle_courseflow # check if the user is authorised to manage courseflow
+        error!({ error: 'Not authorised to add a requirement set' }, 403)
+      end
       requirement_set = RequirementSet.new(params) # create a new requirement set with the provided params
       if requirement_set.save
         present requirement_set, with: Entities::RequirementSetEntity # if the requirement set is saved, present the requirement set using the RequirementSetEntity
@@ -44,6 +55,9 @@ module Courseflow
       requires :requirementId, type: Integer
     end
     put '/requirementset/requirementSetId/:requirementSetId' do
+      unless authorise? current_user, User, :handle_courseflow # check if the user is authorised to manage courseflow
+        error!({ error: 'Not authorised to update a requirement set' }, 403)
+      end
       requirement_set = RequirementSet.find(params[:requirementSetId]) # find the requirement set by ID
       if requirement_set.update(requirementSetGroupId: params[:requirementSetGroupId], description: params[:description], unitId: params[:unitId], requirementId: params[:requirementId]) # update the requirement set with the provided params
         present requirement_set, with: Entities::RequirementSetEntity # if the requirement set is updated, present the requirement set using the RequirementSetEntity
@@ -57,6 +71,9 @@ module Courseflow
       requires :requirementSetId, type: Integer, desc: "Requirement Set ID"
     end
     delete '/requirementset/requirementSetId/:requirementSetId' do
+      unless authorise? current_user, User, :handle_courseflow # check if the user is authorised to manage courseflow
+        error!({ error: 'Not authorised to delete a requirement set' }, 403)
+      end
       requirement_set = RequirementSet.find(params[:requirementSetId]) # find the requirement set by ID
       requirement_set.destroy # if the requirement set is deleted
       { message: "Requirement Set with ID #{params[:requirementSetId]} has been deleted" } # return a message saying the course was deleted
