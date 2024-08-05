@@ -51,7 +51,7 @@ module Courseflow
         error!({ error: 'Not authorised to update specializations' }, 403)
       end
       specialization = Specialization.find(params[:specializationId]) # find the specialization by ID
-      if specialization.update(specialization: params{:specialization}) # update the specialization with the provided params
+      if specialization.update(specialization: params[:specialization]) # update the specialization with the provided params
         present specialization, with: Entities::SpecializationEntity # if the specialization is updated, present the specialization using the SpecializationEntity
       else
         error!({ error: "Failed to update specialization", details: specialization.errors.full_messages }, 400) # if the specialization is not updated, return an error with the full error messages
