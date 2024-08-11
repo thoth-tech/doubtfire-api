@@ -81,7 +81,11 @@ ActiveRecord::Schema[7.1].define(version: 2024_05_28_223908) do
     t.datetime "updated_at", null: false
   end
 
+<<<<<<< HEAD
   create_table "discussion_comments", charset: "utf8mb3", collation: "utf8mb3_unicode_ci", force: :cascade do |t|
+=======
+  create_table "discussion_comments", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
+>>>>>>> origin/feature/specializationapi
     t.datetime "time_started"
     t.datetime "time_completed"
     t.integer "number_of_prompts"
