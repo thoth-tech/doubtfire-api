@@ -80,3 +80,4 @@ class FeedbackCommentTemplateModelTest < ActiveSupport::TestCase
       # Test that the feedback comment template is unsaved
       refute feedback_comment_template.save # fail if feedback_comment_template is saved
   end
+end
