@@ -1,8 +1,12 @@
 class FeedbackCommentTemplate < ApplicationRecord
   # Associations
-  has_and_belongs_to_many :criterion_options
+  belongs_to :feedback_group
+  # belongs_to :task_status, optional: true
 
-  # Constraints
-  validates :comment_text_situation, presence: true
-  validates :comment_text_next_action, presence: true
+  # Validations
+  validates :abbreviation, presence: true
+  validates :order, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
+  validates :chip_text, length: { maximum: 20 }
+  validates :description, :comment_text, :summary_text, presence: true
+  # validates :task_status, presence: true
 end

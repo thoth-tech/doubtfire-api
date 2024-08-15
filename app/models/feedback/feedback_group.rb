@@ -1,7 +1,7 @@
 class FeedbackGroup < ApplicationRecord
   # Associations
   belongs_to :task_definition
-  has_many :feedback_comment_template, dependent: :destroy
+  has_many :feedback_comment_templates, dependent: :destroy
   has_one :unit, through: :task_definition
 
   # Constraints

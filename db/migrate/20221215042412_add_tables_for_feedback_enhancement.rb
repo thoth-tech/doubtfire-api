@@ -38,7 +38,7 @@ class AddTablesForFeedbackEnhancement < ActiveRecord::Migration[7.0]
       t.string      :comment_text_situation, null: false
       t.string      :comment_text_next_action
 
-      #Foreign keys
+      # Foreign keys
       t.references  :criterion_option
       t.references  :user
     end
