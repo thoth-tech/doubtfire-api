@@ -4,77 +4,73 @@ require_relative '../../models/feedback/feedback_group'
 module FeedbackApi
   class FeedbackGroupApi < Grape::API
 
-    desc 'Feedback is provided in stages. This endpoint allows you to create a new stage for feedback on tasks for a given task definition.'
+    desc 'Feedback is grouped for tasks. This endpoint allows you to create a new feedback group for a given task definition.'
     params do
-      requires :task_definition_id, type: Integer, desc: 'The task definition to which the stage belongs'
-      requires :title, type: String,  desc: 'The title of the new stage'
-      requires :order, type: Integer, desc: 'The order in which to display the stages'
-      optional :entry_message, type: String, desc: 'The message to display to students when they enter the stage'
-      optional :exit_message_good, type: String, desc: 'The message to display to students who have achieved a passable level of work'
-      optional :exit_message_resubmit, type: String, desc: 'The message to display to students who have not achieved a passable level of work'
+      requires :task_definition_id, type: Integer, desc: 'The task definition to which the feedback group belongs'
+      requires :title, type: String,  desc: 'The title of the new feedback group'
+      requires :order, type: Integer, desc: 'The order in which to display the feedback groups'
     end
-    post '/stages' do
+    post '/feedback_groups' do
       task_definition = TaskDefinition.find(params[:task_definition_id])
 
       unless authorise? current_user, task_definition.unit, :update
-        error!({ error: 'Not authorised to create a stage for this unit' }, 403)
+        error!({ error: 'Not authorised to create a feedback group for this unit' }, 403)
       end
 
-      stage_parameters = ActionController::Parameters.new(params)
-                                                     .permit(:title, :order) # only `:title` and `:order` fields of the Stage model can be set directly from the user input.
+      feedback_group_parameters = ActionController::Parameters.new(params)
+                                                              .permit(:title, :order) # only `:title` and `:order` fields of the feedback group model can be set directly from the user input.
+      feedback_group_parameters[:task_definition] = task_definition
 
-      stage_parameters[:task_definition] = task_definition
+      result = FeedbackGroup.create!(feedback_group_parameters)
 
-      result = Stage.create!(stage_parameters)
-
-      present result, with: Entities::FeedbackEntities::StageEntity
+      present result, with: Entities::FeedbackEntities::FeedbackGroupEntity
     end
 
-    desc 'This endpoint allows you to get all the stages for a given task definition.'
+    desc 'This endpoint allows you to get all the feedback groups for a given task definition.'
     params do
-      requires :task_definition_id, type: Integer, desc: 'The task definition to which the stage belongs'
+      requires :task_definition_id, type: Integer, desc: 'The task definition to which the feedback group belongs'
     end
-    get '/stages' do
+    get '/feedback_groups' do
       task_definition = TaskDefinition.find(params[:task_definition_id])
 
       unless authorise? current_user, task_definition.unit, :provide_feedback
-        error!({ error: 'Not authorised to get feedback stages for this unit' }, 403)
+        error!({ error: 'Not authorised to get feedback feedback_groups for this unit' }, 403)
       end
 
-      present task_definition.stages, with: Entities::FeedbackEntities::StageEntity
+      present task_definition.feedback_groups, with: Entities::FeedbackEntities::FeedbackGroupEntity
     end
 
-    desc 'This endpoint allows you to update the name and order of a stage.'
+    desc 'This endpoint allows you to update the name and order of a feedback group.'
     params do
-      optional :title, type: String,  desc: 'The new title for the stage'
-      optional :order, type: Integer, desc: 'The order value for the stage'
+      optional :title, type: String,  desc: 'The new title for the feedback group'
+      optional :order, type: Integer, desc: 'The order value for the feedback group'
     end
-    put '/stages/:id' do
-      # Get the stage from the task definition
-      stage = Stage.find(params[:id])
+    put '/feedback_groups/:id' do
+      # Get the feeedback group from the task definition
+      feedback_group = FeedbackGroup.find(params[:id])
 
-      unless authorise? current_user, stage.unit, :update
-        error!({ error: 'Not authorised to update feedback stages for this unit' }, 403)
+      unless authorise? current_user, feedback_group.unit, :update
+        error!({ error: 'Not authorised to update feedback feedback_groups for this unit' }, 403)
       end
 
-      stage_params = ActionController::Parameters.new(params)
-                                                 .permit(:title, :order)
+      feedback_group_parameters = ActionController::Parameters.new(params)
+                                                              .permit(:title, :order)
 
-      stage.update!(stage_params)
+      FeedbackGroup.update!(feedback_group_parameters)
 
-      present stage, with: Entities::FeedbackEntities::StageEntity
+      present FeedbackGroup, with: Entities::FeedbackEntities::FeedbackGroupEntity
     end
 
-    desc 'This endpoint allows you to delete a stage.'
-    delete '/stages/:id' do
-      # Get the stage from the task definition
-      stage = Stage.find(params[:id])
+    desc 'This endpoint allows you to delete a feedback group.'
+    delete '/feedback_groups/:id' do
+      # Get the feedback group from the task definition
+      feedback_group = FeedbackGroup.find(params[:id])
 
-      unless authorise? current_user, stage.unit, :update
-        error!({ error: 'Not authorised to delete feedback stages for this unit' }, 403)
+      unless authorise? current_user, feedback_group.unit, :update
+        error!({ error: 'Not authorised to delete feedback feedback_groups for this unit' }, 403)
       end
 
-      stage.destroy!
+      FeedbackGroup.destroy!
     end
   end
 end
