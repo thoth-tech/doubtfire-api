@@ -190,4 +190,18 @@ class CourseTest < ActiveSupport::TestCase
     assert_equal 419, last_response.status
   end
 
+  def test_wrong_auth_level
+    data_to_post = {
+      name: "Bachelor of Biochemistry",
+      code: "C053",
+      year: 2023,
+      version: "1.0",
+      url: "http://example.com"
+    }
+    add_auth_header_for user: User.last
+    post_json '/api/course', data_to_post
+    puts last_response.body
+    assert_equal 403, last_response.status
+  end
+
 end
