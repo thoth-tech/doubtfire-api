@@ -88,7 +88,7 @@ class ApiRoot < Grape::API
   mount WebcalPublicApi
 
   mount Courseflow::CourseApi
-  mount Courseflow::UnitDefinitionApi
+  mount UnitDefinitionApi
 
   #
   # Add auth details to all end points
@@ -127,7 +127,7 @@ class ApiRoot < Grape::API
   AuthenticationHelpers.add_auth_to WebcalApi
 
   AuthenticationHelpers.add_auth_to Courseflow::CourseApi
-  AuthenticationHelpers.add_auth_to Courseflow::UnitDefinitionApi
+  AuthenticationHelpers.add_auth_to UnitDefinitionApi
 
   add_swagger_documentation \
     base_path: nil,

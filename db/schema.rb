@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2024_09_10_054950) do
+ActiveRecord::Schema[7.1].define(version: 2024_09_10_063917) do
   create_table "activity_types", charset: "utf8mb3", collation: "utf8mb3_unicode_ci", force: :cascade do |t|
     t.string "name", null: false
     t.string "abbreviation", null: false
@@ -525,10 +525,12 @@ ActiveRecord::Schema[7.1].define(version: 2024_09_10_054950) do
     t.bigint "overseer_image_id"
     t.datetime "portfolio_auto_generation_date"
     t.string "tii_group_context_id"
+    t.bigint "unit_definition_id"
     t.index ["draft_task_definition_id"], name: "index_units_on_draft_task_definition_id"
     t.index ["main_convenor_id"], name: "index_units_on_main_convenor_id"
     t.index ["overseer_image_id"], name: "index_units_on_overseer_image_id"
     t.index ["teaching_period_id"], name: "index_units_on_teaching_period_id"
+    t.index ["unit_definition_id"], name: "index_units_on_unit_definition_id"
   end
 
   create_table "users", charset: "utf8mb3", collation: "utf8mb3_unicode_ci", force: :cascade do |t|
@@ -582,4 +584,5 @@ ActiveRecord::Schema[7.1].define(version: 2024_09_10_054950) do
     t.index ["user_id"], name: "index_webcals_on_user_id", unique: true
   end
 
+  add_foreign_key "units", "unit_definitions"
 end

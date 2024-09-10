@@ -1,6 +1,5 @@
 require 'grape'
 
-module Courseflow
   class UnitDefinitionApi < Grape::API
 
     format :json
@@ -31,8 +30,9 @@ module Courseflow
       requires :unitDefinitionId, type: Integer, desc: "Unit Definition ID"
     end
     get '/unit_definition/:unitDefinitionId/units' do
-      unit_definition = UnitDefinition.find(params[:unitDefinitionId])
-      present unit_definition.units, with: Entities::UnitEntity
+      unit_definition_id = params[:unitDefinitionId]
+      units = Unit.where(unit_definition_id: unit_definition_id)
+      present units, with: Entities::UnitEntity, user: current_user, summary_only: true, in_unit: true
     end
 
     desc "Get unit definitions that match search params"
@@ -136,4 +136,3 @@ module Courseflow
       { message: "Unit with ID #{params[:unitId]} has been deleted from Unit Definition with ID #{params[:unitDefinitionId]}" } #change to just remove the unit definition id from the unit
     end
   end
-end

@@ -1,4 +1,4 @@
-module Courseflow
+
   module Entities
     class UnitDefinitionEntity < Grape::Entity
       expose :id
@@ -8,4 +8,3 @@ module Courseflow
       expose :version
     end
   end
-end
