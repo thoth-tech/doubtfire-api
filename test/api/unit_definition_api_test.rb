@@ -69,7 +69,6 @@ class UnitDefinitionTest < ActiveSupport::TestCase
     add_auth_header_for user: User.first
     get "/api/unit_definition/#{unit_definition.id}/units"
     data = JSON.parse(last_response.body)
-    puts data
     assert_equal 3, data.length
   ensure
     unit1.destroy
