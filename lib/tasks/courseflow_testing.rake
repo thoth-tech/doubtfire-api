@@ -76,12 +76,57 @@ namespace :db do
       end
     end
 
-    # Use factory bot to create the associated units
-    #unit_definitions.each do |unit_definition|
-     # FactoryBot.create_list(:unit, 3, unit_definition_id: unit_definition.id)
-    #Send
-
     puts "Database filled with courseflow data"
     puts "Unit Definitions: #{UnitDefinition.count}"
+  end
+
+  desc "Populate the courseflow db with fixed unit definitions"
+  task populate_fixed_courseflow_data: :environment do
+    require 'faker'
+
+    # Clear existing data from database
+    old_units = Unit.where.not(unit_definition_id: nil)
+    puts "Deleting #{old_units.count} units"
+    old_units.destroy_all
+    puts "Deleting #{UnitDefinition.count} unit definitions"
+    UnitDefinition.destroy_all
+
+    # Create new unit definitions
+    unit_definitions = [
+      { name: "Computer Systems", code: "SIT111", version: "1.0" },
+      { name: "Discrete Mathematics", code: "SIT192", version: "1.0" },
+      { name: "Data Science Concepts", code: "SIT112", version: "1.0" },
+      { name: "Introduction to Programming", code: "SIT102", version: "1.0" },
+
+      { name: "Object-Oriented Development", code: "SIT232", version: "1.0" },
+      { name: "Database Fundamentals", code: "SIT103", version: "1.0" },
+      { name: "Linear Algebra for Data Analysis", code: "SIT292", version: "1.0" },
+      { name: "Computer Networks and Communication", code: "SIT202", version: "1.0" },
+
+      { name: "Computer Intelligence", code: "SIT215", version: "1.0" },
+      { name: "Data Structures and Algorithms", code: "SIT221", version: "1.0" },
+      { name: "Gamified Media", code: "ALM201", version: "1.0" },
+      { name: "Global Media", code: "ALM215", version: "1.0" },
+
+      { name: "Professional Practice", code: "SIT344", version: "1.0" },
+      { name: "Team Project (A) - Project Management and Practices", code: "SIT374", version: "1.0" },
+      { name: "Team Project (B) - Execution and Delivery", code: "SIT378", version: "1.0" },
+      { name: "Concurrent and Distributed Programming", code: "SIT315", version: "1.0" },
+
+      { name: "Computer Networks and Communication", code: "SIT202", version: "1.0" },
+      { name: "Cyber Security Management", code: "SIT284", version: "1.0" },
+      { name: "Machine Learning", code: "SIT307", version: "1.0" },
+      { name: "Full Stack Development: Secure Backend Services", code: "SIT331", version: "1.0" }
+    ]
+
+    unit_definitions.each do |unit_definition|
+      new_unit_definition = UnitDefinition.create(
+        name: unit_definition[:name],
+        description: Faker::Lorem.paragraph(sentence_count: 1), # Generates a random description for the definitions
+        code: unit_definition[:code],
+        version: unit_definition[:version]
+      )
+      puts "Created Unit Definition: #{new_unit_definition.name}"
+    end
   end
 end
