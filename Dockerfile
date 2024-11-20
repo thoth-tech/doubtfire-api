@@ -24,7 +24,6 @@ RUN apt-get update \
     wget \
     redis \
     libc6-dev \
-    librsvg2-bin \
     docker-ce \
     docker-ce-cli \
     containerd.io \
@@ -34,8 +33,6 @@ RUN apt-get update \
 WORKDIR /doubtfire
 
 COPY ./.ci-setup/ /doubtfire/.ci-setup/
-RUN ./.ci-setup/texlive-install.sh
-ENV PATH /tmp/texlive/bin/x86_64-linux:/tmp/texlive/bin/aarch64-linux:$PATH
 
 RUN gem install bundler -v '2.4.5'
 
