@@ -1,0 +1,4 @@
+PANOPTO_BASE_URL: "https://deakin.au.panopto.com"
+PANOPTO_CLIENT_ID: "6cd9cf5d-83dd-4177-9555-b237000906be"
+PANOPTO_CLIENT_SECRET: "FSЗoBJXrb5I62NneGB2fCHhI5S3SvzJt60/YdgG+vGs="
+PANOPTO_REDIRECT_URI: "http://localhost:3000/auth/panopto/callback"
