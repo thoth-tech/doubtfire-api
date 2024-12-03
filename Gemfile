@@ -57,6 +57,10 @@ gem 'devise'
 gem 'devise_ldap_authenticatable'
 gem 'json-jwt'
 gem 'ruby-saml', '~> 1.13.0'
+#panopto auth
+gem 'oauth2'
+gem 'aws-sdk-s3'
+
 
 # Student submission
 gem 'coderay'
