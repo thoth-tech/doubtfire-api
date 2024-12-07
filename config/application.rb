@@ -165,7 +165,7 @@ module Doubtfire
     # config.paths.add 'app/api', glob: '**/*.rb'
     # config.autoload_paths += Dir["#{Rails.root}/app"]
     # config.autoload_paths += Dir[Rails.root.join("app", "models", "{*/}")]
-    config.autoload_paths << "#{config.root}/app/lib"
+    config.autoload_paths += %W(#{config.root}/app/services)
     config.autoload_paths <<
       Rails.root.join('app') <<
       Rails.root.join('app', 'models', 'comments') <<

@@ -1,7 +1,6 @@
 require 'oauth2'
 require 'rest-client'
 require 'json'
-require 'fileutils'
 
 class PanoptoOAuth2
   def initialize(client_id, client_secret, server)
@@ -54,20 +53,27 @@ class PanoptoOAuth2
     puts "Authorization code received: #{code}"
 
     begin
-      # Use OAuth2 client to exchange the authorization code for an access token
-      token = client.auth_code.get_token(code, redirect_uri: @redirect_uri)
+      # Exchange the authorization code for an access token
+      response = RestClient.post(
+        "https://#{@server}/Panopto/oauth2/connect/token",
+        {
+          client_id: @client_id,
+          client_secret: @client_secret,
+          redirect_uri: @redirect_uri,
+          code: code,
+          grant_type: 'authorization_code'
+        }
+      )
 
-      save_token_to_cache(token)
-      token.token  # Return the access token
-    rescue OAuth2::Error => e
+      token_data = JSON.parse(response.body)
+      save_token_to_cache(token_data)
+      token_data['access_token']
+    rescue RestClient::ExceptionWithResponse => e
       # Log the error response
-      puts "Error during token exchange: #{e.message}"
-      puts "Response status: #{e.response.status}" if e.response
+      puts "Error during token exchange: #{e.response}"
       raise "Failed to get access token"
     end
   end
-
-
 
   def listen_for_redirect_code
     # Basic HTTP server to capture the authorization code
@@ -83,10 +89,9 @@ class PanoptoOAuth2
   end
 
   def save_token_to_cache(token)
-    # Save the token data including expiration time
     token_data = {
-      'access_token' => token.token,
-      'expires_at' => Time.now.to_i + token.expires_in
+      'access_token' => token['access_token'],
+      'expires_at' => Time.now.to_i + token['expires_in']
     }
     File.write(@cache_file, token_data.to_json)
   end
