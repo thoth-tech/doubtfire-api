@@ -5,7 +5,7 @@ class TeacherResponseMailer < ApplicationMailer
     @unsubscribe_url = "#{@doubtfire_host}/#/home?notifications"
   end
 
-  def recieved_notification(project, task)
+  def received_notification(project, task)
     return nil if project.nil?
 
     add_general
