@@ -1,0 +1,13 @@
+    <?xml version="1.0" encoding="utf-8"?>
+    <Session xmlns="http://tempuri.org/UniversalCaptureSpecification/v1">
+      <Title>test.mp4</Title>
+      <Description>Uploaded video</Description>
+      <Date>2024-12-08 20:19:34 UTC</Date>
+      <Videos>
+        <Video>
+          <Start>PT0S</Start>
+          <File>test.mp4</File>
+          <Type>Primary</Type>
+        </Video>
+      </Videos>
+    </Session>

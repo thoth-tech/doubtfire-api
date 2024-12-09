@@ -2,7 +2,7 @@ require 'oauth2'
 require 'rest-client'
 require 'json'
 
-class PanoptoOAuth2
+class PanoptoOauth2
   def initialize(client_id, client_secret, server)
     @client_id = client_id
     @client_secret = client_secret
@@ -10,19 +10,15 @@ class PanoptoOAuth2
     @authorization_url = "https://#{server}/Panopto/oauth2/connect/authorize"
     @token_url = "https://#{server}/Panopto/oauth2/connect/token"
     @redirect_uri = 'http://localhost:9127/redirect'
-
-    # Ensure the tmp directory exists and is writable
-    FileUtils.mkdir_p(Rails.root.join('tmp')) unless File.directory?(Rails.root.join('tmp'))
-
-    # Define the cache file path
-    @cache_file = Rails.root.join('tmp', 'panopto_token_cache.json')
   end
 
   def get_access_token
     # Check if the cache file exists and is readable
-    if File.exist?(@cache_file) && File.readable?(@cache_file)
-      token_data = JSON.parse(File.read(@cache_file))
-      return token_data['access_token'] if token_data['expires_at'] > Time.now.to_i
+    token_data = JSON.parse(File.read(@cache_file)) rescue nil
+    if token_data && token_data['expires_at'] > Time.now.to_i
+      # Token is valid, return it
+      puts "Access token from cache: #{token_data['access_token']}"
+      return token_data['access_token']
     end
 
     # If not valid or doesn't exist, proceed to obtain a new token
@@ -52,31 +48,30 @@ class PanoptoOAuth2
     code = listen_for_redirect_code
     puts "Authorization code received: #{code}"
 
-    begin
-      # Exchange the authorization code for an access token
-      response = RestClient.post(
-        "https://#{@server}/Panopto/oauth2/connect/token",
-        {
-          client_id: @client_id,
-          client_secret: @client_secret,
-          redirect_uri: @redirect_uri,
-          code: code,
-          grant_type: 'authorization_code'
-        }
-      )
+    # Exchange the authorization code for an access token
+    response = RestClient.post(
+      "#{@token_url}",
+      {
+        client_id: @client_id,
+        client_secret: @client_secret,
+        redirect_uri: @redirect_uri,
+        code: code,
+        grant_type: 'authorization_code'
+      }
+    )
 
-      token_data = JSON.parse(response.body)
-      save_token_to_cache(token_data)
-      token_data['access_token']
-    rescue RestClient::ExceptionWithResponse => e
-      # Log the error response
-      puts "Error during token exchange: #{e.response}"
-      raise "Failed to get access token"
-    end
+    token_data = JSON.parse(response.body)
+
+    # Print the access token in the terminal
+    puts "Access token: #{token_data['access_token']}"
+
+    save_token_to_cache(token_data)
+    token_data['access_token']
   end
 
+
   def listen_for_redirect_code
-    # Basic HTTP server to capture the authorization code
+    # Start a server to listen for the authorization code
     server = TCPServer.new(9127)
     loop do
       client = server.accept
@@ -93,6 +88,6 @@ class PanoptoOAuth2
       'access_token' => token['access_token'],
       'expires_at' => Time.now.to_i + token['expires_in']
     }
-    File.write(@cache_file, token_data.to_json)
+    File.write('tmp/panopto_token_cache.json', token_data.to_json)
   end
 end
