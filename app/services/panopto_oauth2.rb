@@ -22,12 +22,12 @@ class PanoptoOauth2
     end
 
     # If not valid or doesn't exist, proceed to obtain a new token
-    authorize_and_get_token
+    authorise_and_get_token
   end
 
   private
 
-  def authorize_and_get_token
+  def authorise_and_get_token
     client = OAuth2::Client.new(@client_id, @client_secret, site: "https://#{@server}")
 
     scope = 'openid api offline_access'
@@ -37,18 +37,18 @@ class PanoptoOauth2
     encoded_scope = URI.encode_www_form_component(scope)
     encoded_nonce = URI.encode_www_form_component(nonce)
 
-    # Construct the authorization URL
+    # Construct the authorisation URL
     auth_url = "https://#{@server}/Panopto/oauth2/connect/authorize?client_id=#{@client_id}&response_type=code&redirect_uri=#{@redirect_uri}&scope=#{encoded_scope}&nonce=#{encoded_nonce}"
 
-    puts "Please visit the following URL to authorize the application: #{auth_url}"
+    puts "Please visit the following URL to authorise the application: #{auth_url}"
     system("open #{auth_url}")
 
-    # Step 2: Start the server and wait for redirect with the authorization code
-    puts "Listening for authorization code at #{@redirect_uri}..."
+    # Step 2: Start the server and wait for redirect with the authorisation code
+    puts "Listening for authorisation code at #{@redirect_uri}..."
     code = listen_for_redirect_code
-    puts "Authorization code received: #{code}"
+    puts "Authorisation code received: #{code}"
 
-    # Exchange the authorization code for an access token
+    # Exchange the authorisation code for an access token
     response = RestClient.post(
       "#{@token_url}",
       {
@@ -71,13 +71,13 @@ class PanoptoOauth2
 
 
   def listen_for_redirect_code
-    # Start a server to listen for the authorization code
+    # Start a server to listen for the authorisation code
     server = TCPServer.new(9127)
     loop do
       client = server.accept
       request = client.gets
       if request =~ /code=(\w+)/
-        client.puts "HTTP/1.1 200 OK\r\n\r\nThank you for authorizing the app. You can close this window."
+        client.puts "HTTP/1.1 200 OK\r\n\r\nThank you for authorising the app. You can close this window."
         return $1
       end
     end

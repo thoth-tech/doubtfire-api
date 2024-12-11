@@ -8,7 +8,7 @@ Doubtfire::Application.routes.draw do
   get 'api/units/:id/all_resources', to: 'lecture_resource_downloads#index'
 
   #panopto
-  post '/upload_video', to: 'videos#upload_video'
+  post '/get_access_token', to: 'videos#get_access_token'
 
 
 
