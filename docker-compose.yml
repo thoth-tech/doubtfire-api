@@ -18,7 +18,7 @@ services:
       # The DF_ALLOWED_ORIGINS variable must reflect the exact URLs where the OnTrack app will be accessed (e.g., production, staging, or development URLs).
       # Allowed origins must reflect the exact URLs where the OnTrack app will be accessed.
       # Failure to update this variable with the correct origins will cause inaccessibility.
-      DF_ALLOWED_ORIGINS: "http://localhost:4200,https://example.com"
+      DF_ALLOWED_ORIGINS: "http://localhost:4200"
 
       DF_STUDENT_WORK_DIR: /student-work
       DF_INSTITUTION_HOST: http://localhost:3000
