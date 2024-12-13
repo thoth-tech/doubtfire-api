@@ -112,3 +112,6 @@ gem 'shellwords'
 
 # PDF reader for validating PDF file submissions
 gem 'pdf-reader'
+
+#panopto auth
+gem 'aws-sdk-ses'
