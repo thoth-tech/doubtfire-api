@@ -20,7 +20,7 @@ class ProjectsApi < Grape::API
     present projects, with: Entities::ProjectEntity, for_student: true, summary_only: true, user: current_user
   end
 
-  desc 'Get project with target grade history (unchanged route)'
+  desc 'Get project without target grade history '
   params do
     requires :id, type: Integer, desc: 'The id of the project to get'
   end
@@ -31,7 +31,7 @@ class ProjectsApi < Grape::API
       present project, with: Entities::ProjectEntity,
                        user: current_user,
                        for_student: true,
-                       in_project: true
+                       in_project: false #make this true to show all target grade histories if needed for future to the frontend.
     else
       error!({ error: "Couldn't find Project with id=#{params[:id]}" }, 403)
     end
