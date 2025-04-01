@@ -144,6 +144,7 @@ class User < ApplicationRecord
   validates :username,    presence: true, uniqueness: { case_sensitive: false }
   validates :email,       presence: true, uniqueness: { case_sensitive: false }, format: { with: /\A([^@\s]+)@((?:[-a-z0-9]+\.)+[a-z]{2,})\z/i }
   validates :student_id,  uniqueness: true, allow_nil: true
+  validates :total_tutor_time, presence: true, numericality: { greater_than_or_equal_to: 0.0 }
   validate :can_change_to_role?, if: :will_save_change_to_role_id?
 
   # Queries
