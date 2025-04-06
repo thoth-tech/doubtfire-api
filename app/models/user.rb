@@ -296,6 +296,7 @@ class User < ApplicationRecord
       :upload_csv,
       :download_system_csv,
       :download_unit_csv,
+      :download_tutorial_csv,
 
       :create_unit,
       :admin_units,

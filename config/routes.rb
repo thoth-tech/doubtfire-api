@@ -10,4 +10,5 @@ Doubtfire::Application.routes.draw do
   mount ApiRoot => '/'
   mount GrapeSwaggerRails::Engine => '/api/docs'
   mount Sidekiq::Web => "/sidekiq" # mount Sidekiq::Web in your Rails app
+  mount TutorialsApi => '/api'
 end
