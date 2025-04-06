@@ -102,4 +102,35 @@ class TutorialsApi < Grape::API
     tutorial.destroy!
     present true, with: Grape::Presenters::Presenter
   end
+
+  desc 'Upload CSV with tutorials'
+  params do
+    requires :file, type: File, desc: 'CSV upload file.'
+  end
+  post '/csv/tutorials' do
+    unless authorise? current_user, Tutorial, :upload_csv
+      error!({ error: "Not authorised to upload CSV of students of tutorials" }, 403)
+    end
+    if params[:file].blank?
+      error!({ error: 'No file uploaded' }, 403)
+    end
+    path = params[:file][:tempfile].path
+    # check mime is correct before uploading
+    ensure_csv!(path)
+    # Actually import...
+    Tutorial.import_from_csv(current_user, File.new(path))
+  end
+
+  desc 'Download CSV with tutorials'
+  get '/csv/tutorials' do
+    unless authorise? current_user, User, :download_tutorial_csv
+      error!({ error: 'Not authorised to download CSV of all tutorials' }, 403)
+    end
+
+    content_type 'application/octet-stream'
+    header['Content-Disposition'] = 'attachment; filename=tutorials.csv'
+    header['Access-Control-Expose-Headers'] = 'Content-Disposition'
+    env['api.format'] = :binary
+    Tutorial.export_to_csv
+  end
 end
