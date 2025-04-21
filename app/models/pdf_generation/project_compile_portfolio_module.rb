@@ -2,9 +2,9 @@ module PdfGeneration
   module ProjectCompilePortfolioModule
     def projects_awaiting_auto_generation
       Project.joins(:unit)
-             .where(units: { active: true, end_date: Date.today..Float::INFINITY })
+             .where(units: { active: true, end_date: Time.zone.today..Float::INFINITY })
              .where(projects: { enrolled: true, portfolio_production_date: nil })
-             .where("units.portfolio_auto_generation_date < ?", Date.today)
+             .where("units.portfolio_auto_generation_date < ?", Time.zone.today)
              .where(compile_portfolio: false)
              .reject(&:portfolio_available)
     end
@@ -55,7 +55,7 @@ module PdfGeneration
         @learning_summary_report = project.learning_summary_report_path
         @files = project.portfolio_files(ensure_valid: true, force_ascii: is_retry)
         @base_path = project.portfolio_temp_path
-        @image_path = Rails.root.join('public', 'assets', 'images')
+        @image_path = Rails.root.join('public/assets/images')
         @ordered_tasks = project.tasks.joins(:task_definition).order('task_definitions.start_date, task_definitions.abbreviation').where("task_definitions.target_grade <= #{project.target_grade}")
         @portfolio_tasks = project.portfolio_tasks
         @task_defs = project.unit.task_definitions.order(:start_date)
@@ -108,11 +108,15 @@ module PdfGeneration
         log_file = e.message.scan(%r{/.*\.log}).first
         if log_file && File.exist?(log_file)
           begin
+            # rubocop:disable Rails/Output
             puts "--- Latex Log ---\n"
             puts File.read(log_file)
             puts "---    End    ---\n\n"
+            # rubocop:enable Rails/Output
           rescue StandardError
+            # rubocop:disable Rails/Output
             puts "Failed to read log file: #{log_file}"
+            # rubocop:enable Rails/Output
           end
         end
         false
@@ -173,8 +177,8 @@ module PdfGeneration
     # Portfolio production code
     #
     def portfolio_temp_path
-      portfolio_dir = FileHelper.student_portfolio_dir(self.unit, self.student.username, false)
-      portfolio_tmp_dir = File.join(portfolio_dir, 'tmp')
+      portfolio_dir = FileHelper.student_portfolio_dir(self.unit, self.student.username, create: false)
+      File.join(portfolio_dir, 'tmp')
     end
 
     def portfolio_tmp_file_name(dict)
@@ -266,7 +270,7 @@ module PdfGeneration
     end
 
     def portfolio_path
-      FileHelper.student_portfolio_path(self.unit, self.student.username, true)
+      FileHelper.student_portfolio_path(self.unit, self.student.username, create: true)
     end
 
     def portfolio_exists?

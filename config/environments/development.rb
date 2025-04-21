@@ -15,13 +15,15 @@ Doubtfire::Application.configure do
 
   # Enable/disable caching. By default caching is disabled.
   # Run rails dev:cache to toggle caching.
-  if ENV['CACHE'] == 'true' || Rails.root.join('tmp', 'caching-dev.txt').exist?
+  if ENV['CACHE'] == 'true' || Rails.root.join('tmp/caching-dev.txt').exist?
     skip_first = true
     ActiveSupport::Reloader.to_prepare do
       if skip_first
         skip_first = false
       else
+        # rubocop:disable Rails/Output
         puts "CLEARING CACHE"
+        # rubocop:enable Rails/Output
         Rails.cache.clear
       end
     end
@@ -45,7 +47,7 @@ Doubtfire::Application.configure do
 
   # Ensure cache is cleared on reload
   unless Rails.application.config.cache_classes
-    Rails.autoloaders.main.on_unload do |klass, _abspath|
+    Rails.autoloaders.main.on_unload do |_klass, _abspath|
       Rails.cache.clear
     end
   end
@@ -53,14 +55,21 @@ Doubtfire::Application.configure do
   # Store uploaded files on the local file system (see config/storage.yml for options).
   # config.active_storage.service = :local
 
-  # Don't care if the mailer can't send.
-  config.action_mailer.raise_delivery_errors = false
+ # Don't care if the mailer can't send.
+ config.action_mailer.raise_delivery_errors = true
 
-  config.action_mailer.perform_caching = false
+ config.action_mailer.perform_caching = false
 
-  # Tell Action Mailer not to deliver emails to the real world.
-  # Write them to file instead (under doubtfire-api/tmp/mails)
-  config.action_mailer.delivery_method = :file
+ # Tell Action Mailer not to deliver emails to the real world.
+ # Write them to file instead (under doubtfire-api/tmp/mails)
+ config.action_mailer.delivery_method = :file
+ config.action_mailer.file_settings = { 
+   :location => File.join(Rails.root, 'tmp', 'mails')
+ }
+ 
+ # Add more verbose logging for ActionMailer
+ config.action_mailer.logger = Logger.new(STDOUT)
+ config.action_mailer.logger.level = Logger::DEBUG
 
   # Print deprecation notices to the Rails logger.
   config.active_support.deprecation = :log

@@ -113,7 +113,7 @@ class UnitModelTest < ActiveSupport::TestCase
     @unit.import_tasks_from_csv File.open(Rails.root.join('test_files', "#{@unit.code}-Tasks.csv"))
     @unit.import_task_files_from_zip Rails.root.join('test_files', "#{@unit.code}-Tasks.zip")
 
-    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil
+    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil, nil
 
     unit2.task_definitions.each do |td|
       assert File.exist?(td.task_sheet), 'task sheet is absent'
@@ -130,7 +130,7 @@ class UnitModelTest < ActiveSupport::TestCase
     @unit.draft_task_definition = lsr
     @unit.save
 
-    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil
+    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil, nil
 
     assert_not_nil unit2.draft_task_definition
     refute_equal lsr, unit2.draft_task_definition
@@ -139,7 +139,7 @@ class UnitModelTest < ActiveSupport::TestCase
   end
 
   def test_rollover_of_portfolio_generation
-    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil
+    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil, nil
 
     assert unit2.portfolio_auto_generation_date.present?
     assert unit2.portfolio_auto_generation_date > unit2.start_date && unit2.portfolio_auto_generation_date < unit2.end_date
@@ -157,7 +157,7 @@ class UnitModelTest < ActiveSupport::TestCase
       groups: [ { gs: 0, students: 2} ],
       group_tasks: [ { idx: 0, gs: 0 }] )
 
-    unit2 = unit.rollover TeachingPeriod.find(2), nil, nil
+    unit2 = unit.rollover TeachingPeriod.find(2), nil, nil, nil
 
     assert_equal 1, unit2.group_sets.count
     assert_not_equal unit2.group_sets.first, unit.group_sets.first
@@ -172,7 +172,7 @@ class UnitModelTest < ActiveSupport::TestCase
     @unit.import_outcomes_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Outcomes.csv"))
     @unit.import_task_alignment_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Alignment.csv")), nil
 
-    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil
+    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil, nil
 
     assert @unit.task_outcome_alignments.count > 0
     assert_equal @unit.task_outcome_alignments.count, unit2.task_outcome_alignments.count
@@ -192,7 +192,7 @@ class UnitModelTest < ActiveSupport::TestCase
   def test_rollover_of_tasks_have_same_start_week_and_day
     @unit.import_tasks_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Tasks.csv"))
 
-    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil
+    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil, nil
 
     assert_equal 3, @unit.teaching_period_id
     assert_equal 2, unit2.teaching_period_id
@@ -210,7 +210,7 @@ class UnitModelTest < ActiveSupport::TestCase
   def test_rollover_of_tasks_have_same_target_week_and_day
     @unit.import_tasks_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Tasks.csv"))
 
-    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil
+    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil, nil
 
     @unit.task_definitions.each do |td|
       td2 = unit2.task_definitions.find_by_abbreviation(td.abbreviation)
@@ -247,7 +247,7 @@ class UnitModelTest < ActiveSupport::TestCase
   test 'rollover of tasks have same due week and day' do
     @unit.import_tasks_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Tasks.csv"))
 
-    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil
+    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil, nil
 
     @unit.task_definitions.each do |td|
       td2 = unit2.task_definitions.find_by_abbreviation(td.abbreviation)
@@ -255,7 +255,6 @@ class UnitModelTest < ActiveSupport::TestCase
       assert_equal td.due_week, td2.due_week, "#{td.abbreviation} not due same week"
     end
   end
-
 
   test 'ensure valid response from unit ilo data' do
     @unit.import_tasks_from_csv File.open(Rails.root.join('test_files',"#{@unit.code}-Tasks.csv"))
@@ -417,9 +416,9 @@ class UnitModelTest < ActiveSupport::TestCase
         # Test basic details
         assert_equal project.student.username, entry['username'], entry.inspect
         if project.student.student_id.present?
-          assert_equal project.student.student_id, entry['student_id'], entry.inspect
+          assert_equal project.student.student_id, entry['student id'], entry.inspect
         else
-          assert_nil entry['student_id'], entry.inspect
+          assert_nil entry['student id'], entry.inspect
         end
         assert_equal project.student.email, entry['email'], entry.inspect
 
@@ -503,7 +502,7 @@ class UnitModelTest < ActiveSupport::TestCase
 
         assert_json_matches_model(user, entry, %w( username student_id first_name last_name email))
 
-        campus = Campus.find_by_abbr_or_name entry['campus']
+        campus = Campus.find_by('abbreviation = :name OR name = :name', name: entry['campus'])
         assert campus.present?, entry
         assert_equal project.campus, campus, entry
 
@@ -713,6 +712,202 @@ class UnitModelTest < ActiveSupport::TestCase
     paths.each do |path|
       refute File.exist?(path)
     end
+  end
+
+  def test_change_unit_code_moves_files
+    unit = FactoryBot.create :unit, student_count: 1, unenrolled_student_count: 0, inactive_student_count: 0, task_count: 1, tutorials: 1, outcome_count: 0, staff_count: 0, campus_count: 1
+
+    td = unit.task_definitions.first
+    assert_not File.exist?(td.task_sheet)
+    FileUtils.touch(td.task_sheet)
+    assert File.exist?(td.task_sheet)
+
+    old_path = td.task_sheet
+
+    # also check tasks
+    p = unit.projects.first
+    task = p.task_for_task_definition(td)
+    task_pdf = task.final_pdf_path
+    FileUtils.touch(task_pdf)
+
+    assert File.exist?(task_pdf)
+    assert task_pdf.include?(unit.code)
+    assert task_pdf.include?(unit.id.to_s)
+
+    unit.code = "New-#{unit.code}"
+    unit.save!
+
+    td.reload
+    task.reload
+
+    assert_not_equal old_path, td.task_sheet
+    assert_not File.exist?(old_path), "Old file still exists"
+    assert File.exist?(td.task_sheet), "New file does not exist"
+
+    assert_not_equal task.final_pdf_path, task_pdf
+    assert_not File.exist?(task_pdf), "Old task file still exists"
+    assert File.exist?(task.final_pdf_path), "New task file does not exist"
+
+    assert File.exist?(task.final_pdf_path), "Portfolio evidence file does not exist = #{task.final_pdf_path}"
+    assert task.has_pdf
+
+    unit.destroy!
+  end
+
+  test 'rollover to set dates' do
+    start_date = Time.zone.now
+    end_date = start_date + 14.weeks
+
+    unit2 = @unit.rollover(nil, start_date, end_date, nil)
+
+    assert_equal @unit.code, unit2.code
+    assert_in_delta start_date, unit2.start_date, 1.hour
+    assert_in_delta end_date, unit2.end_date, 1.hour
+
+    unit2.destroy
+  end
+
+  test 'rollover to new code with dates' do
+    start_date = Time.zone.now
+    end_date = start_date + 14.weeks
+
+    unit2 = @unit.rollover(nil, start_date, end_date, 'NEWCODE-1')
+
+    assert_not_equal @unit.code, unit2.code
+    assert_equal 'NEWCODE-1', unit2.code
+    assert_in_delta start_date, unit2.start_date, 1.hour
+    assert_in_delta end_date, unit2.end_date, 1.hour
+
+    unit2.destroy
+  end
+
+  test 'rollover to new code with teaching period' do
+    @unit.import_tasks_from_csv File.open(Rails.root.join('test_files', "#{@unit.code}-Tasks.csv"))
+    @unit.import_task_files_from_zip Rails.root.join('test_files', "#{@unit.code}-Tasks.zip")
+
+    tp = TeachingPeriod.find(2)
+
+    unit2 = @unit.rollover(tp, nil, nil, 'NEWCODE-1')
+
+    assert_not_equal @unit.code, unit2.code
+    assert_equal 'NEWCODE-1', unit2.code
+    assert_equal tp, unit2.teaching_period
+
+    unit2.task_definitions.each do |td|
+      assert File.exist?(td.task_sheet), 'task sheet is absent'
+    end
+
+    assert File.exist?(unit2.task_definitions.first.task_resources), 'task resource is absent'
+
+    # can rollover in the same teaching period with a new code
+    unit3 = unit2.rollover(tp, nil, nil, 'NEWCODE-2')
+
+    assert_not_equal unit2.code, unit3.code
+    assert_equal 'NEWCODE-2', unit3.code
+    assert_equal tp, unit3.teaching_period
+
+    unit3.task_definitions.each do |td|
+      assert File.exist?(td.task_sheet), 'task sheet is absent'
+    end
+
+    assert File.exist?(unit3.task_definitions.first.task_resources), 'task resource is absent'
+
+    unit2.destroy
+    unit3.destroy
+  end
+
+  def test_archive_unit
+    Doubtfire::Application.config.archive_units = true
+    unit = FactoryBot.create :unit, student_count: 1, unenrolled_student_count: 0, inactive_student_count: 0, task_count: 1, tutorials: 1, outcome_count: 0, staff_count: 0, campus_count: 1
+
+    td = unit.task_definitions.first
+    assert_not File.exist?(td.task_sheet)
+    FileUtils.touch(td.task_sheet)
+    assert File.exist?(td.task_sheet)
+
+    old_path = td.task_sheet
+
+    # also check tasks
+    p = unit.projects.first
+    task = p.task_for_task_definition(td)
+    task_pdf = task.final_pdf_path
+    FileUtils.touch(task_pdf)
+
+    DatabasePopulator.generate_portfolio(p)
+    old_portfolio_path = p.portfolio_path
+
+    assert File.exist?(old_path)
+    assert File.exist?(task_pdf)
+    assert File.exist?(old_portfolio_path)
+
+    unit.move_files_to_archive
+    unit.archived = true
+    unit.save!
+
+    td.reload
+    task.reload
+
+    assert_not File.exist?(old_path), "Old file still exists"
+    assert File.exist?(td.task_sheet), "New file does not exist - #{td.task_sheet}"
+    assert_not File.exist?(task_pdf), "Old task file still exists"
+    assert File.exist?(task.final_pdf_path), "New task file does not exist"
+    assert_not File.exist?(old_portfolio_path), "Old portfolio file still exists - #{old_portfolio_path}"
+    assert File.exist?(p.portfolio_path), "New portfolio file does not exist"
+
+    assert File.exist?(task.final_pdf_path), "Portfolio evidence file does not exist - #{task.final_pdf_path}"
+
+    td.abbreviation = 'NEW'
+    td.save
+    task.reload
+
+    # File exists after rename
+    assert File.exist?(task.final_pdf_path), "Portfolio evidence file does not exist - #{task.final_pdf_path}"
+
+    p.student.update(username: 'NEW_USERNAME')
+    task.reload
+    assert File.exist?(task.final_pdf_path), "Portfolio evidence file does not exist after username change - #{task.final_pdf_path}"
+    assert File.exist?(p.portfolio_path), "New portfolio file does not exist"
+
+    unit.destroy!
+
+    assert_not File.exist?(td.task_sheet), "New file exists after delete - #{td.task_sheet}"
+    assert_not File.exist?(task.final_pdf_path), "New task file exists after delete - #{task.final_pdf_path}"
+    assert_not File.exist?(p.portfolio_path), "New portfolio exists after delete - #{p.portfolio_path}"
+  ensure
+    Doubtfire::Application.config.archive_units = false
+  end
+
+  def test_archive_unit_job
+    assert_not Doubtfire::Application.config.archive_units, 'Archive units should be off by default'
+
+    unit = FactoryBot.create :unit, with_students: false, task_count: 0
+
+    unit.end_date = Time.zone.now - Doubtfire::Application.config.unit_archive_after_period - 1.day
+    unit.start_date = unit.end_date - 14.weeks
+    unit.save!
+
+    unit2 = FactoryBot.create :unit, with_students: false, task_count: 0
+
+    assert_not unit.archived
+    assert_not unit2.archived
+
+    job = ArchiveOldUnitsJob.new
+    job.perform
+
+    unit.reload
+    unit2.reload
+
+    assert_not unit.archived
+    assert_not unit2.archived
+
+    Doubtfire::Application.config.archive_units = true
+
+    job.perform
+    unit.reload
+    unit2.reload
+
+    assert unit.archived
+    assert_not unit2.archived
   end
 
 end

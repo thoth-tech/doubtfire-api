@@ -22,7 +22,10 @@ group :development, :test do
   gem 'listen'
   gem 'rails_best_practices'
   gem 'rubocop'
+  gem 'rubocop-factory_bot'
   gem 'rubocop-faker'
+  gem 'rubocop-minitest'
+  gem 'rubocop-performance'
   gem 'rubocop-rails'
   gem 'ruby-lsp'
   gem 'simplecov', require: false
@@ -100,6 +103,7 @@ gem 'tca_client', '1.0.4'
 # Async jobs
 gem 'sidekiq'
 gem 'sidekiq-cron'
+gem 'sidekiq-unique-jobs'
 
 # Redis for sidekiq, caching, and action cable (eventually)
 gem 'redis'
@@ -110,4 +114,9 @@ gem 'shellwords'
 # PDF reader for validating PDF file submissions
 gem 'pdf-reader'
 
+<<<<<<< HEAD
 gem 'csv'
+=======
+# oauth gem for OAuth2 authentication - D2L
+gem 'oauth2'
+>>>>>>> 8.0.x
