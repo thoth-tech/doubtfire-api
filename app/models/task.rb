@@ -735,6 +735,14 @@ class Task < ApplicationRecord
     comment.recipient = current_user == project.student ? project.tutor_for(task_definition) : project.student
     comment.save!
 
+    # send emails...
+    begin
+      logger.info "Sending comment notification email for project #{project.id}"
+      TeacherResponseMailer.received_notification(project,self).deliver
+    rescue => e
+      logger.error "Failed to send emails from comment submission.ProjectID: #{project.id} for task: #{self.id} . Rescued with error: #{e.message}"
+    end
+
     comment
   end
 
