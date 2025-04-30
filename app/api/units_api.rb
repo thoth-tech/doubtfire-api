@@ -75,6 +75,9 @@ class UnitsApi < Grape::API
       optional :teaching_period_id, type: Integer
       optional :start_date, type: Date
       optional :end_date, type: Date
+      optional :creditpoint, type: Integer
+      optional :prerequisite, type: String
+      optional :corequisite, type: String
       optional :main_convenor_id, type: Integer
       optional :auto_apply_extension_before_deadline, type: Boolean, desc: 'Indicates if extensions before the deadline should be automatically applied'
       optional :send_notifications, type: Boolean, desc: 'Indicates if emails should be sent on updates each week'
@@ -117,7 +120,11 @@ class UnitsApi < Grape::API
                                                           :extension_weeks_on_resubmit_request,
                                                           :allow_student_change_tutorial,
                                                           :overseer_image_id,
-                                                          :assessment_enabled)
+                                                          :assessment_enabled,
+                                                          :creditpoint,
+                                                          :prerequisite,
+                                                          :corequisite
+                                                        )
 
     if unit.teaching_period_id.present? && (unit_parameters.key?(:start_date) || unit_parameters['teaching_period_id'] == -1)
       unit.teaching_period = nil
@@ -151,10 +158,13 @@ class UnitsApi < Grape::API
       optional :teaching_period_id, type: Integer
       optional :start_date, type: Date
       optional :end_date, type: Date
+      optional :creditpoint, type: Integer
+      optional :prerequisite, type: String
+      optional :corequisite, type: String
       optional :main_convenor_user_id, type: Integer
       optional :auto_apply_extension_before_deadline, type: Boolean, desc: 'Indicates if extensions before the deadline should be automatically applied', default: true
       optional :send_notifications, type: Boolean, desc: 'Indicates if emails should be sent on updates each week', default: true
-      optional :enable_sync_timetable, type: Boolean, desc: 'Sync to timetable automatically if supported by deployment', default: true
+      optional :enable_sync_timetable, type: Boolean,   desc: 'Sync to timetable automatically if supported by deployment', default: true
       optional :enable_sync_enrolments, type: Boolean, desc: 'Sync student enrolments automatically if supported by deployment', default: true
       optional :allow_student_extension_requests, type: Boolean, desc: 'Can turn on/off student extension requests', default: true
       optional :extension_weeks_on_resubmit_request, type: Integer, desc: 'Determines the number of weeks extension on a resubmit request', default: 1
@@ -188,6 +198,9 @@ class UnitsApi < Grape::API
                                                     :extension_weeks_on_resubmit_request,
                                                     :portfolio_auto_generation_date,
                                                     :allow_student_change_tutorial,
+                                                    :creditpoint,
+                                                    :prerequisite,
+                                                    :corequisite
                                                   )
 
     # Identify main convenor - ensure they have the correct role

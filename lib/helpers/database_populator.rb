@@ -216,7 +216,10 @@ class DatabasePopulator
           code: unit_details[:code],
           name: unit_details[:name],
           description: faker_random_sentence(10, 15),
-          teaching_period: unit_details[:teaching_period]
+          teaching_period: unit_details[:teaching_period],
+          creditpoint: unit_details[:creditpoint],
+          prerequisite: unit_details[:prerequisite],
+          corequisite: unit_details[:corequisite]
         }
       else
         data = {
@@ -224,7 +227,10 @@ class DatabasePopulator
           name: unit_details[:name],
           description: faker_random_sentence(10, 15),
           start_date: Time.zone.now - 6.weeks,
-          end_date: 13.weeks.since(Time.zone.now - 6.weeks)
+          end_date: 13.weeks.since(Time.zone.now - 6.weeks),
+          creditpoint: unit_details[:creditpoint],
+          prerequisite: unit_details[:prerequisite],
+          corequisite: unit_details[:corequisite]
         }
       end
 
@@ -336,7 +342,10 @@ class DatabasePopulator
         ],
         students: [],
         num_tasks: some_tasks,
+        creditpoint: Faker::Number.between(from: 0, to: 2),
         ilos: Faker::Number.between(from: 1, to: 3),
+        prerequisite: "SIT111",
+        corequisite: "Nil"
       },
       oop: {
         code: "COS20007",
@@ -349,7 +358,10 @@ class DatabasePopulator
           { user: :joostfunkekupper, num: few_tutorials },
         ],
         num_tasks: many_tasks,
+        creditpoint: Faker::Number.between(from: 0, to: 2),
         ilos: Faker::Number.between(from: 0, to: 3),
+        prerequisite: "SIT102",
+        corequisite: "Nil",
         students: [:cliff]
       },
       ai4g: {
@@ -361,7 +373,10 @@ class DatabasePopulator
           { user: :cliff, num: few_tutorials },
         ],
         num_tasks: few_tasks,
+        creditpoint: Faker::Number.between(from: 0, to: 2),
         ilos: Faker::Number.between(from: 0, to: 3),
+        prerequisite: "SEJ104",
+        corequisite: "Nil",
         students: [:acummaudo]
       },
       gameprog: {
@@ -372,7 +387,10 @@ class DatabasePopulator
           { user: :aconvenor, num: few_tutorials },
         ],
         num_tasks: few_tasks,
+        creditpoint: Faker::Number.between(from: 0, to: 2),
         ilos: Faker::Number.between(from: 0, to: 3),
+        prerequisite: "SIT210",
+        corequisite: "Nil",
         students: [:acain, :ajones]
       },
     }

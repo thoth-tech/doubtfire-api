@@ -15,6 +15,9 @@ module Entities
     expose :code
     expose :id
     expose :name
+    expose :creditpoint
+    expose :prerequisite
+    expose :corequisite
     expose :my_role do |unit, options|
       role = options[:my_role]
       role = unit.role_for(options[:user]) if role.nil?
@@ -51,17 +54,12 @@ module Entities
     expose :learning_outcomes, using: LearningOutcomeEntity, as: :ilos, unless: :summary_only
     expose :tutorial_streams, using: TutorialStreamEntity, unless: :summary_only
 
-    # Expose staff before tutorials, so that their details are available
     expose :staff, using: UnitRoleEntity, unless: :summary_only
     expose :tutorials, using: TutorialEntity, unless: :summary_only
-    # expose :tutorial_enrolments, using: TutorialEnrolmentEntity, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
 
     expose :task_definitions, using: TaskDefinitionEntity, unless: :summary_only
     expose :task_outcome_alignments, using: TaskOutcomeAlignmentEntity, unless: :summary_only
     expose :group_sets, using: GroupSetEntity, unless: :summary_only
     expose :groups, using: GroupEntity, unless: :summary_only
-    # expose :group_memberships, using: GroupMembershipEntity, unless: :summary_only do |unit, options|
-    #   unit.group_memberships.where(active: true)
-    # end
   end
 end
