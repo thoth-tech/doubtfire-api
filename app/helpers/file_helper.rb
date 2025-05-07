@@ -417,21 +417,24 @@ module FileHelper
     output_path ||= File.join(Dir.tmpdir, "sanitized-#{File.basename(input_path)}")
 
     begin
+      logger.debug "Starting PDF sanitization for #{input_path}"
+
       # Step 1: Validate the PDF
+      logger.debug "Validating PDF: #{input_path}"
       validation_result = validate_pdf(input_path)
       unless validation_result[:valid]
         return { success: false, msg: 'Invalid or corrupted PDF' }
       end
 
-      # Step 2: Use qpdf to sanitize the PDF (remove JavaScript and re-encode)
-      logger.debug "Sanitizing PDF #{input_path} using qpdf"
-      qpdf(input_path) # Reuse the existing qpdf function
+      # Step 2: Use qpdf to sanitize the PDF
+      logger.debug "Running qpdf on: #{input_path}"
+      qpdf(input_path)
 
       # Step 3: Further sanitize using ghostscript
       sanitized_tmp = File.join(Dir.tmpdir, "gs-sanitized-#{File.basename(input_path)}")
-      logger.debug "Further sanitizing PDF #{input_path} using ghostscript"
+      logger.debug "Running ghostscript on: #{input_path}"
       exec = "gs -sDEVICE=pdfwrite -dDetectDuplicateImages=true -dPDFSETTINGS=/printer -dNOPAUSE -dBATCH -dQUIET -sOutputFile=\"#{sanitized_tmp}\" \"#{input_path}\""
-      system(exec)
+      TimeoutHelper.system_try_within(30, "Ghostscript sanitization timeout", exec)
 
       # Replace the output file with the ghostscript-sanitized version if successful
       if File.exist?(sanitized_tmp)
@@ -440,12 +443,14 @@ module FileHelper
 
       # Step 4: Validate the sanitized PDF
       if File.exist?(output_path) && validate_pdf(output_path)[:valid]
+        logger.debug "Sanitization complete for #{input_path}"
         return { success: true, sanitized_path: output_path }
       else
         return { success: false, msg: 'Failed to sanitize PDF' }
       end
     rescue => e
       logger.error "Failed to sanitize PDF #{input_path}. Error: #{e.message}"
+      logger.error "Backtrace: #{e.backtrace.join("\n")}"
       return { success: false, msg: "Error during sanitization: #{e.message}" }
     end
   end
