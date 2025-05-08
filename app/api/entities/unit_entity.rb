@@ -1,22 +1,16 @@
-require_relative '../../helpers/role_helpers' #Imported a helper module (role_helpers.rb) to centralize role-based access control (RBAC) logic.
-
 module Entities
   class UnitEntity < Grape::Entity
     format_with(:date_only) do |date|
       date.strftime('%Y-%m-%d')
     end
 
-    include RoleHelpers # Including the role helper methods for permission checks
+    def is_staff?(my_role)
+      [Role.tutor_id, Role.convenor_id, Role.admin_id, Role.auditor_id].include?(my_role.id) unless my_role.nil?
+    end
 
-    # Previously these helper methods were uncommented directly. Leaving them commented to show intention for reusability. Replaced them with the centralized versions from the RoleHelpers module for consistency and maintainability.
-
-    # def is_staff?(my_role)
-    #   [Role.tutor_id, Role.convenor_id, Role.admin_id, Role.auditor_id].include?(my_role.id) unless my_role.nil?
-    # end
-
-    # def can_read_unit_config?(my_role)
-    #   [Role.convenor_id, Role.admin_id, Role.auditor_id].include?(my_role.id) unless my_role.nil?
-    # end
+    def can_read_unit_config?(my_role)
+      [Role.convenor_id, Role.admin_id, Role.auditor_id].include?(my_role.id) unless my_role.nil?
+    end
 
     expose :code
     expose :id
@@ -34,34 +28,31 @@ module Entities
     expose :description
     expose :teaching_period_id, expose_nil: false
 
-    # 	Replaced all inline is_staff? and can_read_unit_config? checks with RoleHelpers.is_staff? and RoleHelpers.can_read_unit_config? to delegate access control checks to the RoleHelpers module.
-    # Added conditional checks on all fields using RoleHelpers.is_staff? to ensure mutiple internal config fields are not accessible to non-staff users.
-
     with_options(format_with: :date_only) do
       expose :start_date
       expose :end_date
-      expose :portfolio_auto_generation_date, unless: :summary_only, if: lambda { |unit, options| RoleHelpers.is_staff?(options[:my_role]) }, expose_nil: false
+      expose :portfolio_auto_generation_date, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }, expose_nil: false
     end
 
     expose :active
 
-    expose :overseer_image_id, unless: :summary_only, if: lambda { |unit, options| RoleHelpers.can_read_unit_config?(options[:my_role]) }
+    expose :overseer_image_id, unless: :summary_only, if: lambda { |unit, options| can_read_unit_config?(options[:my_role]) }
     expose :assessment_enabled, unless: :summary_only
 
-    expose :auto_apply_extension_before_deadline, unless: :summary_only, if: lambda { |unit, options| RoleHelpers.is_staff?(options[:my_role]) }
-    expose :send_notifications, unless: :summary_only, if: lambda { |unit, options| RoleHelpers.is_staff?(options[:my_role]) }
-    expose :enable_sync_enrolments, unless: :summary_only, if: lambda { |unit, options| RoleHelpers.is_staff?(options[:my_role]) }
-    expose :enable_sync_timetable, unless: :summary_only, if: lambda { |unit, options| RoleHelpers.is_staff?(options[:my_role]) }
-    expose :draft_task_definition_id, unless: :summary_only, if: lambda { |unit, options| RoleHelpers.is_staff?(options[:my_role]) }
+    expose :auto_apply_extension_before_deadline, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
+    expose :send_notifications, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
+    expose :enable_sync_enrolments, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
+    expose :enable_sync_timetable, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
+    expose :draft_task_definition_id, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
     expose :allow_student_extension_requests, unless: :summary_only
-    expose :extension_weeks_on_resubmit_request, unless: :summary_only, if: lambda { |unit, options| RoleHelpers.is_staff?(options[:my_role]) }
+    expose :extension_weeks_on_resubmit_request, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
     expose :allow_student_change_tutorial, unless: :summary_only
 
     expose :learning_outcomes, using: LearningOutcomeEntity, as: :ilos, unless: :summary_only
     expose :tutorial_streams, using: TutorialStreamEntity, unless: :summary_only
 
     # Expose staff before tutorials, so that their details are available
-    expose :staff, using: UnitRoleEntity, unless: :summary_only,  if: lambda { |unit, options| RoleHelpers.is_staff?(options[:my_role]) } #Serializer Restriction: to hide the staff field for students
+    expose :staff, using: UnitRoleEntity, unless: :summary_only
     expose :tutorials, using: TutorialEntity, unless: :summary_only
     # expose :tutorial_enrolments, using: TutorialEnrolmentEntity, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
 

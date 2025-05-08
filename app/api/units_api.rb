@@ -60,8 +60,7 @@ class UnitsApi < Grape::API
     # Unit uses user from thread to limit exposure
     #
     my_role = unit.role_for(current_user)
-    present unit, with: Entities::UnitEntity, my_role: my_role, user: current_user, in_unit: true
-    # added the user: current_user key-value pair by explicitly passing current_user to UnitEntity serializer which enables RBAC checks in serialization, ensuring sensitive fields like staff details are hidden from unauthorized users
+    present unit, with: Entities::UnitEntity, my_role: my_role, in_unit: true
   end
 
   desc 'Update unit'

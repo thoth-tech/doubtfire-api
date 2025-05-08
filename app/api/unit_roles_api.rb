@@ -90,7 +90,6 @@ class UnitRolesApi < Grape::API
     end
 
     unit_role.update!(unit_role_parameters)
-    present unit_role, with: Entities::UnitRoleEntity, in_unit: true, my_role: current_user.role_for(unit_role.unit)
-    #Without passing my_role, the serializer (Grape Entity class) has no way of knowing the current user’s privileges so it would either over-expose data or fail to restrict access properly, in this case enforcing role based data exposure instead of conditionally exposing.
+    present unit_role, with: Entities::UnitRoleEntity, in_unit: true
   end
 end

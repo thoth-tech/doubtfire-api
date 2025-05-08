@@ -1,17 +1,11 @@
-require_relative '../../helpers/role_helpers' #Reuses centralized role-checking logic
 module Entities
   class UserEntity < Grape::Entity
-    include RoleHelpers # Makes role-checking functions available
-
     expose :id
     expose :student_id, unless: :minimal
-
-    # Wrapped email, first_name, last_name, username to prevent exposure of sensitive staff data to unauthorized users (e.g., students)
-    expose :email, if: ->(_user, options) { RoleHelpers.is_staff?(options[:my_role]) }
-    expose :first_name, if: ->(_user, options) { RoleHelpers.is_staff?(options[:my_role]) }
-    expose :last_name, if: ->(_user, options) { RoleHelpers.is_staff?(options[:my_role]) }
-    expose :username, if: ->(_user, options) { RoleHelpers.is_staff?(options[:my_role]) }
-
+    expose :email
+    expose :first_name
+    expose :last_name
+    expose :username
     expose :nickname
     expose :receive_task_notifications, unless: :minimal
     expose :receive_portfolio_notifications, unless: :minimal
