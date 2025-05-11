@@ -110,11 +110,17 @@ class TutorialsApi < Grape::API
   end
   post '/csv/tutorials/upload' do
     unless authorise? current_user, User, :upload_csv
-      error!({ error: "Not authorised to upload CSV of students of tutorials" }, 403)
+      error!({ error: 'Not authorised to upload CSV of students of tutorials' }, 403)
     end
+
     if params[:file].blank?
       error!({ error: 'No file uploaded' }, 403)
     end
+
+    if params[:file][:tempfile].size > 5.megabytes
+      error!({ error: 'CSV file size exceeds the 5MB limit' }, 413)
+    end
+
     path = params[:file][:tempfile].path
     Tutorial.import_from_csv(File.new(path))
   end

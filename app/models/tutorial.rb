@@ -89,53 +89,60 @@ class Tutorial < ApplicationRecord
     errors = []
     ignored = []
     data = FileHelper.read_file_to_str(file).gsub('\\n', "\n")
-    CSV.parse(data,
-              headers: true,
-              header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip unless hdr.nil? }],
-              converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }]).each do |row|
-      missing = missing_headers(row, csv_columns)
-      if missing.count > 0
-        errors << { row: row, message: "Missing headers: #{missing.join(', ')}" }
-        next
+
+    ActiveRecord::Base.transaction do
+      CSV.parse(data,
+                headers: true,
+                header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip unless hdr.nil? }],
+                converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }]).each do |row|
+        missing = missing_headers(row, csv_columns)
+        if missing.count > 0
+          errors << { row: row, message: "Missing headers: #{missing.join(', ')}" }
+          raise StandardError, "Critical import error: missing headers"
+        end
+
+        tutorial_code = row['code'].strip unless row['code'].nil?
+        abbreviation = row['abbreviation'].strip unless row['abbreviation'].nil?
+        unit_id = row['unit_id'].strip unless row['unit_id'].nil?
+        user_id = row['tutor_id'].strip unless row['tutor_id'].nil?
+        tutorial_stream_name = row['tutorial_stream'].strip unless row['tutorial_stream'].nil?
+
+        # find unit role using tutor's user_id and unit_id
+        unit_role = UnitRole.find_by(user_id: user_id, unit_id: unit_id)
+
+        if unit_role.nil?
+          errors << { row: row, message: "Tutor with user_id (#{user_id}) not found in unit roles" }
+          raise StandardError, 'Critical import error: missing unit role'
+        end
+
+        # if tutorial is found set it, otherwise leave it blank
+        tutorial_stream = TutorialStream.find_by(name: tutorial_stream_name) if tutorial_stream_name.present?
+
+        # handle missing tutorial stream
+        tutorial_stream = nil if tutorial_stream_name.blank?
+
+        # create a new tutorial
+        tutorial = Tutorial.new(
+          unit_id: unit_id,
+          code: tutorial_code,
+          abbreviation: abbreviation,
+          unit_role_id: unit_role.id,
+          tutorial_stream_id: tutorial_stream&.id
+        )
+
+        if tutorial.save
+          success << { row: row, message: "Created tutorial #{abbreviation} #{unit_id}" }
+        else
+          errors << { row: row, message: "Failed to create tutorial #{abbreviation} #{unit_id}" }
+          raise StandardError, 'Critical import error: failed to save tutorial'
+        end
+      rescue StandardError => e
+        raise ActiveRecord::Rollback
       end
 
-      tutorial_code = row['code'].strip unless row['code'].nil?
-      abbreviation = row['abbreviation'].strip unless row['abbreviation'].nil?
-      unit_id = row['unit_id'].strip unless row['unit_id'].nil?
-      user_id = row['tutor_id'].strip unless row['tutor_id'].nil?
-      tutorial_stream_name = row['tutorial_stream'].strip unless row['tutorial_stream'].nil?
-
-      # find unit role using tutor's user_id and unit_id
-      unit_role = UnitRole.find_by(user_id: user_id, unit_id: unit_id)
-
-      if unit_role.nil?
-        errors << { row: row, message: "Tutor with user_id (#{user_id}) not found in unit roles" }
-        next
-      end
-
-      # if tutorial is found set it, otherwise leave it blank
-      tutorial_stream = TutorialStream.find_by(name: tutorial_stream_name) if tutorial_stream_name.present?
-
-      # handle missing tutorial stream
-      tutorial_stream = nil if tutorial_stream_name.blank?
-
-      # create a new tutorial
-      tutorial = Tutorial.new(
-        unit_id: unit_id,
-        code: tutorial_code,
-        abbreviation: abbreviation,
-        unit_role_id: unit_role.id,
-        tutorial_stream_id: tutorial_stream&.id
-      )
-
-      if tutorial.save
-        success << { row: row, message: "Created tutorial #{abbreviation} #{unit_id}" }
-      else
-        errors << {row: row, message: "Failed to create tutorial #{abbreviation} #{unit_id}" }
-      end
-    rescue StandardError => e
-      errors << { row: row, message: e.message }
+      raise ActiveRecord::Rollback unless errors.empty?
     end
+
     {
       success: success,
       ignored: ignored,
