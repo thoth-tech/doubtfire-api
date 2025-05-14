@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2024_12_17_091744) do
+ActiveRecord::Schema[7.1].define(version: 2025_05_06_044920) do
   create_table "activity_types", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
     t.string "name", null: false
     t.string "abbreviation", null: false
@@ -272,10 +272,13 @@ ActiveRecord::Schema[7.1].define(version: 2024_12_17_091744) do
     t.boolean "scorm_bypass_test", default: false
     t.boolean "scorm_time_delay_enabled", default: false
     t.integer "scorm_attempt_limit", default: 0
+    t.boolean "tutorial_self_enrolment_enabled", default: false
+    t.bigint "tutorial_self_enrolment_stream_id"
     t.index ["abbreviation", "unit_id"], name: "index_task_definitions_on_abbreviation_and_unit_id", unique: true
     t.index ["group_set_id"], name: "index_task_definitions_on_group_set_id"
     t.index ["name", "unit_id"], name: "index_task_definitions_on_name_and_unit_id", unique: true
     t.index ["overseer_image_id"], name: "index_task_definitions_on_overseer_image_id"
+    t.index ["tutorial_self_enrolment_stream_id"], name: "index_task_definitions_on_tutorial_self_enrolment_stream_id"
     t.index ["tutorial_stream_id"], name: "index_task_definitions_on_tutorial_stream_id"
     t.index ["unit_id"], name: "index_task_definitions_on_unit_id"
   end
@@ -591,6 +594,7 @@ ActiveRecord::Schema[7.1].define(version: 2024_12_17_091744) do
     t.index ["user_id"], name: "index_webcals_on_user_id", unique: true
   end
 
+  add_foreign_key "task_definitions", "tutorial_streams", column: "tutorial_self_enrolment_stream_id"
   add_foreign_key "user_oauth_states", "users"
   add_foreign_key "user_oauth_tokens", "users"
 end

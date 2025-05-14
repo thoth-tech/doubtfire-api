@@ -33,6 +33,9 @@ module Entities
     expose :tutorial_stream_abbr do |task_definition, options|
       task_definition.tutorial_stream.abbreviation unless task_definition.tutorial_stream.nil?
     end
+    expose :tutorial_self_enrolment_stream_abbr, expose_nil: true do |task_definition, options|
+      task_definition.tutorial_self_enrolment_stream.abbreviation unless task_definition.tutorial_self_enrolment_stream.nil?
+    end
     expose :plagiarism_warn_pct, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :restrict_status_updates, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :group_set_id, expose_nil: false
@@ -44,6 +47,9 @@ module Entities
     expose :scorm_allow_review
     expose :scorm_bypass_test
     expose :scorm_time_delay_enabled
+    expose :scorm_attempt_limit
+    expose :tutorial_self_enrolment_enabled
+    expose :tutorial_self_enrolment_stream_id
     expose :scorm_attempt_limit
     expose :is_graded
     expose :max_quality_pts

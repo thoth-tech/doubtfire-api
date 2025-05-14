@@ -38,6 +38,8 @@ class TaskDefinitionsApi < Grape::API
       optional :scorm_bypass_test,        type: Boolean,  desc: 'Whether a student is allowed to upload files before passing SCORM test'
       optional :scorm_time_delay_enabled, type: Boolean,  desc: 'Whether there is an incremental time delay between SCORM test attempts'
       optional :scorm_attempt_limit,      type: Integer,  desc: 'The number of times a SCORM test can be attempted'
+      optional :tutorial_self_enrolment_enabled,        type: Boolean,  desc: 'Whether the tutorial self enrolment feature is enabled for this task'
+      optional :tutorial_self_enrolment_stream_abbr,    type: String,   desc: 'The abbreviation of tutorial stream to fetch from for self enrolment'
     end
   end
   post '/units/:unit_id/task_definitions/' do
@@ -65,6 +67,7 @@ class TaskDefinitionsApi < Grape::API
                                                 :scorm_bypass_test,
                                                 :scorm_time_delay_enabled,
                                                 :scorm_attempt_limit,
+                                                :tutorial_self_enrolment_enabled,
                                                 :is_graded,
                                                 :max_quality_pts,
                                                 :assessment_enabled,
@@ -84,6 +87,14 @@ class TaskDefinitionsApi < Grape::API
     unless tutorial_stream_abbr.nil?
       tutorial_stream = unit.tutorial_streams.find_by!(abbreviation: tutorial_stream_abbr)
       task_def.tutorial_stream = tutorial_stream
+    end
+
+    # Set the self enrolment tutorial stream
+    tutorial_self_enrolment_stream_abbr = params[:task_def][:tutorial_self_enrolment_stream_abbr]
+    unless tutorial_self_enrolment_stream_abbr.nil?
+      tutorial_self_enrolment_stream = task_def.unit.tutorial_streams.find_by!(abbreviation: tutorial_self_enrolment_stream_abbr)
+      task_def.tutorial_self_enrolment_stream = tutorial_self_enrolment_stream
+      task_def.save!
     end
 
     #
@@ -126,6 +137,8 @@ class TaskDefinitionsApi < Grape::API
       optional :assessment_enabled,       type: Boolean,  desc: 'Enable or disable assessment'
       optional :overseer_image_id,        type: Integer,  desc: 'The id of the Docker image name for overseer'
       optional :moss_language,            type: String,   desc: 'The language to use for code similarity checks'
+      optional :tutorial_self_enrolment_enabled,      type: Boolean,  desc: 'Whether the tutorial self enrolment feature is enabled for this task'
+      optional :tutorial_self_enrolment_stream_abbr,  type: String,   desc: 'The abbreviation of tutorial stream to fetch from for self enrolment'
     end
   end
   put '/units/:unit_id/task_definitions/:id' do
@@ -154,6 +167,7 @@ class TaskDefinitionsApi < Grape::API
                                                 :scorm_bypass_test,
                                                 :scorm_time_delay_enabled,
                                                 :scorm_attempt_limit,
+                                                :tutorial_self_enrolment_enabled,
                                                 :is_graded,
                                                 :max_quality_pts,
                                                 :assessment_enabled,
@@ -186,6 +200,14 @@ class TaskDefinitionsApi < Grape::API
     unless tutorial_stream_abbr.nil?
       tutorial_stream = task_def.unit.tutorial_streams.find_by!(abbreviation: tutorial_stream_abbr)
       task_def.tutorial_stream = tutorial_stream
+      task_def.save!
+    end
+
+    # Set the self enrolment tutorial stream
+    tutorial_self_enrolment_stream_abbr = params[:task_def][:tutorial_self_enrolment_stream_abbr]
+    unless tutorial_self_enrolment_stream_abbr.nil?
+      tutorial_self_enrolment_stream = task_def.unit.tutorial_streams.find_by!(abbreviation: tutorial_self_enrolment_stream_abbr)
+      task_def.tutorial_self_enrolment_stream = tutorial_self_enrolment_stream
       task_def.save!
     end
 
