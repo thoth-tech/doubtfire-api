@@ -3,6 +3,7 @@ require 'grape'
 class TutorialsApi < Grape::API
   helpers AuthenticationHelpers
   helpers AuthorisationHelpers
+  helpers MimeCheckHelpers
 
   before do
     authenticated?
@@ -101,5 +102,39 @@ class TutorialsApi < Grape::API
 
     tutorial.destroy!
     present true, with: Grape::Presenters::Presenter
+  end
+
+  desc 'Upload CSV with tutorials'
+  params do
+    requires :file, type: File, desc: 'CSV upload file.'
+  end
+  post '/csv/tutorials/upload' do
+    unless authorise? current_user, User, :upload_csv
+      error!({ error: 'Not authorised to upload CSV of students of tutorials' }, 403)
+    end
+
+    if params[:file].blank?
+      error!({ error: 'No file uploaded' }, 403)
+    end
+
+    if params[:file][:tempfile].size > 5.megabytes
+      error!({ error: 'CSV file size exceeds the 5MB limit' }, 413)
+    end
+
+    path = params[:file][:tempfile].path
+    Tutorial.import_from_csv(File.new(path))
+  end
+
+  desc 'Download CSV with tutorials'
+  get '/csv/tutorials/download' do
+    unless authorise? current_user, User, :download_tutorial_csv
+      error!({ error: 'Not authorised to download CSV of all tutorials' }, 403)
+    end
+
+    content_type 'application/octet-stream'
+    header['Content-Disposition'] = 'attachment; filename=tutorials.csv'
+    header['Access-Control-Expose-Headers'] = 'Content-Disposition'
+    env['api.format'] = :binary
+    Tutorial.export_to_csv
   end
 end

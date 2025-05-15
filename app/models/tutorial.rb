@@ -1,4 +1,7 @@
+require 'csv_helper'
+require 'csv'
 class Tutorial < ApplicationRecord
+  include CsvHelper
   # Model associations
   belongs_to :unit, optional: false # Foreign key
   belongs_to :unit_role, optional: true # Foreign key
@@ -71,6 +74,114 @@ class Tutorial < ApplicationRecord
 
   def num_students
     projects.where('enrolled = true').count
+  end
+
+  def self.missing_headers(row, headers)
+    headers - row.to_hash.keys
+  end
+
+  def self.csv_columns
+    %w[code abbreviation unit_id tutor_id tutorial_stream]
+  end
+
+  def self.import_from_csv(file)
+    success = []
+    errors = []
+    ignored = []
+    data = FileHelper.read_file_to_str(file).gsub('\\n', "\n")
+
+    ActiveRecord::Base.transaction do
+      CSV.parse(data,
+                headers: true,
+                header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip unless hdr.nil? }],
+                converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }]).each do |row|
+        missing = missing_headers(row, csv_columns)
+        if missing.count > 0
+          errors << { row: row, message: "Missing headers: #{missing.join(', ')}" }
+          raise StandardError, "Critical import error: missing headers"
+        end
+
+        tutorial_code = row['code'].strip unless row['code'].nil?
+        abbreviation = row['abbreviation'].strip unless row['abbreviation'].nil?
+        unit_id = row['unit_id'].strip unless row['unit_id'].nil?
+        user_id = row['tutor_id'].strip unless row['tutor_id'].nil?
+        tutorial_stream_name = row['tutorial_stream'].strip unless row['tutorial_stream'].nil?
+
+        # find unit role using tutor's user_id and unit_id
+        unit_role = UnitRole.find_by(user_id: user_id, unit_id: unit_id)
+
+        if unit_role.nil?
+          errors << { row: row, message: "Tutor with user_id (#{user_id}) not found in unit roles" }
+          raise StandardError, 'Critical import error: missing unit role'
+        end
+
+        # if tutorial is found set it, otherwise leave it blank
+        tutorial_stream = TutorialStream.find_by(name: tutorial_stream_name) if tutorial_stream_name.present?
+
+        # handle missing tutorial stream
+        tutorial_stream = nil if tutorial_stream_name.blank?
+
+        # create a new tutorial
+        tutorial = Tutorial.new(
+          unit_id: unit_id,
+          code: tutorial_code,
+          abbreviation: abbreviation,
+          unit_role_id: unit_role.id,
+          tutorial_stream_id: tutorial_stream&.id
+        )
+
+        if tutorial.save
+          success << { row: row, message: "Created tutorial #{abbreviation} #{unit_id}" }
+        else
+          errors << { row: row, message: "Failed to create tutorial #{abbreviation} #{unit_id}" }
+          raise StandardError, 'Critical import error: failed to save tutorial'
+        end
+      rescue StandardError => e
+        raise ActiveRecord::Rollback
+      end
+
+      raise ActiveRecord::Rollback unless errors.empty?
+    end
+
+    {
+      success: success,
+      ignored: ignored,
+      errors: errors
+    }
+  end
+
+  def self.export_to_csv
+    exportables = %w[code abbreviation unit_id unit_role_id tutorial_stream_id]
+
+    # Generate the CSV file
+    CSV.generate do |csv|
+      # Add header row
+      csv << Tutorial.attribute_names.select { |attribute| exportables.include? attribute }.map do |attribute|
+        if attribute == 'tutorial_stream_id'
+          'tutorial_stream'
+        elsif attribute == 'unit_role_id'
+          'tutor_id'
+        else
+          attribute
+        end
+      end
+
+      # Add data rows
+      Tutorial.order('id').each do |tutorial|
+        csv << tutorial.attributes.select { |attribute| exportables.include? attribute }.map do |key, value|
+          # make the values more readable
+          if key == 'tutorial_stream_id'
+            stream_name = TutorialStream.find_by(id: value)&.name
+            stream_name
+          elsif key == 'unit_role_id'
+            tutor_id = UnitRole.find_by(id: value)&.user_id
+            tutor_id
+          else
+            value
+          end
+        end
+      end
+    end
   end
 
   private
