@@ -136,6 +136,17 @@ class StaffGrantExtensionApi < Grape::API
             results[:failed],
             true # is_staff_grant = true
           ).deliver_later
+
+          # Create in-system notifications for successful extensions
+          results[:successful].each do |result|
+            student = User.find_by(id: result[:student_id])
+            next unless student
+
+            Notification.create!(
+              user_id: student.id,
+              message: "#{unit.name}: You were granted an extension for task '#{task_definition.name}'."
+            )
+          end
         end
       end
 
