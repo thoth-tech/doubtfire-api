@@ -58,6 +58,7 @@ class ApiRoot < Grape::API
   mount GroupSetsApi
   mount LearningOutcomesApi
   mount LearningAlignmentApi
+  mount NotificationsApi
   mount ProjectsApi
   mount SettingsApi
   mount StaffGrantExtensionApi
