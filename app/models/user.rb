@@ -136,6 +136,7 @@ class User < ApplicationRecord
   has_many    :projects, dependent: :destroy
   has_many    :auth_tokens, dependent: :destroy
   has_one     :webcal, dependent: :destroy
+  has_many    :notifications, dependent: :destroy
 
   # Model validations/constraints
   validates :first_name,  presence: true
