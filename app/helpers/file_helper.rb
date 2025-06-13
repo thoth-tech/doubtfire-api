@@ -83,6 +83,16 @@ module FileHelper
           msg: msg
         }
       end
+
+      # Sanitize the PDF
+      sanitized_result = sanitize_pdf(file["tempfile"].path)
+      unless sanitized_result[:success]
+        logger.debug "PDF sanitization failed: #{sanitized_result[:msg]}"
+        return { accepted: false, msg: sanitized_result[:msg] }
+      end
+
+      # Replace the original file with the sanitized version
+      FileUtils.mv(sanitized_result[:sanitized_path], file["tempfile"].path)
     end
 
     logger.debug "Uploaded file is accepted"
@@ -399,6 +409,53 @@ module FileHelper
   end
 
   #
+  # Sanitize a PDF file
+  #
+  def sanitize_pdf(input_path, output_path = nil)
+    return { success: false, msg: 'File does not exist' } unless File.exist?(input_path)
+
+    output_path ||= File.join(Dir.tmpdir, "sanitized-#{File.basename(input_path)}")
+
+    begin
+      logger.debug "Starting PDF sanitization for #{input_path}"
+
+      # Step 1: Validate the PDF
+      logger.debug "Validating PDF: #{input_path}"
+      validation_result = validate_pdf(input_path)
+      unless validation_result[:valid]
+        return { success: false, msg: 'Invalid or corrupted PDF' }
+      end
+
+      # Step 2: Use qpdf to sanitize the PDF
+      logger.debug "Running qpdf on: #{input_path}"
+      qpdf(input_path)
+
+      # Step 3: Further sanitize using ghostscript
+      sanitized_tmp = File.join(Dir.tmpdir, "gs-sanitized-#{File.basename(input_path)}")
+      logger.debug "Running ghostscript on: #{input_path}"
+      exec = "gs -sDEVICE=pdfwrite -dDetectDuplicateImages=true -dPDFSETTINGS=/printer -dNOPAUSE -dBATCH -dQUIET -sOutputFile=\"#{sanitized_tmp}\" \"#{input_path}\""
+      TimeoutHelper.system_try_within(30, "Ghostscript sanitization timeout", exec)
+
+      # Replace the output file with the ghostscript-sanitized version if successful
+      if File.exist?(sanitized_tmp)
+        FileUtils.mv(sanitized_tmp, output_path)
+      end
+
+      # Step 4: Validate the sanitized PDF
+      if File.exist?(output_path) && validate_pdf(output_path)[:valid]
+        logger.debug "Sanitization complete for #{input_path}"
+        return { success: true, sanitized_path: output_path }
+      else
+        return { success: false, msg: 'Failed to sanitize PDF' }
+      end
+    rescue => e
+      logger.error "Failed to sanitize PDF #{input_path}. Error: #{e.message}"
+      logger.error "Backtrace: #{e.backtrace.join("\n")}"
+      return { success: false, msg: "Error during sanitization: #{e.message}" }
+    end
+  end
+
+  #
   # Copy a PDF into place
   #
   def copy_pdf(file, dest_path)
@@ -636,6 +693,7 @@ module FileHelper
   module_function :qpdf
   module_function :move_files
   module_function :validate_pdf
+  module_function :sanitize_pdf
   module_function :copy_pdf
   module_function :read_file_to_str
   module_function :path_to_plagarism_html
