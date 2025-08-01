@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_05_15_025346) do
+ActiveRecord::Schema[7.1].define(version: 2025_07_24_054022) do
   create_table "activity_types", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
     t.string "name", null: false
     t.string "abbreviation", null: false
@@ -24,6 +24,8 @@ ActiveRecord::Schema[7.1].define(version: 2025_05_15_025346) do
     t.datetime "auth_token_expiry", null: false
     t.bigint "user_id"
     t.string "authentication_token", null: false
+    t.integer "token_type", default: 0, null: false
+    t.index ["token_type"], name: "index_auth_tokens_on_token_type"
     t.index ["user_id"], name: "index_auth_tokens_on_user_id"
   end
 
@@ -79,6 +81,15 @@ ActiveRecord::Schema[7.1].define(version: 2025_05_15_025346) do
     t.string "url"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+  end
+
+  create_table "d2l_assessment_mappings", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
+    t.bigint "unit_id", null: false
+    t.string "org_unit_id"
+    t.integer "grade_object_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["unit_id"], name: "index_d2l_assessment_mappings_on_unit_id", unique: true
   end
 
   create_table "discussion_comments", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
@@ -274,10 +285,11 @@ ActiveRecord::Schema[7.1].define(version: 2025_05_15_025346) do
     t.integer "extension_weeks"
     t.string "extension_response"
     t.bigint "reply_to_id"
-    t.bigint "overseer_assessment_id"
+    t.bigint "commentable_id"
+    t.string "commentable_type"
     t.index ["assessor_id"], name: "index_task_comments_on_assessor_id"
+    t.index ["commentable_type", "commentable_id"], name: "index_task_comments_on_commentable_type_and_commentable_id"
     t.index ["discussion_comment_id"], name: "index_task_comments_on_discussion_comment_id"
-    t.index ["overseer_assessment_id"], name: "index_task_comments_on_overseer_assessment_id"
     t.index ["recipient_id"], name: "fk_rails_1dbb49165b"
     t.index ["reply_to_id"], name: "index_task_comments_on_reply_to_id"
     t.index ["task_id"], name: "index_task_comments_on_task_id"
@@ -310,10 +322,18 @@ ActiveRecord::Schema[7.1].define(version: 2025_05_15_025346) do
     t.bigint "overseer_image_id"
     t.string "tii_group_id"
     t.string "moss_language"
+    t.boolean "scorm_enabled", default: false
+    t.boolean "scorm_allow_review", default: false
+    t.boolean "scorm_bypass_test", default: false
+    t.boolean "scorm_time_delay_enabled", default: false
+    t.integer "scorm_attempt_limit", default: 0
+    t.boolean "tutorial_self_enrolment_enabled", default: false
+    t.bigint "tutorial_self_enrolment_stream_id"
     t.index ["abbreviation", "unit_id"], name: "index_task_definitions_on_abbreviation_and_unit_id", unique: true
     t.index ["group_set_id"], name: "index_task_definitions_on_group_set_id"
     t.index ["name", "unit_id"], name: "index_task_definitions_on_name_and_unit_id", unique: true
     t.index ["overseer_image_id"], name: "index_task_definitions_on_overseer_image_id"
+    t.index ["tutorial_self_enrolment_stream_id"], name: "index_task_definitions_on_tutorial_self_enrolment_stream_id"
     t.index ["tutorial_stream_id"], name: "index_task_definitions_on_tutorial_stream_id"
     t.index ["unit_id"], name: "index_task_definitions_on_unit_id"
   end
@@ -390,6 +410,7 @@ ActiveRecord::Schema[7.1].define(version: 2025_05_15_025346) do
     t.integer "contribution_pts", default: 3
     t.integer "quality_pts", default: -1
     t.integer "extensions", default: 0, null: false
+    t.integer "scorm_extensions", default: 0, null: false
     t.index ["group_submission_id"], name: "index_tasks_on_group_submission_id"
     t.index ["project_id", "task_definition_id"], name: "tasks_uniq_proj_task_def", unique: true
     t.index ["project_id"], name: "index_tasks_on_project_id"
@@ -404,6 +425,17 @@ ActiveRecord::Schema[7.1].define(version: 2025_05_15_025346) do
     t.integer "year", null: false
     t.datetime "active_until", null: false
     t.index ["period", "year"], name: "index_teaching_periods_on_period_and_year", unique: true
+  end
+
+  create_table "test_attempts", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
+    t.bigint "task_id"
+    t.datetime "attempted_time", null: false
+    t.boolean "terminated", default: false
+    t.boolean "completion_status", default: false
+    t.boolean "success_status", default: false
+    t.float "score_scaled", default: 0.0
+    t.text "cmi_datamodel"
+    t.index ["task_id"], name: "index_test_attempts_on_task_id"
   end
 
   create_table "tii_actions", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
@@ -547,12 +579,34 @@ ActiveRecord::Schema[7.1].define(version: 2025_05_15_025346) do
     t.datetime "portfolio_auto_generation_date"
     t.string "tii_group_context_id"
     t.boolean "archived", default: false
+    t.integer "credit_points"
     t.bigint "unit_definition_id"
+    t.text "prerequisites"
+    t.text "corequisites"
     t.index ["draft_task_definition_id"], name: "index_units_on_draft_task_definition_id"
     t.index ["main_convenor_id"], name: "index_units_on_main_convenor_id"
     t.index ["overseer_image_id"], name: "index_units_on_overseer_image_id"
     t.index ["teaching_period_id"], name: "index_units_on_teaching_period_id"
     t.index ["unit_definition_id"], name: "index_units_on_unit_definition_id"
+  end
+
+  create_table "user_oauth_states", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.string "state"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["state"], name: "index_user_oauth_states_on_state", unique: true
+    t.index ["user_id"], name: "index_user_oauth_states_on_user_id"
+  end
+
+  create_table "user_oauth_tokens", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.integer "provider", default: 0, null: false
+    t.text "token"
+    t.datetime "expires_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["user_id"], name: "index_user_oauth_tokens_on_user_id"
   end
 
   create_table "users", charset: "utf8", collation: "utf8_unicode_ci", force: :cascade do |t|
@@ -609,5 +663,8 @@ ActiveRecord::Schema[7.1].define(version: 2025_05_15_025346) do
     t.index ["user_id"], name: "index_webcals_on_user_id", unique: true
   end
 
+  add_foreign_key "task_definitions", "tutorial_streams", column: "tutorial_self_enrolment_stream_id"
   add_foreign_key "units", "unit_definitions"
+  add_foreign_key "user_oauth_states", "users"
+  add_foreign_key "user_oauth_tokens", "users"
 end
