@@ -31,7 +31,7 @@ namespace :db do
       convenor_role = Role.find_by!(name: 'Convenor')
       admin_role = Role.find_by!(name: 'Admin') # Needed if creating users with system role
 
-      convenor_user = User.find_by(email: 'testconvenor@example.com')
+      convenor_user = User.find_by(email: 'aconvenor@doubtfire.com')
       unless convenor_user
         puts "Creating a test convenor user..."
         convenor_user = User.create!(
@@ -41,7 +41,7 @@ namespace :db do
           first_name: 'Test',
           last_name: 'Convenor',
           nickname: 'TestCon',
-          role_id: convenor_role.id, # System-wide role for the user
+          system_role: 'Convenor',
           password: 'password',
           password_confirmation: 'password'
         )
@@ -61,23 +61,36 @@ namespace :db do
       puts "Using Teaching Period: #{teaching_period.period} #{teaching_period.year}"
 
       # 4. Define Unit Data
+      puts "Defining unit data..."
       units_data = [
-        { code: 'SIT102', name: 'Introduction to Programming', credit_points: 1, prerequisites: [], corequisites: [] },
-        { code: 'SIT111', name: 'Computer Systems', credit_points: 1, prerequisites: [], corequisites: [] },
-        { code: 'SIT182', name: 'Real World Practices for Cyber Security', credit_points: 1, prerequisites: [], corequisites: [] },
-        { code: 'SIT112', name: 'Introduction to Data Science and Artificial Intelligence', credit_points: 1, prerequisites: [], corequisites: [] },
-        { code: 'SIT103', name: 'Database Fundamentals', credit_points: 1, prerequisites: [], corequisites: [] },
-        { code: 'SIT224', name: 'Information Technology Systems and Innovation', credit_points: 1, prerequisites: [], corequisites: [] },
-        { code: 'SIT120', name: 'Introduction to Responsive Web Apps', credit_points: 1, prerequisites: [], corequisites: [] },
-        { code: 'MIS201', name: 'Digital Business Analysis', credit_points: 1, prerequisites: [], corequisites: [] },
-        { code: 'SIT216', name: 'User-Centered Design', credit_points: 1, prerequisites: [], corequisites: [] },
-        { code: 'SIT317', name: 'Information Technology Innovations and Entrepreneurship', credit_points: 1, prerequisites: [], corequisites: [] },
-        { code: 'SIT223', name: 'Professional Practice in Information Technology', credit_points: 1, prerequisites: [], corequisites: [] },
-        { code: 'SIT374', name: 'Team Project (A) - Project Management and Practices', credit_points: 1, prerequisites: ['SIT223'], corequisites: [] },
-        { code: 'SIT328', name: 'Communicating Information Technology Projects', credit_points: 1, prerequisites: ['MIS201'], corequisites: [] },
-        { code: 'SIT344', name: 'Professional Practice', credit_points: 2, prerequisites: ['SIT232'], corequisites: [] },
-        { code: 'SIT232', name: 'Object-Oriented Development', credit_points: 1, prerequisites: [], corequisites: [] },
-        { code: 'SIT323', name: 'Cloud Native Application Development', credit_points: 1, prerequisites: ['SIT103', 'SIT232'], corequisites: [] }
+        # 0-Credit Point Compulsory Units
+        { code: 'DAI001', name: 'Academic Integrity and Respect at Deakin', credit_points: 0, prerequisites: [] },
+        { code: 'STP010', name: 'Career Tools for Employability', credit_points: 0, prerequisites: [] },
+        { code: 'SIT010', name: 'Introduction to Online Learning', credit_points: 0, prerequisites: [] },
+
+        # Core Units (12)
+        { code: 'SIT102', name: 'Introduction to Programming', credit_points: 1, prerequisites: [] },
+        { code: 'SIT111', name: 'Computer Systems', credit_points: 1, prerequisites: [] },
+        { code: 'SIT182', name: 'Real World Practices for Cyber Security', credit_points: 1, prerequisites: [] },
+        { code: 'SIT112', name: 'Introduction to Data Science and Artificial Intelligence', credit_points: 1, prerequisites: [] },
+        { code: 'SIT103', name: 'Database Fundamentals', credit_points: 1, prerequisites: [] },
+        { code: 'SIT120', name: 'Introduction to Responsive Web Apps', credit_points: 1, prerequisites: [] },
+        { code: 'SIT224', name: 'Information Technology Systems and Innovation', credit_points: 1, prerequisites: [] },
+        { code: 'MIS201', name: 'Digital Business Analysis', credit_points: 1, prerequisites: [] },
+        { code: 'SIT216', name: 'User-Centered Design', credit_points: 1, prerequisites: [] },
+        { code: 'SIT223', name: 'Professional Practice in Information Technology', credit_points: 1, prerequisites: [] },
+        { code: 'SIT317', name: 'Information Technology Innovations and Entrepreneurship', credit_points: 1, prerequisites: [] },
+        { code: 'SIT328', name: 'Communicating Information Technology Projects', credit_points: 1, prerequisites: ['MIS201'] },
+
+        # Capstone Units
+        { code: 'SIT374', name: 'Team Project (A) - Project Management and Practices', credit_points: 1, prerequisites: ['SIT223'] },
+        { code: 'SIT344', name: 'Professional Practice', credit_points: 2, prerequisites: ['SIT223'] },
+        { code: 'SIT306', name: 'Project Delivery', credit_points: 1, prerequisites: ['SIT374'] }, # Assumed prerequisite
+        { code: 'SIT378', name: 'Team Project (B) - Execution and Delivery', credit_points: 1, prerequisites: ['SIT374'] }, # Assumed prerequisite
+
+        # Other Units (for prerequisites and electives)
+        { code: 'SIT232', name: 'Object-Orient ed Development', credit_points: 1, prerequisites: ['SIT102'] },
+        { code: 'SIT323', name: 'Cloud Native Application Development', credit_points: 1, prerequisites: ['SIT103', 'SIT232'] }
       ]
 
       created_units_map = {} # To store Unit model instances { unit_code => unit_instance }
@@ -89,7 +102,7 @@ namespace :db do
         unit_def = UnitDefinition.find_or_create_by!(code: unit_data_hash[:code]) do |ud|
           ud.name = unit_data_hash[:name]
           ud.description = "This unit covers #{unit_data_hash[:name]}. Credit Points: #{unit_data_hash[:credit_points]}."
-          ud.version = '1.0' # Example version
+          ud.version = '1.0'
           puts "Created UnitDefinition: #{ud.code} - #{ud.name}"
         end
 
@@ -133,19 +146,16 @@ namespace :db do
         puts "Processed Unit: #{unit_instance.code}"
       end
 
-      # 6. Find or Create Course S326 (in my db it has ID 1)
-      course_s326 = Courseflow::Course.find_by(id: 1)
-      unless course_s326
-        puts "Course with ID 1 not found. Attempting to find or create S326 by code."
-        course_s326 = Course.find_or_create_by!(code: 'S326') do |c|
-          c.name = 'Bachelor of Computer Science'
+      # 6. Find or Create Course S326
+        puts "Initialize course S326 by code."
+        course_s326 = Courseflow::Course.find_or_create_by!(code: 'S326') do |c|
+          c.name = 'Bachelor of Information Technology'
           c.code = 'S326'
           c.year = current_year
           c.version = '1.0'
-          c.url = 'https://www.deakin.edu.au/course/bachelor-computer-science'
+          c.url = 'https://www.deakin.edu.au/course/bachelor-information-technology'
           puts "Created Course: #{c.code} - #{c.name}"
         end
-      end
       puts "Using Course: #{course_s326.code} (ID: #{course_s326.id})"
 
       # 7. Create Courseflow::CourseMap for Course S326
@@ -156,51 +166,186 @@ namespace :db do
       end
       puts "Using CourseMap ID: #{course_map.id} (CourseID: #{course_map.courseId}, UserID: 1)"
 
-      # 9. Create Courseflow::RequirementSet and Requirement entries for prerequisites
-      puts "Creating RequirementSet and Requirement entries for prerequisites..."
+      # 8. Create Course Rules and Unit Prerequisites
+      puts "\n--- Creating S326 Course Rules ---"
+
+      # Rule: 0-Credit Point Compulsory Units
+      compulsory_units = ['DAI001', 'STP010', 'SIT010']
+      compulsory_req = Courseflow::Requirement.create!(
+        courseId: course_s326.id,
+        type: 'course',
+        category: 'compulsory_units',
+        description: 'Must pass all 0-credit point compulsory units',
+        minimum: 3,
+        maximum: 3,
+        requirementSetGroupId: 0  # Temporary value
+      )
+      compulsory_req.update!(requirementSetGroupId: compulsory_req.id)
+      compulsory_units.each do |code|
+        Courseflow::RequirementSet.create!(
+          requirementSetGroupId: compulsory_req.requirementSetGroupId,
+          requirementId: compulsory_req.id,
+          unitId: created_units_map[code].id,
+          description: "Compulsory unit #{code} - #{created_units_map[code].name}"
+        )
+      end
+      puts "CREATED: Rule for 0-credit point compulsory units."
+
+      # Rule: Core Units
+      core_units = ['MIS201', 'SIT102', 'SIT103', 'SIT111', 'SIT112', 'SIT120', 'SIT182', 'SIT216', 'SIT223', 'SIT224', 'SIT317', 'SIT328']
+      core_req = Courseflow::Requirement.create!(
+        courseId: course_s326.id,
+        type: 'course',
+        category: 'core_units',
+        description: 'Must pass all 12 core units',
+        minimum: 12,
+        maximum: 12,
+        requirementSetGroupId: 0  # Temporary value
+      )
+      core_req.update!(requirementSetGroupId: core_req.id)
+      core_units.each do |code|
+        Courseflow::RequirementSet.create!(
+          requirementSetGroupId: core_req.requirementSetGroupId,
+          requirementId: core_req.id,
+          unitId: created_units_map[code].id,
+          description: "Core unit #{code} - #{created_units_map[code].name}"
+        )
+      end
+      puts "CREATED: Rule for 12 core units."
+
+      # Rule: Capstone Units (Choice using chained RequirementSets)
+      capstone_choice_req = Courseflow::Requirement.create!(
+        courseId: course_s326.id,
+        type: 'course',
+        category: 'capstone_choice',
+        description: 'Must complete ONE capstone option',
+        minimum: 1,
+        maximum: 1,
+        requirementSetGroupId: 0  # Temporary value
+      )
+      capstone_choice_req.update!(requirementSetGroupId: capstone_choice_req.id)
+
+      # Option A: SIT344 (2cp)
+      capstone_option_a_req = Courseflow::Requirement.create!(
+        courseId: course_s326.id,
+        type: 'course',
+        category: 'capstone_option',
+        description: 'Capstone Option A: SIT344 (2cp)',
+        requirementSetGroupId: 0  # Temporary value
+      )
+      capstone_option_a_req.update!(requirementSetGroupId: capstone_option_a_req.id)
+
+      # Option B: SIT306, SIT374, SIT378 (3cp)
+      capstone_option_b_req = Courseflow::Requirement.create!(
+        courseId: course_s326.id,
+        type: 'course',
+        category: 'capstone_option',
+        description: 'Capstone Option B: SIT306, SIT374, SIT378',
+        minimum: 3,
+        maximum: 3,
+        requirementSetGroupId: 0  # Temporary value
+      )
+      capstone_option_b_req.update!(requirementSetGroupId: capstone_option_b_req.id)
+
+      Courseflow::RequirementSet.create!(
+        requirementSetGroupId: capstone_option_a_req.id,
+        requirementId: capstone_option_a_req.id,
+        unitId: created_units_map['SIT344'].id,
+        description: "Complete SIT344"
+      )
+      # RequirementSet for Option B
+      ['SIT306', 'SIT374', 'SIT378'].each do |code|
+        Courseflow::RequirementSet.create!(
+          requirementSetGroupId: capstone_option_b_req.id,
+          requirementId: capstone_option_b_req.id,
+          unitId: created_units_map[code].id,
+          description: "Part of Capstone B"
+        )
+      end
+      # 3. Create the RequirementSet for the main choice. Instead of pointing to units
+      # or child groups, it now points directly to the Requirement records for the options.
+      Courseflow::RequirementSet.create!(
+        requirementSetGroupId: capstone_choice_req.id,
+        requirementId: capstone_option_a_req.id, # <-- Points to the Requirement for Option A
+        unitId: nil, # <-- This is now valid because of our model change
+        description: "Capstone Option A - SIT344 Professional Practice"
+      )
+      Courseflow::RequirementSet.create!(
+        requirementSetGroupId: capstone_choice_req.id,
+        requirementId: capstone_option_b_req.id, # <-- Points to the Requirement for Option B
+        unitId: nil, # <-- This is now valid
+        description: "Capstone Option B - SIT306/SIT374/SIT378 Team Projects"
+      )
+
+      puts "CREATED: Rule for Capstone unit choice."
+
+      # Rule: Level Restrictions
+      level1_req = Courseflow::Requirement.create!(
+        courseId: course_s326.id,
+        type: 'course',
+        category: 'level_restriction',
+        description: 'Must pass no more than 10 credit points at level 1',
+        maximum: 10,
+        requirementSetGroupId: 0  # Temporary value
+      )
+      level1_req.update!(requirementSetGroupId: level1_req.id)
+
+      level3_req = Courseflow::Requirement.create!(
+        courseId: course_s326.id,
+        type: 'course',
+        category: 'level_restriction',
+        description: 'Must pass at least 6 credit points at level 3',
+        minimum: 6,
+        requirementSetGroupId: 0  # Temporary value
+      )
+      level3_req.update!(requirementSetGroupId: level3_req.id)
+      puts "CREATED: Rules for unit level restrictions."
+
+      # Rule: Total Credit Points
+      cp_req = Courseflow::Requirement.create!(
+        courseId: course_s326.id,
+        type: 'course',
+        category: 'credit_points',
+        description: 'Must pass 24 credit points for course',
+        minimum: 24,
+        maximum: 24,
+        requirementSetGroupId: 0  # Temporary value
+      )
+      cp_req.update!(requirementSetGroupId: cp_req.id)
+      puts "CREATED: Rule for total course credit points."
+      # Create Individual Unit Prerequisites
+      puts "\n--- Creating Individual Unit Prerequisites ---"
       units_data.each do |unit_data_hash|
         next if unit_data_hash[:prerequisites].empty?
-
         target_unit_model = created_units_map[unit_data_hash[:code]]
-        unless target_unit_model
-          puts "Error: Target unit #{unit_data_hash[:code]} was not found in created_units_map. Skipping prerequisites."
-          next
+
+        requirement = Courseflow::Requirement.find_or_create_by!(
+          unitId: target_unit_model.id,
+          courseId: course_s326.id,
+          type: 'unit',
+          category: 'prerequisite',
+          description: "Prerequisites for #{target_unit_model.code}",
+          requirementSetGroupId: 0
+        ) do |req|
+          req.minimum = unit_data_hash[:prerequisites].length
+          req.maximum = unit_data_hash[:prerequisites].length
         end
+        requirement.update!(requirementSetGroupId: requirement.id) if requirement.requirementSetGroupId.nil?
 
         unit_data_hash[:prerequisites].each do |prereq_code|
           prerequisite_unit_model = created_units_map[prereq_code]
-          unless prerequisite_unit_model
-            puts "Error: Prerequisite unit #{prereq_code} for #{target_unit_model.code} was not found. Skipping this prerequisite."
-            next
-          end
-
-          # Create the RequirementSet entry
+          next unless prerequisite_unit_model
           Courseflow::RequirementSet.find_or_create_by!(
-            requirementSetGroupId: 1, # Assuming a default group ID for this example
-            unitId: target_unit_model.id,
-            requirementId: prerequisite_unit_model.id
-          ) do |rs|
-            rs.description = "#{prerequisite_unit_model.code} is a prerequisite for #{target_unit_model.code}."
-            puts "Created RequirementSet: #{target_unit_model.code} requires #{prerequisite_unit_model.code}"
-          end
-
-          # Create the Requirement entry
-          Courseflow::Requirement.find_or_create_by!(
-            unitId: target_unit_model.id,
-            courseId: course_s326.id,
-            type: 'unit',
-            category: 'prerequisite',
-            description: "#{prerequisite_unit_model.code} is a prerequisite for #{target_unit_model.code}.",
-            minimum: 1,
-            maximum: 1,
-            requirementSetGroupId: 1
-          ) do |req|
-            puts "Created Requirement: #{target_unit_model.code} requires #{prerequisite_unit_model.code}"
-          end
+            requirementSetGroupId: requirement.requirementSetGroupId,
+            requirementId: requirement.id,
+            unitId: prerequisite_unit_model.id,
+            description: "Prerequisite #{prereq_code} for #{target_unit_model.code}"
+          )
         end
+        puts "CREATED: Prerequisites for #{target_unit_model.code}."
       end
 
-      # Define the specific slotting information for units
+      # 9. Define the specific slotting information for units
       unit_specific_slots = {
         'SIT102' => { year_slot: 1, teaching_period_slot: 1, unit_slot: 1 },
         'SIT111' => { year_slot: 1, teaching_period_slot: 1, unit_slot: 2 },
