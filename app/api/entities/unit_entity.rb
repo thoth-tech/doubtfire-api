@@ -64,5 +64,8 @@ module Entities
     #   unit.group_memberships.where(active: true)
     # end
     expose :unit_definition_id
+    expose :credit_points
+    expose :prerequisites
+    expose :corequisites
   end
 end
