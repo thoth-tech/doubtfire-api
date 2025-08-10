@@ -8,8 +8,9 @@ class NotificationsApi < Grape::API
 
   desc 'Get current user notifications'
   get '/notifications' do
-    notifications = current_user.notifications.order(created_at: :desc)
-    # Return array of notifications as JSON (id and message only)
+    notifications = current_user.notifications
+                                .order(created_at: :desc)
+                                .limit(20)
     notifications.as_json(only: [:id, :message])
   end
 
