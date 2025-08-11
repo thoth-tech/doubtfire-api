@@ -1,6 +1,11 @@
 require 'grape'
 
 class SettingsApi < Grape::API
+  helpers AuthenticationHelpers
+
+  before do
+    error!({ error: '401 Unauthorized' }, 401) unless authenticated_without_error?
+  end
   #
   # Returns the current auth method
   #

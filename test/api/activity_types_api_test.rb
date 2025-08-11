@@ -9,7 +9,19 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
     Rails.application
   end
 
+  def test_get_all_activity_types_requires_authentication
+    get '/api/activity_types'
+    assert_equal 401, last_response.status
+  end
+
+  def test_get_activity_type_by_id_requires_authentication
+    activity_type = FactoryBot.create(:activity_type)
+    get "/api/activity_types/#{activity_type.id}"
+    assert_equal 401, last_response.status
+  end
+
   def test_get_all_activity_types
+    add_auth_header_for(user: User.first)
     get '/api/activity_types'
     expected_data = ActivityType.all
 
@@ -23,12 +35,20 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
     end
   end
 
+  def test_get_activity_type_by_id
+    activity_type = FactoryBot.create(:activity_type)
+    add_auth_header_for(user: User.first)
+    get "/api/activity_types/#{activity_type.id}"
+    response_keys = %w(name abbreviation)
+    assert_json_matches_model(activity_type, last_response_body, response_keys)
+  end
+
   # POST tests
   # 1: Admin can create a new activity type
   def test_admin_can_post_activity_type
     # Admin user
     admin = FactoryBot.create(:user, :admin)
-    
+
     # the number of teaching period before post
     no_activity_type = ActivityType.count
 
@@ -42,8 +62,8 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
 
     # perform the POST
     post_json '/api/activity_types', data_to_post
-    
-    # check if the request get through 
+
+    # check if the request get through
     assert_equal 201, last_response.status
 
     # check if the details posted match as expected
@@ -63,7 +83,7 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
   def test_convenor_cannot_post_activity_type
     # Convenor user
     convenor = FactoryBot.create(:user, :convenor)
-    
+
     # the number of teaching period before post
     no_activity_type = ActivityType.count
 
@@ -74,11 +94,11 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
 
     # auth_token and username added to header
     add_auth_header_for(user: convenor)
-    
+
     # perform the POST
     post_json '/api/activity_types', data_to_post
-    
-    # check if the request get through 
+
+    # check if the request get through
     assert_equal 403, last_response.status
 
     # check if no more activity type is created
@@ -89,7 +109,7 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
   def test_tutor_cannot_post_activity_type
     # Tutor user
     tutor = FactoryBot.create(:user, :tutor)
-    
+
     # the number of teaching period before post
     no_activity_type = ActivityType.count
 
@@ -100,11 +120,11 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
 
     # auth_token and username added to header
     add_auth_header_for(user: tutor)
-  
+
     # perform the POST
     post_json '/api/activity_types', data_to_post
-    
-    # check if the request get through 
+
+    # check if the request get through
     assert_equal 403, last_response.status
 
     # check if no more activity type is created
@@ -119,8 +139,8 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
 
     # The activity type to be replaced
     activity_type = FactoryBot.create(:activity_type)
-    
-    # Data to replace 
+
+    # Data to replace
     data_to_put = {
       activity_type: FactoryBot.build(:activity_type)
     }
@@ -130,7 +150,7 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
 
     # Update activity_type with data_to_put
     put_json "/api/activity_types/#{activity_type.id}", data_to_put
-    
+
     #check if the request get through
     assert_equal 200, last_response.status
 
@@ -139,7 +159,7 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
     activity_type_updated = activity_type.reload
     assert_json_matches_model(activity_type_updated, last_response_body, response_keys)
 
-    # check if the details in the replaced teaching period match as data set to replace 
+    # check if the details in the replaced teaching period match as data set to replace
     assert_equal data_to_put[:activity_type]['name'], activity_type_updated.name
     assert_equal data_to_put[:activity_type]['abbreviation'], activity_type_updated.abbreviation
   end
@@ -151,8 +171,8 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
 
     # The activity type to be replaced
     activity_type = FactoryBot.create(:activity_type)
-    
-    # Data to replace 
+
+    # Data to replace
     data_to_put = {
       activity_type: FactoryBot.build(:activity_type)
     }
@@ -162,7 +182,7 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
 
     # Update activity_type with data_to_put
     put_json "/api/activity_types/#{activity_type.id}", data_to_put
-    
+
     #check if the request get through
     assert_equal 403, last_response.status
   end
@@ -174,8 +194,8 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
 
     # The activity type to be replaced
     activity_type = FactoryBot.create(:activity_type)
-    
-    # Data to replace 
+
+    # Data to replace
     data_to_put = {
       activity_type: FactoryBot.build(:activity_type)
     }
@@ -185,7 +205,7 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
 
     # Update activity_type with data_to_put
     put_json "/api/activity_types/#{activity_type.id}", data_to_put
-    
+
     #check if the request get through
     assert_equal 403, last_response.status
   end
@@ -209,11 +229,11 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
     post_json '/api/activity_types', data_to_post
 
     # Check if the post does not get through
-    assert_equal 403, last_response.status  
+    assert_equal 403, last_response.status
 
     # Check if the number of activity type is the same as initially
     assert_equal ActivityType.count, number_of_activity_type
-  end  
+  end
 
   def test_student_cannot_put_activity_type
     # A user with student role which does not have premision to put a activity type
@@ -223,7 +243,7 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
     activity_type = FactoryBot.create(:activity_type)
 
     # Number of Activity type before put new activity type
-    number_of_activity_type = ActivityType.count    
+    number_of_activity_type = ActivityType.count
 
     # Create a dummy activity type
     data_to_put = {
@@ -235,9 +255,9 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
 
     # Perform PUT, but the student user does not have permissions to put it.
     put_json "/api/activity_types/#{activity_type.id}", data_to_put
-    
+
     # Check if the put does not get through
-    assert_equal 403, last_response.status  
+    assert_equal 403, last_response.status
 
     # Check if the number of activity type is the same as initially
     assert_equal ActivityType.count, number_of_activity_type
@@ -246,17 +266,17 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
   def test_delete_activity_type
     # Create a activity type
     activity_type = FactoryBot.create(:activity_type)
-          
+
     #number of activity type before delete
     number_of_ativity_type = ActivityType.count
-        
+
 
     # auth_token and username added to header
     add_auth_header_for(user: User.first)
-    
+
     # perform the delete
-    delete_json "/api/activity_types/#{activity_type.id}" 
-    
+    delete_json "/api/activity_types/#{activity_type.id}"
+
     # Check if the delete get through
     assert_equal 200, last_response.status
 
@@ -270,18 +290,18 @@ class ActivityTypesApiTest < ActiveSupport::TestCase
   def test_student_cannot_delete_activity_type
     # A user with student role which does not have permision to delete a activity type
     user = FactoryBot.build(:user, :student)
-    
+
     # create a activity type to delete
     activity_type = FactoryBot.create (:activity_type)
-    
+
     # number of activity type before delete
     number_of_ativity_type = ActivityType.count
-    
+
     # auth_token and username added to header
     add_auth_header_for(user: user)
 
     # perform the delete
-    delete_json "/api/activity_types/#{activity_type.id}" 
+    delete_json "/api/activity_types/#{activity_type.id}"
 
     # check if the delete does not get through
     assert_equal 403, last_response.status
