@@ -93,6 +93,7 @@ class ApiRoot < Grape::API
   AuthenticationHelpers.add_auth_to Admin::OverseerAdminApi
 
   AuthenticationHelpers.add_auth_to ActivityTypesAuthenticatedApi
+  AuthenticationHelpers.add_auth_to ActivityTypesPublicApi
   AuthenticationHelpers.add_auth_to BreaksApi
   AuthenticationHelpers.add_auth_to DiscussionCommentApi
   AuthenticationHelpers.add_auth_to ExtensionCommentsApi
@@ -100,6 +101,7 @@ class ApiRoot < Grape::API
   AuthenticationHelpers.add_auth_to LearningOutcomesApi
   AuthenticationHelpers.add_auth_to LearningAlignmentApi
   AuthenticationHelpers.add_auth_to ProjectsApi
+  AuthenticationHelpers.add_auth_to SettingsApi
   AuthenticationHelpers.add_auth_to StudentsApi
   AuthenticationHelpers.add_auth_to Submission::PortfolioApi
   AuthenticationHelpers.add_auth_to Submission::PortfolioEvidenceApi

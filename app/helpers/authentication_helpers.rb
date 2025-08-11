@@ -49,6 +49,19 @@ module AuthenticationHelpers
   end
 
   #
+  # Check authentication without raising an error.
+  # Returns true if authenticated, false otherwise.
+  #
+  def authenticated_without_error?
+    catch(:error) do
+      return true if authenticated?
+    end
+    false
+  end
+
+  module_function :authenticated_without_error?
+
+  #
   # Get the current user either from warden or from the header
   #
   def current_user

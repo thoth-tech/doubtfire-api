@@ -1,6 +1,11 @@
 require 'grape'
 
 class TeachingPeriodsPublicApi < Grape::API
+  helpers AuthenticationHelpers
+
+  before do
+    error!({ error: '401 Unauthorized' }, 401) unless authenticated_without_error?
+  end
   desc "Get a teaching period's details"
   get '/teaching_periods/:id' do
     teaching_period = TeachingPeriod.find(params[:id])

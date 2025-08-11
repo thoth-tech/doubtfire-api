@@ -11,8 +11,21 @@ class TeachingPeriodTest < ActiveSupport::TestCase
 
   # GET tests
   # Get teaching period
+  def test_get_teaching_periods_requires_authentication
+    get '/api/teaching_periods'
+    assert_equal 401, last_response.status
+  end
+
+  def test_get_teaching_period_details_requires_authentication
+    expected_tp = FactoryBot.create(:teaching_period)
+    get "/api/teaching_periods/#{expected_tp.id}"
+    assert_equal 401, last_response.status
+  end
+
   def test_get_teaching_periods
     # The GET we are testing
+    add_auth_header_for(user: User.first)
+    # Perform the GET
     get '/api/teaching_periods'
     expected_data = TeachingPeriod.all
 
@@ -36,6 +49,7 @@ class TeachingPeriodTest < ActiveSupport::TestCase
     expected_tp = FactoryBot.create(:teaching_period)
 
     # perform the GET
+    add_auth_header_for(user: User.first)
     get "/api/teaching_periods/#{expected_tp.id}"
     actual_tp = last_response_body
 
@@ -112,7 +126,7 @@ class TeachingPeriodTest < ActiveSupport::TestCase
     assert_equal data_to_put[:teaching_period]['start_date'].to_date, tp_updated.start_date.to_date
     assert_equal data_to_put[:teaching_period]['end_date'].to_date, tp_updated.end_date.to_date
   end
-  
+
   # Put teaching period using unauthorised account
   def test_student_cannot_put_teaching_period
     # A user with student role which does not have permission to put a teaching period
@@ -124,7 +138,7 @@ class TeachingPeriodTest < ActiveSupport::TestCase
     # Number of teaching period before put new teaching period
     number_of_tp = TeachingPeriod.count
 
-    # Create a dummy teaching period 
+    # Create a dummy teaching period
     data_to_put = {
       teaching_period: FactoryBot.build(:teaching_period)
     }

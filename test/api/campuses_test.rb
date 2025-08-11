@@ -9,7 +9,19 @@ class CampusesTest < ActiveSupport::TestCase
     Rails.application
   end
 
+  def test_get_all_campuses_requires_authentication
+    get '/api/campuses'
+    assert_equal 401, last_response.status
+  end
+
+  def test_get_campus_by_id_requires_authentication
+    campus = FactoryBot.create(:campus, mode: 'timetable')
+    get "/api/campuses/#{campus.id}"
+    assert_equal 401, last_response.status
+  end
+
   def test_get_all_campuses
+    add_auth_header_for(user: User.first)
     get '/api/campuses'
     expected_data = Campus.all
     assert_equal expected_data.count, last_response_body.count
@@ -22,6 +34,7 @@ class CampusesTest < ActiveSupport::TestCase
 
   def test_get_campuses_by_id
     campus = FactoryBot.create(:campus, mode: 'timetable')
+    add_auth_header_for(user: User.first)
     get "/api/campuses/#{campus.id}"
     response_keys = %w(name abbreviation)
     assert_json_matches_model(campus, last_response_body, response_keys)
