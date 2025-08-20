@@ -1,8 +1,13 @@
-GrapeSwaggerRails.options.url = '/api/swagger_doc'
-GrapeSwaggerRails.options.before_action do
-  GrapeSwaggerRails.options.app_url = request.protocol + request.host_with_port
-end
+if Rails.env.production?
+  # Disable Swagger in production
+  GrapeSwaggerRails.options.app_url = nil
+else
+  GrapeSwaggerRails.options.url = '/api/swagger_doc'
+  GrapeSwaggerRails.options.before_action do
+    GrapeSwaggerRails.options.app_url = request.protocol + request.host_with_port
+  end
 
-GrapeSwaggerRails.options.before_filter_proc = proc {
-  GrapeSwaggerRails.options.app_url = request.protocol + request.host_with_port
-}
+  GrapeSwaggerRails.options.before_filter_proc = proc {
+    GrapeSwaggerRails.options.app_url = request.protocol + request.host_with_port
+  }
+end
