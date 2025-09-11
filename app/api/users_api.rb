@@ -21,7 +21,8 @@ class UsersApi < Grape::API
   desc 'Get user'
   get '/users/:id', requirements: { id: /[0-9]*/ } do
     user = User.find(params[:id])
-    unless (user.id == current_user.id) || (authorise? current_user, User, :admin_users)
+    # Users may only access their own data unless they are teaching staff
+    unless user.id == current_user.id || Role.teaching_staff_ids.include?(current_user.role_id)
       error!({ error: "Cannot find User with id #{params[:id]}" }, 403)
     end
 

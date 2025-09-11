@@ -65,18 +65,29 @@ class UnitsTest < ActiveSupport::TestCase
     # Add username and auth_token to Header
     add_auth_header_for(user: User.first)
 
-    # perform the GET 
+    # perform the GET
     get "/api/users/#{expected_user.id}"
     returned_user = last_response_body
 
     # Check if the call succeeds
     assert_equal 200, last_response.status
-    
+
     # Check the returned details match as expected
     response_keys = %w(first_name last_name email student_id nickname receive_task_notifications receive_portfolio_notifications receive_feedback_notifications opt_in_to_research has_run_first_time_setup)
     assert_json_matches_model(expected_user, returned_user, response_keys)
   end
-  
+
+  def test_student_cannot_access_other_user
+    student = create(:user, :student)
+    other_student = create(:user, :student)
+
+    add_auth_header_for(user: student)
+
+    get "/api/users/#{other_student.id}"
+
+    assert_equal 403, last_response.status
+  end
+
   def test_get_convenors
 
     # Add username and auth_token to Header
