@@ -406,5 +406,39 @@ class TasksApiTest < ActiveSupport::TestCase
     td.destroy
   end
 
+  def test_exposes_tutorial_self_enrolment_fields
+    unit = FactoryBot.create(:unit)
+    activity = FactoryBot.create(:activity_type)
+    stream = FactoryBot.create(:tutorial_stream, unit: unit, activity_type: activity)
 
+    # Task with self enrolment enabled
+    td_enabled = FactoryBot.create(
+      :task_definition,
+      unit: unit,
+      tutorial_stream: stream,
+      tutorial_self_enrolment_enabled: true,
+      tutorial_self_enrolment_stream: stream
+    )
+
+    json = Entities::TaskDefinitionEntity.represent(td_enabled, my_role: nil).as_json
+
+    assert_equal true, json[:tutorial_self_enrolment_enabled], "expected enrolment flag to be true"
+    assert_equal stream.id, json[:tutorial_self_enrolment_stream_id], "expected stream id to match"
+    assert_equal stream.abbreviation, json[:tutorial_self_enrolment_stream_abbr], "expected abbr to match"
+
+    # Task with self enrolment disabled
+    td_disabled = FactoryBot.create(
+      :task_definition,
+      unit: unit,
+      tutorial_stream: stream,
+      tutorial_self_enrolment_enabled: false,
+      tutorial_self_enrolment_stream: nil
+    )
+
+    json = Entities::TaskDefinitionEntity.represent(td_disabled, my_role: nil).as_json
+
+    assert_equal false, json[:tutorial_self_enrolment_enabled], "expected enrolment flag to be false"
+    assert_nil json[:tutorial_self_enrolment_stream_id], "expected no stream id"
+    assert_nil json[:tutorial_self_enrolment_stream_abbr], "expected no stream abbr"
+  end
 end
