@@ -269,4 +269,39 @@ class TaskDefinitionTest < ActiveSupport::TestCase
     unit.destroy
   end
 
+  def test_tutorial_self_enrolment_valid_and_invalid
+    unit = FactoryBot.create(:unit)
+    activity = FactoryBot.create(:activity_type)
+    stream1 = FactoryBot.create(:tutorial_stream, unit: unit, activity_type: activity)
+    stream2 = FactoryBot.create(:tutorial_stream, unit: unit, activity_type: activity)
+
+    #valid case: self-enrolment stream in same unit
+    td_valid = FactoryBot.build(:task_definition,
+      unit: unit,
+      tutorial_stream: stream1,
+      tutorial_self_enrolment_enabled: true,
+      tutorial_self_enrolment_stream: stream2
+    )
+
+    assert td_valid.valid?, "TaskDefinition should be valid when self enrolment stream is in the same unit"
+    td_valid.save!
+
+    assert td_valid.tutorial_self_enrolment_enabled?
+    assert_equal stream2, td_valid.tutorial_self_enrolment_stream
+
+    # invalid case: self-enrolment stream from another unit
+    other_unit = FactoryBot.create(:unit)
+    other_stream = FactoryBot.create(:tutorial_stream, unit: other_unit, activity_type: activity)
+
+    td_invalid = FactoryBot.build(:task_definition,
+      unit: unit,
+      tutorial_stream: stream1,
+      tutorial_self_enrolment_enabled: true,
+      tutorial_self_enrolment_stream: other_stream
+    )
+
+    refute td_invalid.valid?, "TaskDefinition should not be valid with self enrolment stream from another unit"
+    assert_includes td_invalid.errors[:tutorial_self_enrolment_stream], "must belong to the same unit"
+  end
+
 end
