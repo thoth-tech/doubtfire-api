@@ -278,6 +278,176 @@ class AuthenticationApi < Grape::API
   end
 
   #
+  # Password management endpoints - only available for database auth
+  #
+  if !AuthenticationHelpers.aaf_auth? && !AuthenticationHelpers.saml_auth? && !AuthenticationHelpers.ldap_auth?
+    
+    #
+    # User registration endpoint
+    #
+    desc 'Register a new user'
+    params do
+      requires :username, type: String, desc: 'User username'
+      requires :email, type: String, desc: 'User email'
+      requires :password, type: String, desc: 'User password'
+      requires :password_confirmation, type: String, desc: 'Password confirmation'
+      requires :first_name, type: String, desc: 'User first name'
+      requires :last_name, type: String, desc: 'User last name'
+      optional :nickname, type: String, desc: 'User nickname'
+    end
+    post '/register' do
+      username = params[:username].downcase
+      email = params[:email]
+      password = params[:password]
+      password_confirmation = params[:password_confirmation]
+      
+      # Check if user already exists
+      if User.exists?(username: username)
+        error!({ error: 'Username already exists.' }, 409)
+      end
+      
+      if User.exists?(email: email)
+        error!({ error: 'Email already exists.' }, 409)
+      end
+
+      # Create new user
+      user = User.new(
+        username: username,
+        email: email,
+        password: password,
+        password_confirmation: password_confirmation,
+        first_name: params[:first_name],
+        last_name: params[:last_name],
+        nickname: params[:nickname] || params[:first_name],
+        role_id: Role.student.id,
+        login_id: username
+      )
+
+      if user.save
+        logger.info "User registered: #{username} from #{request.ip}"
+        present :user, user, with: Entities::UserEntity
+        present :auth_token, user.generate_authentication_token!(false).authentication_token
+        present :message, 'User registered successfully.'
+      else
+        error!({ error: 'Registration failed.', details: user.errors.full_messages }, 422)
+      end
+    end
+
+    #
+    # Password reset request endpoint
+    #
+    desc 'Request password reset'
+    params do
+      requires :email, type: String, desc: 'User email'
+    end
+    post '/password/reset' do
+      email = params[:email]
+      user = User.find_by(email: email)
+      
+      if user
+        user.generate_password_reset_token!
+        
+        # Send password reset email
+        begin
+          PasswordResetMailer.reset_password(user).deliver_now
+          logger.info "Password reset email sent to #{email}"
+        rescue => e
+          logger.error "Failed to send password reset email to #{email}: #{e.message}"
+          # Don't fail the request if email sending fails
+        end
+        
+        present :message, 'If an account with that email exists, a password reset link has been sent.'
+      else
+        # Don't reveal whether email exists for security
+        present :message, 'If an account with that email exists, a password reset link has been sent.'
+      end
+    end
+
+    #
+    # Password reset confirmation endpoint
+    #
+    desc 'Reset password with token'
+    params do
+      requires :token, type: String, desc: 'Password reset token'
+      requires :password, type: String, desc: 'New password'
+      requires :password_confirmation, type: String, desc: 'Password confirmation'
+    end
+    post '/password/reset/confirm' do
+      token = params[:token]
+      password = params[:password]
+      password_confirmation = params[:password_confirmation]
+      
+      user = User.find_by(reset_password_token: token)
+      
+      unless user && user.password_reset_token_valid?
+        error!({ error: 'Invalid or expired reset token.' }, 400)
+      end
+      
+      user.password = password
+      user.password_confirmation = password_confirmation
+      
+      if user.save
+        user.clear_password_reset_token!
+        logger.info "Password reset completed for user: #{user.username} from #{request.ip}"
+        
+        # Send password changed notification email
+        begin
+          PasswordResetMailer.password_changed(user).deliver_now
+          logger.info "Password changed notification email sent to #{user.email}"
+        rescue => e
+          logger.error "Failed to send password changed notification email to #{user.email}: #{e.message}"
+          # Don't fail the request if email sending fails
+        end
+        
+        present :message, 'Password has been reset successfully.'
+      else
+        error!({ error: 'Password reset failed.', details: user.errors.full_messages }, 422)
+      end
+    end
+
+    #
+    # Change password endpoint (requires authentication)
+    #
+    desc 'Change password'
+    params do
+      requires :current_password, type: String, desc: 'Current password'
+      requires :password, type: String, desc: 'New password'
+      requires :password_confirmation, type: String, desc: 'Password confirmation'
+    end
+    post '/password/change' do
+      authenticate!
+      
+      current_password = params[:current_password]
+      password = params[:password]
+      password_confirmation = params[:password_confirmation]
+      
+      unless current_user.valid_password?(current_password)
+        error!({ error: 'Current password is incorrect.' }, 400)
+      end
+      
+      current_user.password = password
+      current_user.password_confirmation = password_confirmation
+      
+      if current_user.save
+        logger.info "Password changed for user: #{current_user.username} from #{request.ip}"
+        
+        # Send password changed notification email
+        begin
+          PasswordResetMailer.password_changed(current_user).deliver_now
+          logger.info "Password changed notification email sent to #{current_user.email}"
+        rescue => e
+          logger.error "Failed to send password changed notification email to #{current_user.email}: #{e.message}"
+          # Don't fail the request if email sending fails
+        end
+        
+        present :message, 'Password has been changed successfully.'
+      else
+        error!({ error: 'Password change failed.', details: current_user.errors.full_messages }, 422)
+      end
+    end
+  end
+
+  #
   # Returns the current auth signout URL
   #
   desc 'Authentication signout URL'
