@@ -61,18 +61,58 @@ class User < ApplicationRecord
   end
 
   #
-  # We incorporate password details for local dev server - needed to keep devise happy
+  # Password management methods
   #
-  def password
-    'password'
+  attr_accessor :password, :password_confirmation
+
+  # Password validation
+  validates :password, presence: true, length: { minimum: 8 }, on: :create
+  validates :password, presence: true, length: { minimum: 8 }, on: :update, if: :password_required?
+  validates :password_confirmation, presence: true, if: :password_required?
+  validate :password_confirmation_match, if: :password_required?
+
+  def password_required?
+    password.present? || password_confirmation.present?
   end
 
-  def password_confirmation
-    'password'
+  def password_confirmation_match
+    if password != password_confirmation
+      errors.add(:password_confirmation, "doesn't match password")
+    end
   end
 
   def password=(value)
-    self.encrypted_password = BCrypt::Password.create(value)
+    @password = value
+    if value.present?
+      self.encrypted_password = BCrypt::Password.create(value)
+    end
+  end
+
+  # Check if provided password matches stored password
+  def valid_password?(password)
+    return false if encrypted_password.blank?
+    BCrypt::Password.new(encrypted_password) == password
+  end
+
+  # Generate password reset token
+  def generate_password_reset_token!
+    self.reset_password_token = SecureRandom.urlsafe_base64
+    self.reset_password_sent_at = Time.current
+    save!(validate: false)
+  end
+
+  # Clear password reset token
+  def clear_password_reset_token!
+    self.reset_password_token = nil
+    self.reset_password_sent_at = nil
+    save!(validate: false)
+  end
+
+  # Check if password reset token is valid and not expired (24 hours)
+  def password_reset_token_valid?
+    reset_password_token.present? && 
+    reset_password_sent_at.present? && 
+    reset_password_sent_at > 24.hours.ago
   end
 
   #
