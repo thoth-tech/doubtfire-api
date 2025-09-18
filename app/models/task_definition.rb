@@ -63,6 +63,12 @@ class TaskDefinition < ApplicationRecord
     tutorial_self_enrolment_enabled
   end
 
+  def available_tutorials_for_self_enrolment
+  return Tutorial.none unless tutorial_self_enrolment_enabled? && tutorial_self_enrolment_stream
+
+  tutorial_self_enrolment_stream.tutorials.where(unit: unit)
+  end
+
   def self_enrolment_stream_unit_must_match
     if tutorial_self_enrolment_enabled? && tutorial_self_enrolment_stream.present? && tutorial_self_enrolment_stream.unit != unit
       errors.add(:tutorial_self_enrolment_stream, "must belong to the same unit")
