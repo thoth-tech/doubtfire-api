@@ -33,6 +33,8 @@ class TaskDefinitionsApi < Grape::API
       optional :assessment_enabled,       type: Boolean,  desc: 'Enable or disable assessment'
       optional :overseer_image_id,        type: Integer,  desc: 'The id of the Docker image for overseer'
       optional :moss_language,            type: String,   desc: 'The language to use for code similarity checks'
+      optional :tutorial_self_enrolment_enabled, type: Boolean, desc: 'Enable tutorial self enrolment'
+      optional :tutorial_self_enrolment_stream_abbr, type: String, desc: 'Tutorial stream abbreviation for self enrolment'
     end
   end
   post '/units/:unit_id/task_definitions/' do
@@ -61,11 +63,24 @@ class TaskDefinitionsApi < Grape::API
                                                 :max_quality_pts,
                                                 :assessment_enabled,
                                                 :overseer_image_id,
-                                                :moss_language
+                                                :moss_language,
+                                                :tutorial_self_enrolment_enabled,
+                                                upload_requirements: []
                                               )
 
     task_params[:unit_id] = unit.id
-    task_params[:upload_requirements] = JSON.parse(params[:task_def][:upload_requirements]) unless params[:task_def][:upload_requirements].nil?
+    # Handle upload_requirements - check if it's already an array or needs parsing
+    if params[:task_def][:upload_requirements].present?
+      if params[:task_def][:upload_requirements].is_a?(Array)
+        task_params[:upload_requirements] = params[:task_def][:upload_requirements]
+      elsif params[:task_def][:upload_requirements].is_a?(String)
+        begin
+          task_params[:upload_requirements] = JSON.parse(params[:task_def][:upload_requirements])
+        rescue JSON::ParserError
+          error!({ error: 'Invalid upload_requirements format' }, 400)
+        end
+      end
+    end
 
     task_def = TaskDefinition.new(task_params)
 
@@ -74,6 +89,12 @@ class TaskDefinitionsApi < Grape::API
     unless tutorial_stream_abbr.nil?
       tutorial_stream = unit.tutorial_streams.find_by!(abbreviation: tutorial_stream_abbr)
       task_def.tutorial_stream = tutorial_stream
+    end
+
+    # Handle tutorial self-enrolment stream
+    if params[:task_def][:tutorial_self_enrolment_stream_abbr].present?
+      stream = unit.tutorial_streams.find_by!(abbreviation: params[:task_def][:tutorial_self_enrolment_stream_abbr])
+      task_def.tutorial_self_enrolment_stream = stream
     end
 
     #
@@ -111,6 +132,8 @@ class TaskDefinitionsApi < Grape::API
       optional :assessment_enabled,       type: Boolean,  desc: 'Enable or disable assessment'
       optional :overseer_image_id,        type: Integer,  desc: 'The id of the Docker image name for overseer'
       optional :moss_language,            type: String,   desc: 'The language to use for code similarity checks'
+      optional :tutorial_self_enrolment_enabled, type: Boolean, desc: 'Enable tutorial self enrolment'
+      optional :tutorial_self_enrolment_stream_abbr, type: String, desc: 'Tutorial stream abbreviation for self enrolment'
     end
   end
   put '/units/:unit_id/task_definitions/:id' do
@@ -138,10 +161,23 @@ class TaskDefinitionsApi < Grape::API
                                                 :max_quality_pts,
                                                 :assessment_enabled,
                                                 :overseer_image_id,
-                                                :moss_language
+                                                :moss_language,
+                                                :tutorial_self_enrolment_enabled,
+                                                upload_requirements: []
                                               )
 
-    task_params[:upload_requirements] = JSON.parse(params[:task_def][:upload_requirements]) unless params[:task_def][:upload_requirements].nil?
+    # Handle upload_requirements - check if it's already an array or needs parsing
+    if params[:task_def][:upload_requirements].present?
+      if params[:task_def][:upload_requirements].is_a?(Array)
+        task_params[:upload_requirements] = params[:task_def][:upload_requirements]
+      elsif params[:task_def][:upload_requirements].is_a?(String)
+        begin
+          task_params[:upload_requirements] = JSON.parse(params[:task_def][:upload_requirements])
+        rescue JSON::ParserError
+          error!({ error: 'Invalid upload_requirements format' }, 400)
+        end
+      end
+    end
 
     # Ensure changes to a TD defined as a "draft task definition" are validated
     if unit.draft_task_definition_id == params[:id]
@@ -161,6 +197,18 @@ class TaskDefinitionsApi < Grape::API
       tutorial_stream = task_def.unit.tutorial_streams.find_by!(abbreviation: tutorial_stream_abbr)
       task_def.tutorial_stream = tutorial_stream
       task_def.save!
+    end
+
+    # Handle tutorial self-enrolment stream updates
+    if params[:task_def].key?(:tutorial_self_enrolment_stream_abbr)
+      if params[:task_def][:tutorial_self_enrolment_stream_abbr].present?
+        stream = task_def.unit.tutorial_streams.find_by!(abbreviation: params[:task_def][:tutorial_self_enrolment_stream_abbr])
+        task_def.tutorial_self_enrolment_stream = stream
+        task_def.save!
+      else
+        task_def.tutorial_self_enrolment_stream = nil
+        task_def.save!
+      end
     end
 
     #
