@@ -13,6 +13,7 @@ class TaskDefinition < ApplicationRecord
   belongs_to :group_set, optional: true
   belongs_to :tutorial_stream, optional: true
   belongs_to :overseer_image, optional: true
+  belongs_to :tutorial_self_enrolment_stream, class_name: "TutorialStream", optional: true
 
   has_many :tasks, dependent:  :destroy # Destroying a task definition will also nuke any instances
   has_many :group_submissions, dependent: :destroy # Destroying a task definition will also nuke any group submissions
@@ -41,6 +42,8 @@ class TaskDefinition < ApplicationRecord
 
   validates :weighting, presence: true
 
+  validate :self_enrolment_stream_unit_must_match
+
   include TaskDefinitionTiiModule
   include TaskDefinitionSimilarityModule
 
@@ -53,6 +56,22 @@ class TaskDefinition < ApplicationRecord
   def tutorial_stream_present?
     if tutorial_stream.nil? and unit.tutorial_streams.exists?
       errors.add(:tutorial_stream, "must be one of the tutorial streams in the unit")
+    end
+  end
+
+  def tutorial_self_enrolment_enabled?
+    tutorial_self_enrolment_enabled
+  end
+
+  def available_tutorials_for_self_enrolment
+  return Tutorial.none unless tutorial_self_enrolment_enabled? && tutorial_self_enrolment_stream
+
+  tutorial_self_enrolment_stream.tutorials.where(unit: unit)
+  end
+
+  def self_enrolment_stream_unit_must_match
+    if tutorial_self_enrolment_enabled? && tutorial_self_enrolment_stream.present? && tutorial_self_enrolment_stream.unit != unit
+      errors.add(:tutorial_self_enrolment_stream, "must belong to the same unit")
     end
   end
 

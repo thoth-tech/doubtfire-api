@@ -9,6 +9,8 @@ class TutorialStream < ApplicationRecord
   has_many :tutorials, dependent: :destroy
   has_many :task_definitions, -> { order 'start_date ASC, abbreviation ASC' }
 
+  has_many :self_enrolment_task_definitions, class_name: "TaskDefinition", foreign_key: :tutorial_self_enrolment_stream_id, dependent: :nullify
+
   validates :unit, presence: true
   validates :activity_type, presence: true
 

@@ -44,5 +44,10 @@ module Entities
     expose :overseer_image_id, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :assessment_enabled, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :moss_language, if: ->(unit, options) { staff?(options[:my_role]) }
+    expose :tutorial_self_enrolment_enabled
+    expose :tutorial_self_enrolment_stream_id
+    expose :tutorial_self_enrolment_stream_abbr, expose_nil: true do |task_definition, _options|
+      task_definition.tutorial_self_enrolment_stream&.abbreviation
+    end
   end
 end
