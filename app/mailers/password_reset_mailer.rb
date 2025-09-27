@@ -42,3 +42,4 @@ class PasswordResetMailer < ActionMailer::Base
   end
 end
 
+
