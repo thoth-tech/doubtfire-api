@@ -128,7 +128,7 @@ class ApiRoot < Grape::API
     api_version: 'v1',
     hide_documentation_path: true,
     info: {
-      title: 'Doubtfire API Documentaion',
+      title: 'Doubtfire API Documentation',
       description: 'Doubtfire is a modern, lightweight learning management system.',
       license: 'AGPL v3.0',
       license_url: 'https://github.com/doubtfire-lms/doubtfire-api/blob/master/LICENSE'
