@@ -118,7 +118,7 @@ class OverseerAssessment < ApplicationRecord
     add_assessment_comment text
   end
 
-  def send_to_overseer()
+  def send_to_overseer
     return { error: "Your task is already queued for processing. Pleasse wait until you receive a response before queueing your task again." } if self.status == :queued
 
     # TODO: Check status and do not queue if already queued
