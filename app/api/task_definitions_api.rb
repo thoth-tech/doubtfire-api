@@ -136,6 +136,13 @@ class TaskDefinitionsApi < Grape::API
       optional :assess_in_portfolio_only, type: Boolean,  desc: 'Whether a task can only be signed off during portfolio assessment'
       optional :use_resources_for_jplag_base_code, type: Boolean, desc: 'Include the common base code from task resources for JPlag comparisons'
       optional :lock_assessments_to_tutorial_stream, type: Boolean, desc: 'Only allow tutors in this tutorial stream to assess this task'
+      # optional :p_target_date, type: Date, desc: 'Pass due date override'
+      optional :c_target_date,            type: Date,     desc: 'Credit due date override'
+      optional :d_target_date,            type: Date,     desc: 'Distinction due date override'
+      optional :hd_target_date,           type: Date,     desc: 'High Distinction due date override'
+      optional :c_start_date,             type: Date,     desc: 'Credit start date override'
+      optional :d_start_date,             type: Date,     desc: 'Distinction start date override'
+      optional :hd_start_date,            type: Date,     desc: 'High Distinction start date override'
     end
   end
   put '/units/:unit_id/task_definitions/:id' do
@@ -145,6 +152,16 @@ class TaskDefinitionsApi < Grape::API
     unless authorise? current_user, task_def.unit, :add_task_def
       error!({ error: 'Not authorised to create a task definition of this unit' }, 403)
     end
+
+    # strip these out so TaskDefinition#update! never sees them
+    grade_due_overrides = params[:task_def].slice(
+      'p_target_date', 'c_target_date', 'd_target_date', 'hd_target_date',
+      'p_start_date', 'c_start_date', 'd_start_date', 'hd_start_date'
+    )
+    params[:task_def].except!(
+      'p_target_date', 'c_target_date', 'd_target_date', 'hd_target_date',
+      'p_start_date', 'c_start_date', 'd_start_date', 'hd_start_date'
+    )
 
     task_params = ActionController::Parameters.new(params)
                                               .require(:task_def)
@@ -216,6 +233,31 @@ class TaskDefinitionsApi < Grape::API
         task_def.group_set = nil
         task_def.save!
       end
+    end
+
+    grade_number = { 'c' => 1, 'd' => 2, 'hd' => 3 }
+    field_map = { 'target_date' => :target_due_date, 'start_date' => :start_date }
+
+    grade_due_overrides.each do |key, date|
+      next if date.blank?
+
+      # if task_def.start_date > date
+      #   error!({ error: 'Target date cannot be earlier than start date' }, 400)
+      # end
+
+      unless unit.allow_flexible_dates
+        error!({ error: 'This unit must have Allow Flexible Dates enabled to modify target dates per grade' }, 403)
+      end
+
+      grade_key, kind = key.to_s.split('_', 2) # e.g. "c", "target_date"
+      next unless grade_number.key?(grade_key)
+      next unless field_map.key?(kind)
+
+      row = TaskDefinitionGradeDueDate.find_or_initialize_by(
+        task_definition: task_def,
+        target_grade: grade_number[grade_key]
+      )
+      row.update!(field_map[kind] => date)
     end
 
     present task_def, with: Entities::TaskDefinitionEntity, my_role: unit.role_for(current_user)
@@ -335,17 +377,17 @@ class TaskDefinitionsApi < Grape::API
     upload_reqs = task.upload_requirements
 
     # Copy files to be PDFed
-    task.accept_submission(current_user, scoop_files(params, upload_reqs), self, nil, 'ready_for_feedback', nil, accepted_tii_eula: false)
+    task.accept_submission(current_user, scoop_files(params, upload_reqs), self, nil, 'ready_for_feedback', nil, accepted_tii_eula: false, test_submission: true)
 
-    logger.info '********* - about to perform overseer submission'
-    overseer_assessment = OverseerAssessment.create_for(task)
-    if overseer_assessment.present?
-      overseer_assessment.send_to_overseer
+    # logger.info '********* - about to perform overseer submission'
+    # overseer_assessment = OverseerAssessment.create_for(task)
+    # if overseer_assessment.present?
+    #   overseer_assessment.send_to_overseer
 
-      logger.info "Overseer assessment for task_def_id: #{task_definition.id} task_id: #{task.id} was performed"
-    else
-      logger.info "Overseer assessment for task_def_id: #{task_definition.id} task_id: #{task.id} was not performed"
-    end
+    #   logger.info "Overseer assessment for task_def_id: #{task_definition.id} task_id: #{task.id} was performed"
+    # else
+    #   logger.info "Overseer assessment for task_def_id: #{task_definition.id} task_id: #{task.id} was not performed"
+    # end
 
     # todo: Do we  need to return additional details here? e.g. the comment, and project?
     present task, with: Entities::TaskEntity, include_other_projects: true, update_only: true
@@ -438,7 +480,7 @@ class TaskDefinitionsApi < Grape::API
 
     # Actually import...
     task_def.add_task_assessment_resources(file_path)
-    true
+    task_def.overseer_resource_files
   end
 
   desc 'Remove the task assessment resources for a given task'
@@ -880,45 +922,45 @@ class TaskDefinitionsApi < Grape::API
     present job, with: Entities::SidekiqJobEntity
   end
 
-  desc 'Retrieve the contents of the overseer execution script'
-  params do
-    requires :unit_id, type: Integer, desc: 'The unit that has the task definition'
-    requires :task_def_id, type: Integer, desc: 'The task definition to download submissions for'
-  end
-  get '/units/:unit_id/task_definitions/:task_def_id/overseer_script' do
-    unit = Unit.find(params[:unit_id])
-    unless authorise? current_user, unit, :add_task_def
-      error!({ error: 'Not authorised to edit task details of unit' }, 403)
-    end
+  # desc 'Retrieve the contents of the overseer execution script'
+  # params do
+  #   requires :unit_id, type: Integer, desc: 'The unit that has the task definition'
+  #   requires :task_def_id, type: Integer, desc: 'The task definition to download submissions for'
+  # end
+  # get '/units/:unit_id/task_definitions/:task_def_id/overseer_script' do
+  #   unit = Unit.find(params[:unit_id])
+  #   unless authorise? current_user, unit, :add_task_def
+  #     error!({ error: 'Not authorised to edit task details of unit' }, 403)
+  #   end
 
-    td = unit.task_definitions.find(params[:task_def_id])
+  #   td = unit.task_definitions.find(params[:task_def_id])
 
-    script_path = td.task_assessment_script
+  #   script_path = td.task_assessment_script
 
-    content = File.read(script_path)
-    content
-  end
+  #   content = File.read(script_path)
+  #   content
+  # end
 
-  desc 'Update the contents of the overseer execution script'
-  params do
-    requires :unit_id, type: Integer, desc: 'The unit that has the task definition'
-    requires :task_def_id, type: Integer, desc: 'The task definition to download submissions for'
-    requires :script_content, type: String, desc: 'Content of the overseer execution script'
-  end
-  put '/units/:unit_id/task_definitions/:task_def_id/overseer_script' do
-    unit = Unit.find(params[:unit_id])
-    unless authorise? current_user, unit, :add_task_def
-      error!({ error: 'Not authorised to edit task details of unit' }, 403)
-    end
+  # desc 'Update the contents of the overseer execution script'
+  # params do
+  #   requires :unit_id, type: Integer, desc: 'The unit that has the task definition'
+  #   requires :task_def_id, type: Integer, desc: 'The task definition to download submissions for'
+  #   requires :script_content, type: String, desc: 'Content of the overseer execution script'
+  # end
+  # put '/units/:unit_id/task_definitions/:task_def_id/overseer_script' do
+  #   unit = Unit.find(params[:unit_id])
+  #   unless authorise? current_user, unit, :add_task_def
+  #     error!({ error: 'Not authorised to edit task details of unit' }, 403)
+  #   end
 
-    td = unit.task_definitions.find(params[:task_def_id])
+  #   td = unit.task_definitions.find(params[:task_def_id])
 
-    script_path = td.task_assessment_script
+  #   script_path = td.task_assessment_script
 
-    decoded = Base64.urlsafe_decode64(params[:script_content])
+  #   decoded = Base64.urlsafe_decode64(params[:script_content])
 
-    File.write(script_path, decoded)
-    status 200
-  end
+  #   File.write(script_path, decoded)
+  #   status 200
+  # end
 
 end

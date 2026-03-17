@@ -125,6 +125,8 @@ class Task < ApplicationRecord
   belongs_to :group_submission, optional: true
 
   has_one :unit, through: :project
+  has_one :moderated_task, dependent: :destroy
+  has_one :overflow_task_claim, dependent: :destroy
 
   has_many :comments, class_name: 'TaskComment', dependent: :destroy, inverse_of: :task
   has_many :task_similarities, class_name: 'TaskSimilarity', dependent: :destroy, inverse_of: :task
@@ -475,6 +477,29 @@ class Task < ApplicationRecord
     !group_submission.nil? || !task_definition.group_set.nil?
   end
 
+  def active_overflow_task_claim
+    claim = overflow_task_claim
+    return nil unless claim
+
+    threshold = 30.minutes.ago
+    unit = project.unit
+
+    # Find latest comment made by the claiming unit role (on this task)
+    latest_by_claimer =
+      comments
+      .where('task_comments.created_at > ?', claim.created_at)
+      .includes(:user)
+      .select { |c| unit.unit_role_for(c.user)&.id == claim.claimed_by_unit_role_id }
+      .max_by(&:created_at)
+
+    # If they've commented, use that as the activity timer; otherwise fall back to claim time
+    last_activity_at = latest_by_claimer&.created_at || claim.created_at
+
+    return nil if last_activity_at < threshold
+
+    claim
+  end
+
   def group
     return nil unless group_task?
 
@@ -516,6 +541,13 @@ class Task < ApplicationRecord
       return nil unless tutorials.any? { |t| t.unit_role == unit_role }
     end
 
+    # Check to see if another tutor has claimed this task from overflow
+    if overflow_task_claim
+      unit_role = unit.unit_role_for(by_user)
+      if unit_role && unit_role.id != overflow_task_claim.claimed_by_unit_role_id
+        return nil
+      end
+    end
     #
     # State transitions based upon the trigger
     #
@@ -659,6 +691,44 @@ class Task < ApplicationRecord
 
     # Save the task
     if save!
+      if assessor == tutor && task_status != TaskStatus.time_exceeded && task_status != TaskStatus.assess_in_portfolio
+        moderated_task = ModeratedTask.find_by(task: self)
+        if moderated_task
+          if moderated_task.assessor_id != tutor.id
+            moderated_task.update!(assessor_id: tutor.id)
+          end
+        else
+          sample_count = ModeratedTask.where(
+            moderation_type: :first_feedback,
+            assessor_id: tutor.id,
+            task_definition: task_definition
+          ).count
+
+          if sample_count < 3
+            mark_as_moderated(moderation_type: :first_feedback)
+          end
+        end
+      end
+
+      if task_status == TaskStatus.fix_and_resubmit
+        # Look for other submitted tasks from this student that has this task as a prerequisite
+        # If they are ready for feedback, automatically assess them to fix and resubmit
+        dependents = TaskPrerequisite.where(prerequisite_id: task_definition.id)
+        dependents.each do |prereq|
+          td = prereq.task_definition
+          task = project.task_for_task_definition(td)
+
+          # Avoid infinite loop
+          next if task.id == id
+
+          next unless task.task_status == TaskStatus.ready_for_feedback
+          # Since we are calling this assess method again, we recursively check for more dependent tasks that need to be updated
+          task.assess(TaskStatus.fix_and_resubmit, assessor, assess_date)
+          task.add_status_comment(assessor, TaskStatus.fix_and_resubmit)
+          task.add_text_comment(assessor, "**Automated comment**: A prerequisite task was updated to Fix and Resubmit, so this task was updated as well. You may need to review and update the prerequisite before resubmitting.")
+        end
+      end
+
       TaskEngagement.create!(task: self, engagement_time: Time.zone.now, engagement: task_status.name)
 
       # Grab the submission for the task if the user made one
@@ -871,6 +941,23 @@ class Task < ApplicationRecord
 
     comment.save!
     comment
+  end
+
+  def add_feedback_review_request_comment(current_user)
+    comment = 'Feedback Review Requested'
+
+    lc = comments.last
+
+    # don't add if duplicate comment
+    return if lc && lc.user == current_user && lc.content_type == 'feedback_review_request' && lc.comment == comment
+
+    request = TaskFeedbackReviewRequestComment.create
+    request.task = self
+    request.user = current_user
+    request.comment = comment
+    request.recipient = current_user == project.student ? project.tutor_for(task_definition) : project.student
+    request.save!
+    request
   end
 
   def last_comment
@@ -1403,7 +1490,7 @@ class Task < ApplicationRecord
   #
   # Checks to make sure that the files match what we expect
   #
-  def accept_submission(current_user, files, ui, contributions, trigger, alignments, accepted_tii_eula: false)
+  def accept_submission(current_user, files, ui, contributions, trigger, alignments, accepted_tii_eula: false, test_submission: false)
     # Ensure there is not a submission already in process
     if processing_pdf?
       ui.error!({ 'error' => 'A submission is already being processed. Please wait for the current submission process to complete.' }, 403)
@@ -1502,7 +1589,7 @@ class Task < ApplicationRecord
     logger.info "Submission accepted! Status for task #{id} is now #{trigger}"
 
     # Trigger processing of new submission - async
-    AcceptSubmissionJob.perform_async(id, current_user.id, accepted_tii_eula)
+    AcceptSubmissionJob.perform_async(id, current_user.id, accepted_tii_eula, test_submission)
   end
 
   # The name that should be used for the uploaded file (based on index of upload requirements)
@@ -1573,8 +1660,22 @@ class Task < ApplicationRecord
   def overseer_enabled?
     return  unit.assessment_enabled &&
             task_definition.assessment_enabled &&
-            task_definition.has_task_assessment_script? &&
+            # task_definition.has_task_assessment_script? &&
             (has_new_files? || has_done_file?)
+  end
+
+  def mark_as_moderated(moderation_type: :random_sample)
+    moderated_task = ModeratedTask.find_by(task_id: id)
+    if moderated_task.nil?
+      ModeratedTask.create!({
+                              task: self,
+                              task_definition: task_definition,
+                              assessor_id: tutor.id,
+                              state: :open,
+                              moderation_type: moderation_type,
+                              last_moderated_date: Time.zone.now
+                            })
+    end
   end
 
   private

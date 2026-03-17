@@ -2,7 +2,7 @@ class AcceptSubmissionJob
   include Sidekiq::Job
   include LogHelper
 
-  def perform(task_id, user_id, accepted_tii_eula)
+  def perform(task_id, user_id, accepted_tii_eula, test_submission)
     begin
       # Ensure cwd is valid...
       FileUtils.cd(Rails.root)
@@ -45,17 +45,27 @@ class AcceptSubmissionJob
       return
     end
 
+    # Mark this task for moderation
+    tutor_user = task.project.tutor_for(task.task_definition)
+    if tutor_user && !test_submission
+      tutor = task.unit.unit_role_for(tutor_user)
+      if tutor&.should_moderate_task?(task)
+        logger.info "Marking task #{task.id} for moderation (project #{task.project.id})"
+        task.mark_as_moderated
+      end
+    end
+
     # When converted, we can now send documents to turn it in for checking
-    if TurnItIn.enabled?
+    if TurnItIn.enabled? && !test_submission
       task.send_documents_to_tii(user, accepted_tii_eula: accepted_tii_eula)
     end
 
-    if task.overseer_enabled?
-      overseer_assessment = OverseerAssessment.create_for(task)
+    if task.overseer_enabled? || test_submission
+      overseer_assessment = OverseerAssessment.create_for(task, test_submission)
       if overseer_assessment.present?
         logger.info "Launching Overseer assessment for task_def_id: #{task.task_definition.id} task_id: #{task.id}"
 
-        overseer_assessment.send_to_overseer
+        overseer_assessment.send_to_overseer(test_submission: test_submission)
 
       else
         logger.info "Overseer assessment for task_def_id: #{task.task_definition.id} task_id: #{task.id} was not performed #{overseer_assessment.inspect}"

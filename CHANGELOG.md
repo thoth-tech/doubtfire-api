@@ -2,6 +2,136 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [10.0.0-91](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-90...v10.0.0-91) (2026-03-09)
+
+## [10.0.0-90](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-89...v10.0.0-90) (2026-03-09)
+
+## [10.0.0-89](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-88...v10.0.0-89) (2026-03-09)
+
+
+### Bug Fixes
+
+* get reply target ([e4fbcdf](https://github.com/b0ink/doubtfire-deploy/commit/e4fbcdff35a9f552ae998e0ab0126aab6ef69b2d))
+
+## [10.0.0-88](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-87...v10.0.0-88) (2026-03-09)
+
+## [10.0.0-87](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-86...v10.0.0-87) (2026-03-09)
+
+
+### Features
+
+* notify tutors via email for tutor notes ([#584](https://github.com/b0ink/doubtfire-deploy/issues/584)) ([dccf2df](https://github.com/b0ink/doubtfire-deploy/commit/dccf2dfebb06efa2b24ac3939cf9c7f027c69112))
+
+## [10.0.0-86](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-85...v10.0.0-86) (2026-03-06)
+
+## [10.0.0-85](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-84...v10.0.0-85) (2026-03-06)
+
+## [10.0.0-84](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-83...v10.0.0-84) (2026-03-04)
+
+
+### Bug Fixes
+
+* ignore notes sent from self ([7287f0f](https://github.com/b0ink/doubtfire-deploy/commit/7287f0f442b80c1d17f51644d183cea38a0af2c1))
+
+## [10.0.0-83](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-82...v10.0.0-83) (2026-03-04)
+
+
+### Bug Fixes
+
+* ensure stdout doesnt exceed text limit ([8f5fbb6](https://github.com/b0ink/doubtfire-deploy/commit/8f5fbb624448088aebf0fc506dfa1ffc6770df79))
+
+## [10.0.0-82](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-81...v10.0.0-82) (2026-03-03)
+
+## [10.0.0-81](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-80...v10.0.0-81) (2026-03-03)
+
+## [10.0.0-80](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-79...v10.0.0-80) (2026-03-02)
+
+## [10.0.0-79](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-78...v10.0.0-79) (2026-03-01)
+
+## [10.0.0-78](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-77...v10.0.0-78) (2026-02-28)
+
+## [10.0.0-77](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-76...v10.0.0-77) (2026-02-26)
+
+
+### Features
+
+* return available server disk space ([#579](https://github.com/b0ink/doubtfire-deploy/issues/579)) ([e2c9fac](https://github.com/b0ink/doubtfire-deploy/commit/e2c9fac1b105ae74c77938ae2777356c778770f4))
+
+## [10.0.0-76](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-75...v10.0.0-76) (2026-02-25)
+
+
+### Features
+
+* overflow marking ([#572](https://github.com/b0ink/doubtfire-deploy/issues/572)) ([a4990d2](https://github.com/b0ink/doubtfire-deploy/commit/a4990d21da7518cd4c01b943b7ae8d7e45e21810))
+
+## [10.0.0-75](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-74...v10.0.0-75) (2026-02-24)
+
+## [10.0.0-74](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-73...v10.0.0-74) (2026-02-24)
+
+## [10.0.0-73](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-72...v10.0.0-73) (2026-02-24)
+
+
+### Features
+
+* per grade start dates ([#577](https://github.com/b0ink/doubtfire-deploy/issues/577)) ([618165a](https://github.com/b0ink/doubtfire-deploy/commit/618165a439917e5cabe02585cd30910104353610))
+
+## [10.0.0-72](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-71...v10.0.0-72) (2026-02-23)
+
+
+### Features
+
+* allow custom target dates per target grade ([#575](https://github.com/b0ink/doubtfire-deploy/issues/575)) ([bf4ec01](https://github.com/b0ink/doubtfire-deploy/commit/bf4ec01cb082a5c18e8cebe9addb2e4a38632b71))
+
+
+### Bug Fixes
+
+* skip overseer if no active steps ([d010ef6](https://github.com/b0ink/doubtfire-deploy/commit/d010ef6501540090d3dca061eebcb14f3b7b5b35))
+
+## [10.0.0-71](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-70...v10.0.0-71) (2026-02-21)
+
+## [10.0.0-70](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-69...v10.0.0-70) (2026-02-19)
+
+## [10.0.0-69](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-68...v10.0.0-69) (2026-02-18)
+
+
+### Features
+
+* tutor notes + mentorship + moderation + escalation ([#564](https://github.com/b0ink/doubtfire-deploy/issues/564)) ([587f6e6](https://github.com/b0ink/doubtfire-deploy/commit/587f6e6ac3ef3f840eed06a4d2ec1df8e35b6ee9))
+
+## [10.0.0-68](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-67...v10.0.0-68) (2026-02-17)
+
+## [10.0.0-67](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-66...v10.0.0-67) (2026-02-16)
+
+
+### Bug Fixes
+
+* dont overwrite overseer step status when param is absent ([#571](https://github.com/b0ink/doubtfire-deploy/issues/571)) ([400ad4a](https://github.com/b0ink/doubtfire-deploy/commit/400ad4a83bc03b69f96f4d6dc5a92aada81612dc))
+
+## [10.0.0-66](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-65...v10.0.0-66) (2026-02-11)
+
+
+### Features
+
+* download staff notes csv ([#558](https://github.com/b0ink/doubtfire-deploy/issues/558)) ([9975694](https://github.com/b0ink/doubtfire-deploy/commit/99756942442d669c5d9f2e62c6c88fcbca9a057c))
+* recursively assess dependent tasks if prerequisite changed to fix ([#567](https://github.com/b0ink/doubtfire-deploy/issues/567)) ([d7bc5b4](https://github.com/b0ink/doubtfire-deploy/commit/d7bc5b40ff9b2ab074a72be17d0b3f5e8478da6d))
+
+
+### Bug Fixes
+
+* check correct user permissions when toggling observer only ([#560](https://github.com/b0ink/doubtfire-deploy/issues/560)) ([339b649](https://github.com/b0ink/doubtfire-deploy/commit/339b6493ec73432ef74e96c9983fb17d0659de92))
+* ensure bulk enrolment validates member ([bd2d1c0](https://github.com/b0ink/doubtfire-deploy/commit/bd2d1c095610fdf1c4b4d663ecb5a89e140f95e6))
+* null check staff ([eef82f5](https://github.com/b0ink/doubtfire-deploy/commit/eef82f5643abb38b764f80625f40846478b0dff6))
+* throw error on failed user validation ([aa59f39](https://github.com/b0ink/doubtfire-deploy/commit/aa59f392ab0b75cbebcd9116d5938c9f17702563))
+
+## [10.0.0-65](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-64...v10.0.0-65) (2026-01-05)
+
+
+### Features
+
+* attention required task status ([#557](https://github.com/b0ink/doubtfire-deploy/issues/557)) ([88e0c7a](https://github.com/b0ink/doubtfire-deploy/commit/88e0c7a9e65a71aed0b9a8453d75af0aa52a09f4))
+* custom project task deadlines ([#550](https://github.com/b0ink/doubtfire-deploy/issues/550)) ([2a50638](https://github.com/b0ink/doubtfire-deploy/commit/2a5063848d9cde0b0277f6e2463613945d720b99))
+* overseer pipeline ([#559](https://github.com/b0ink/doubtfire-deploy/issues/559)) ([d2e49bf](https://github.com/b0ink/doubtfire-deploy/commit/d2e49bfd57e69281923458b8853226a85c9da390))
+
 ## [10.0.0-64](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-63...v10.0.0-64) (2025-12-03)
 
 ## [10.0.0-63](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-62...v10.0.0-63) (2025-12-03)

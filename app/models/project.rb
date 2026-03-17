@@ -310,7 +310,9 @@ class Project < ApplicationRecord
           scorm_extensions: t.scorm_extensions,
           due_date: t.due_date,
           submission_date: t.submission_date,
-          completion_date: t.completion_date
+          completion_date: t.completion_date,
+          target_start_date: t.target_start_date,
+          target_due_date: t.target_due_date
         }
       end
   end
@@ -711,6 +713,12 @@ class Project < ApplicationRecord
     note.reply_to_id = reply_to_id
     note.save!
     note
+  end
+
+  # TODO: env var for escalation attempts -- per unit setting? max_feedback_escalation_attempts
+
+  def escalation_attempts_remaining
+    3 - ModeratedTask.where(task: tasks, moderation_type: :escalation, outcome: [nil, 'upheld']).count
   end
 
   private
