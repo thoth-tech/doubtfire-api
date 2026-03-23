@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [10.0.0-94](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-93...v10.0.0-94) (2026-03-23)
+
+
+### Features
+
+* require discussion before marking complete ([#587](https://github.com/b0ink/doubtfire-deploy/issues/587)) ([034a5bd](https://github.com/b0ink/doubtfire-deploy/commit/034a5bda2bb4b77d789168c21c923d7ffb07b284))
+* track when portfolio was submitted for compile ([5979655](https://github.com/b0ink/doubtfire-deploy/commit/5979655ed013cf3430730c0290e5fdb5c3920de2))
+* track when portfolio was submitted for compile ([#591](https://github.com/b0ink/doubtfire-deploy/issues/591)) ([1b9f1da](https://github.com/b0ink/doubtfire-deploy/commit/1b9f1da3803d799ea60cfc901c7434cdfb942278))
+
+## [10.0.0-93](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-92...v10.0.0-93) (2026-03-13)
+
+
+### Bug Fixes
+
+* normalise file keys on task definition import ([b652aae](https://github.com/b0ink/doubtfire-deploy/commit/b652aae756c287db2c30d9afe2475302223ee1db))
+
+## [10.0.0-92](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-91...v10.0.0-92) (2026-03-11)
+
+
+### Bug Fixes
+
+* check for active overflow task claim ([873c278](https://github.com/b0ink/doubtfire-deploy/commit/873c2787f862d518f74e230fb38a1c8c7b6907ab))
+
 ## [10.0.0-91](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-90...v10.0.0-91) (2026-03-09)
 
 ## [10.0.0-90](https://github.com/b0ink/doubtfire-deploy/compare/v10.0.0-89...v10.0.0-90) (2026-03-09)

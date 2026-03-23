@@ -198,6 +198,10 @@ class TasksApi < Grape::API
           error!({ error: 'This task can only be assessed in portfolio.' }, 403)
         end
 
+        if task.task_definition.requires_discussion && params[:trigger] == 'complete' && !task.has_discussed_in_class_comment?
+          error!({ error: 'This task must be discussed in class before it can be marked complete.' }, 403)
+        end
+
         logger.info "#{current_user.username} assessing task #{task.id} to #{params[:trigger]}"
         result = task.trigger_transition(trigger: params[:trigger], by_user: current_user, quality: params[:quality_pts])
         if result.nil? && task.task_definition.restrict_status_updates
@@ -514,7 +518,7 @@ class TasksApi < Grape::API
       error!({ error: "Failed to claim task" }, 400)
     end
 
-    logger.info "Overflow task claim: {\"user_id\": #{current_user.id},\"task_id\": #{task.id}, \"timestamp\": \"#{Time.zone.now}\"}"
+    logger.info "Overflow task claim: {\"user_id\": #{current_user.id},\"task_id\": #{task.id}, \"timestamp\": \"#{Time.zone.now}\", \"original_tutor_user_id\": #{task.tutor ? task.tutor.id : -1}}"
 
     true
   end

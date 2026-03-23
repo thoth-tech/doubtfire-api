@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_03_05_010000) do
+ActiveRecord::Schema[8.0].define(version: 2026_03_22_230239) do
   create_table "activity_types", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
     t.string "name", null: false
     t.string "abbreviation", null: false
@@ -328,6 +328,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_03_05_010000) do
     t.integer "portfolio_generation_pid"
     t.integer "spec_con_days", default: 0, null: false
     t.bigint "assessor_id"
+    t.datetime "portfolio_submission_date"
     t.index ["assessor_id"], name: "index_projects_on_assessor_id"
     t.index ["campus_id"], name: "index_projects_on_campus_id"
     t.index ["enrolled"], name: "index_projects_on_enrolled"
@@ -448,6 +449,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_03_05_010000) do
     t.boolean "assess_in_portfolio_only", default: false, null: false
     t.boolean "use_resources_for_jplag_base_code", default: false, null: false
     t.boolean "lock_assessments_to_tutorial_stream", default: false, null: false
+    t.boolean "requires_discussion", default: false, null: false
     t.index ["abbreviation", "unit_id"], name: "index_task_definitions_on_abbreviation_and_unit_id", unique: true
     t.index ["group_set_id"], name: "index_task_definitions_on_group_set_id"
     t.index ["name", "unit_id"], name: "index_task_definitions_on_name_and_unit_id", unique: true
