@@ -44,5 +44,13 @@ module Entities
     expose :overseer_image_id, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :assessment_enabled, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :moss_language, if: ->(unit, options) { staff?(options[:my_role]) }
+
+    expose :estimated_days do |task_def, options|
+      task_def.estimated_days || (task_def.estimated_time_minutes.to_i / 60 / 24)
+    end
+
+    expose :estimated_hours do |task_def, options|
+      task_def.estimated_hours || ((task_def.estimated_time_minutes.to_i / 60) % 24)
+    end
   end
 end
