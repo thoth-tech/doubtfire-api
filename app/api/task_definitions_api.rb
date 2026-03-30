@@ -74,7 +74,6 @@ class TaskDefinitionsApi < Grape::API
     days = task_params.delete(:estimated_days).to_i
     hours = task_params.delete(:estimated_hours).to_i
     task_params[:estimated_time_minutes] = (days * 24 * 60) + (hours * 60)
-    Rails.logger.info "TASK_DEF PARAMS: #{params[:task_def].inspect}"
 
     task_def = TaskDefinition.new(task_params)
 
