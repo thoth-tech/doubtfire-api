@@ -7,7 +7,6 @@ Doubtfire::Application.routes.draw do
   get 'api/units/:id/all_resources', to: 'lecture_resource_downloads#index'
   post 'tasks/predict_effort', to: 'task_downloads#predict_effort'
 
-
   mount ApiRoot => '/'
   mount GrapeSwaggerRails::Engine => '/api/docs'
   mount Sidekiq::Web => "/sidekiq" # mount Sidekiq::Web in your Rails app

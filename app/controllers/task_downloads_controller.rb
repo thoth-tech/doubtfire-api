@@ -50,10 +50,10 @@ class TaskDownloadsController < ApplicationController
     render json: e.message, status: e.status
   end
 
-  #prediction effort function
+  # prediction effort function
 
-  protect_from_forgery with: :null_session   # allow API POST without CSRF token
-  #skip_before_action :verify_authenticity_token, only: [:predict_effort]
+  protect_from_forgery with: :null_session # allow API POST without CSRF token
+  # skip_before_action :verify_authenticity_token, only: [:predict_effort]
 
   # def predict_effort
   #   features = params[:features] # expects an array of numbers
@@ -65,7 +65,6 @@ class TaskDownloadsController < ApplicationController
   #     render json: { error: "Prediction failed" }, status: :unprocessable_entity
   #   end
   # end
-
 
   # def predict_effort
   #   features = params[:features]
@@ -83,7 +82,6 @@ class TaskDownloadsController < ApplicationController
   #   # Return clean JSON
   #   render json: { predicted_effort: prediction_value }
   # end
-
 
   # def predict_effort
   #   features = params[:features]
@@ -111,7 +109,6 @@ class TaskDownloadsController < ApplicationController
   #   # Return clean JSON
   #   render json: { predicted_effort: prediction_value }
   # end
-
 
   # def predict_effort
   #   features = params[:features]
@@ -172,38 +169,34 @@ class TaskDownloadsController < ApplicationController
   #   render json: { predicted_effort: prediction_value }
   # end
 
-
-
   # this one was working
-#   def predict_effort
-#     features = params[:features]
+  #   def predict_effort
+  #     features = params[:features]
 
-#     # Call TorchServe
-#     uri = URI("http://effort-predictor:8080/predictions/effort-predictor")
-#     response = Net::HTTP.post(uri, features.to_json, { "Content-Type" => "application/json" })
+  #     # Call TorchServe
+  #     uri = URI("http://effort-predictor:8080/predictions/effort-predictor")
+  #     response = Net::HTTP.post(uri, features.to_json, { "Content-Type" => "application/json" })
 
-#     # Parse TorchServe output safely
-#     prediction = JSON.parse(response.body) rescue response.body
+  #     # Parse TorchServe output safely
+  #     prediction = JSON.parse(response.body) rescue response.body
 
-#     # Normalize output
-#     prediction_value =
-#       case prediction
-#       when Array
-#         prediction.first
-#       when Hash
-#         prediction["prediction"] || prediction.values.first
-#       else
-#         prediction
-#       end
+  #     # Normalize output
+  #     prediction_value =
+  #       case prediction
+  #       when Array
+  #         prediction.first
+  #       when Hash
+  #         prediction["prediction"] || prediction.values.first
+  #       else
+  #         prediction
+  #       end
 
-#     # Force JSON response
-#     render json: { predicted_effort: prediction_value }
-#   end
-# end
+  #     # Force JSON response
+  #     render json: { predicted_effort: prediction_value }
+  #   end
+  # end
 
-
-
-# POST /tasks/predict_effort
+  # POST /tasks/predict_effort
   def predict_effort
     features = params[:features]
 
@@ -215,7 +208,7 @@ class TaskDownloadsController < ApplicationController
     uri = URI("http://localhost:8080/predictions/effort-predictor")
     headers = {
       "Content-Type" => "application/json",
-      "Authorization" => "Bearer #{ENV['TORCHSERVE_INFERENCE_KEY']}"
+      "Authorization" => "Bearer #{ENV.fetch('TORCHSERVE_INFERENCE_KEY', nil)}"
     }
     body = { features: features }.to_json
 
@@ -223,7 +216,11 @@ class TaskDownloadsController < ApplicationController
     Rails.logger.info("TorchServe raw response: #{response.body}")
 
     if response.is_a?(Net::HTTPSuccess)
-      prediction = JSON.parse(response.body) rescue response.body
+      prediction = begin
+        JSON.parse(response.body)
+      rescue StandardError
+        response.body
+      end
       prediction_value =
         case prediction
         when Array
