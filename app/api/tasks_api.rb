@@ -519,4 +519,18 @@ class TasksApi < Grape::API
     true
   end
 
+
+  # effort prediction endpoint for task.. 
+  desc 'Predict effort for a task'
+    params do
+      requires :features, type: Array[Float], desc: 'Feature values'
+    end
+    post :predict_effort do
+      features = params[:features]
+      prediction = EffortPredictionService.predict(features)
+      { predicted_effort: prediction }
+    end
+  
+  
+
 end

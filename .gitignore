@@ -41,3 +41,23 @@ _history
 # Institution specific config
 config/*_setting.rb
 !config/no_institution_setting.rb
+ml_services/logs/access_log.24-Mar.log.gz
+ml_services/logs/access_log.log
+ml_services/logs/model_log.24-Mar.log.gz
+ml_services/logs/model_log.log
+ml_services/logs/model_metrics.log
+ml_services/logs/ts_log.24-Mar.log.gz
+ml_services/logs/ts_log.log
+ml_services/logs/ts_metrics.24-Mar.log.gz
+ml_services/logs/ts_metrics.log
+ml_services/logs/config/20260324175502069-startup.cfg
+ml_services/logs/config/20260324184851096-shutdown.cfg
+ml_services/logs/config/20260324184854550-startup.cfg
+ml_services/logs/config/20260325144256690-shutdown.cfg
+ml_services/logs/config/20260325144319876-startup.cfg
+ml_services/logs/config/20260325144545311-shutdown.cfg
+ml_services/logs/config/20260325144552586-startup.cfg
+ml_services/logs/config/20260325144822051-shutdown.cfg
+ml_services/logs/config/20260325144903054-startup.cfg
+ml_services/logs/config/20260325163409679-shutdown.cfg
+ml_services/logs/config/20260325172728867-startup.cfg
