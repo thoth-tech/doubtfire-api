@@ -57,6 +57,14 @@ module Entities
     expose :has_jplag_report?, as: :has_jplag_report, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :is_graded
     expose :max_quality_pts
+
+    expose :estimated_days do |task_def, _options|
+      task_def.estimated_days
+    end
+
+    expose :estimated_hours do |task_def, _options|
+      task_def.estimated_hours
+    end
     expose :overseer_image_id, if: ->(unit, options) { staff?(options[:my_role]) }, expose_nil: false
     # expose :assessment_enabled, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :assessment_enabled

@@ -853,6 +853,10 @@ class TaskDefinition < ApplicationRecord
     nil
   end
 
+  def estimated_hours
+    (estimated_time_minutes.to_i / 60) % 24
+  end
+
   private
 
   def delete_associated_files()

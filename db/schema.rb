@@ -440,6 +440,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_03_22_230239) do
     t.boolean "assessment_enabled", default: false
     t.bigint "overseer_image_id"
     t.string "tii_group_id"
+    t.integer "estimated_time_minutes", default: 0, comment: "Estimated time to complete task, measured in minutes"
     t.string "similarity_language"
     t.boolean "scorm_enabled", default: false
     t.boolean "scorm_allow_review", default: false
