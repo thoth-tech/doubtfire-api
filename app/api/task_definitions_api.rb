@@ -33,7 +33,6 @@ class TaskDefinitionsApi < Grape::API
       requires :max_quality_pts,          type: Integer,  desc: 'A range for quality points when quality is assessed'
       optional :assessment_enabled,       type: Boolean,  desc: 'Enable or disable assessment'
       optional :overseer_image_id,        type: Integer,  desc: 'The id of the Docker image for overseer'
-      optional :moss_language,            type: String,   desc: 'The language to use for code similarity checks'
       optional :estimated_hours,          type: Integer,  desc: 'Estimated time to complete task, measured in hours'
       optional :similarity_language,      type: String,   desc: 'The language to use for code similarity checks'
       optional :scorm_enabled,            type: Boolean,  desc: 'Whether SCORM assessment is enabled for this task'
@@ -76,7 +75,6 @@ class TaskDefinitionsApi < Grape::API
                                                 :max_quality_pts,
                                                 :assessment_enabled,
                                                 :overseer_image_id,
-                                                :moss_language,
                                                 :estimated_hours,
                                                 :similarity_language,
                                                 :assess_in_portfolio_only,
@@ -141,7 +139,6 @@ class TaskDefinitionsApi < Grape::API
       optional :max_quality_pts,          type: Integer,  desc: 'A range for quality points when quality is assessed'
       optional :assessment_enabled,       type: Boolean,  desc: 'Enable or disable assessment'
       optional :overseer_image_id,        type: Integer,  desc: 'The id of the Docker image name for overseer'
-      optional :moss_language,            type: String,   desc: 'The language to use for code similarity checks'
       optional :estimated_hours,          type: Integer,  desc: 'Estimated time to complete task, measured in hours'
       optional :similarity_language,      type: String,   desc: 'The language to use for code similarity checks'
       optional :assess_in_portfolio_only, type: Boolean,  desc: 'Whether a task can only be signed off during portfolio assessment'
@@ -197,7 +194,6 @@ class TaskDefinitionsApi < Grape::API
                                                 :max_quality_pts,
                                                 :assessment_enabled,
                                                 :overseer_image_id,
-                                                :moss_language,
                                                 :estimated_hours,
                                                 :similarity_language,
                                                 :assess_in_portfolio_only,
@@ -215,24 +211,15 @@ class TaskDefinitionsApi < Grape::API
     hours = task_params.delete(:estimated_hours).to_i
     task_params[:estimated_time_minutes] = (hours * 60)
 
-    # Ensure changes to a TD defined as a "draft task definition" are validated
-    if unit.draft_task_definition_id == params[:id]
-      if params[:task_def][:upload_requirements]
-        requirements = params[:task_def][:upload_requirements]
-        if requirements.length != 1 || requirements[0]["type"] != "document"
-          error!({ error: 'Task is marked as the draft learning summary task definition. A draft learning summary task can only contain a single document upload.' }, 403)
-        end
-      end
-      # Ensure we permit all of the passed in upload requirements
-      if task_params[:upload_requirements].is_a? Array
-        # Force permit - the model validates the details
-        task_params[:upload_requirements].each(&:permit!)
-      end
+    # Ensure we permit all of the passed in upload requirements
+    if task_params[:upload_requirements].is_a? Array
+      # Force permit - the model validates the details
+      task_params[:upload_requirements].each(&:permit!)
+    end
 
-      # Ensure changes to a TD defined as a 'draft task definition' are validated
-      if unit.draft_task_definition_id == params[:id] && (upload_reqs.length != 1 || upload_reqs[0]['type'] != 'document')
-        error!({ error: 'Task is marked as the draft learning summary. A draft learning summary task can only contain a single document upload.' }, 403)
-      end
+    # Ensure changes to a TD defined as a 'draft task definition' are validated
+    if unit.draft_task_definition_id == params[:id] && (upload_reqs.length != 1 || upload_reqs[0]['type'] != 'document')
+      error!({ error: 'Task is marked as the draft learning summary. A draft learning summary task can only contain a single document upload.' }, 403)
     end
 
     # Bulk update task definition with permitted parameters
