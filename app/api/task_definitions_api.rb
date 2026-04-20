@@ -33,7 +33,6 @@ class TaskDefinitionsApi < Grape::API
       optional :assessment_enabled,       type: Boolean,  desc: 'Enable or disable assessment'
       optional :overseer_image_id,        type: Integer,  desc: 'The id of the Docker image for overseer'
       optional :moss_language,            type: String,   desc: 'The language to use for code similarity checks'
-      optional :estimated_days,           type: Integer,  desc: 'Estimated time to complete task, measured in days'
       optional :estimated_hours,          type: Integer,  desc: 'Estimated time to complete task, measured in hours'
     end
   end
@@ -64,16 +63,14 @@ class TaskDefinitionsApi < Grape::API
                                                 :assessment_enabled,
                                                 :overseer_image_id,
                                                 :moss_language,
-                                                :estimated_days,
                                                 :estimated_hours
                                               )
 
     task_params[:unit_id] = unit.id
     task_params[:upload_requirements] = JSON.parse(params[:task_def][:upload_requirements]) unless params[:task_def][:upload_requirements].nil?
 
-    days = task_params.delete(:estimated_days).to_i
     hours = task_params.delete(:estimated_hours).to_i
-    task_params[:estimated_time_minutes] = (days * 24 * 60) + (hours * 60)
+    task_params[:estimated_time_minutes] = (hours * 60)
 
     task_def = TaskDefinition.new(task_params)
 
@@ -119,7 +116,6 @@ class TaskDefinitionsApi < Grape::API
       optional :assessment_enabled,       type: Boolean,  desc: 'Enable or disable assessment'
       optional :overseer_image_id,        type: Integer,  desc: 'The id of the Docker image name for overseer'
       optional :moss_language,            type: String,   desc: 'The language to use for code similarity checks'
-      optional :estimated_days,           type: Integer,  desc: 'Estimated time to complete task, measured in days'
       optional :estimated_hours,          type: Integer,  desc: 'Estimated time to complete task, measured in hours'
     end
   end
@@ -149,15 +145,13 @@ class TaskDefinitionsApi < Grape::API
                                                 :assessment_enabled,
                                                 :overseer_image_id,
                                                 :moss_language,
-                                                :estimated_days,
                                                 :estimated_hours
                                               )
 
     task_params[:upload_requirements] = JSON.parse(params[:task_def][:upload_requirements]) unless params[:task_def][:upload_requirements].nil?
 
-    days = task_params.delete(:estimated_days).to_i
     hours = task_params.delete(:estimated_hours).to_i
-    task_params[:estimated_time_minutes] = (days * 24 * 60) + (hours * 60)
+    task_params[:estimated_time_minutes] = (hours * 60)
 
     # Ensure changes to a TD defined as a "draft task definition" are validated
     if unit.draft_task_definition_id == params[:id]

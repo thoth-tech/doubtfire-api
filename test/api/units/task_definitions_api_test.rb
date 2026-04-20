@@ -25,7 +25,6 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
       'plagiarism_warn_pct',
       'is_graded',
       'max_quality_pts',
-      'estimated_days',
       'estimated_hours'
     ]
   end
@@ -52,7 +51,6 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
         plagiarism_warn_pct:      80,
         is_graded:                false,
         max_quality_pts:          0,
-        estimated_days:           1,
         estimated_hours:          0
       }
     }
@@ -70,7 +68,6 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     assert_equal unit.tutorial_streams.first.id, td.tutorial_stream_id
     assert_equal 4, td.weighting
     assert_equal (24 * 60), td.estimated_time_minutes
-    assert_equal 1, last_response_body['estimated_days']
     assert_equal 0, last_response_body['estimated_hours']
 
 
@@ -91,7 +88,6 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
         plagiarism_warn_pct:      80,
         is_graded:                false,
         max_quality_pts:          0,
-        estimated_days:           2,
         estimated_hours:          3
       }
     }
@@ -108,7 +104,6 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     assert_equal unit.tutorial_streams.last.id, td.tutorial_stream_id
     assert_equal 2, td.weighting
     assert_equal 3060, td.estimated_time_minutes
-    assert_equal 2, last_response_body['estimated_days']
     assert_equal 3, last_response_body['estimated_hours']
   end
 
