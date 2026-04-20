@@ -4,15 +4,15 @@ class OverseerImage < ApplicationRecord
   # Callbacks - methods called are private
   before_destroy :can_destroy?
 
-  has_many :units
-  has_many :task_definitions
+  has_many :units, dependent: :nullify
+  has_many :task_definitions, dependent: :nullify
 
   # Always add a unique index with uniqueness constraint
   # This is to prevent new records from passing the validations when checked at the same time before being written
   validates :name,  presence: true, uniqueness: true
   validates :tag,   presence: true, uniqueness: true, format: { with: %r{\A([\w.\-_]+((?::\d+|)(?=/[a-z0-9._-]+/[a-z0-9._-]+))|)(?:/|)([a-z0-9.\-_]+(?:/[a-z0-9.\-_]+|))(:([\w.\-_]{1,127})|)\z} }
 
-  enum pulled_image_status: { failed: 0, success: 1 }
+  enum :pulled_image_status, { failed: 0, loading: 1, success: 2 }
 
   # Pulls overseer image
   def pull_from_docker
@@ -26,10 +26,12 @@ class OverseerImage < ApplicationRecord
     registry = "" if registry.nil?
 
     self.last_pulled_date = Time.zone.now
+    self.pulled_image_status = :loading
+
     cmd = "docker pull #{registry}#{tag}"
     out_text, error_text, exit_status = Open3.capture3(cmd)
-    self.pulled_image_text = "#{cmd}\n#{out_text}\n#{error_text}"
 
+    self.pulled_image_text = "#{cmd}\n#{out_text}\n#{error_text}"
     self.pulled_image_status = if exit_status == 0
                                  :success
                                else

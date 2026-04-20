@@ -1,12 +1,68 @@
 require 'json'
 
 class TaskDefinition < ApplicationRecord
+  include ApplicationHelper
+  include FileHelper
+  include MimeCheckHelpers
+  include CsvHelper
+
+  def self.permissions
+    convenor_role_permissions = [
+      :create_feedback_chips,
+      :get_feedback_chips,
+      :update,
+      :upload_csv,
+      :get_los,
+      :create_task_prerequisite,
+      :get_discussion_prompt,
+      :create_discussion_prompt,
+      :manage_overseer_steps
+    ]
+
+    admin_role_permissions = [
+      :create_feedback_chips,
+      :get_feedback_chips,
+      :update,
+      :upload_csv,
+      :get_los,
+      :create_task_prerequisite,
+      :get_discussion_prompt,
+      :create_discussion_prompt,
+      :manage_overseer_steps
+    ]
+
+    tutor_role_permissions = [
+      :get_feedback_chips,
+      :get_los,
+      :get_discussion_prompt,
+      :create_discussion_prompt
+    ]
+
+    auditor_role_permissions = [
+      :get_feedback_chips
+    ]
+
+    nil_role_permissions = []
+
+    {
+      convenor: convenor_role_permissions,
+      admin: admin_role_permissions,
+      tutor: tutor_role_permissions,
+      auditor: auditor_role_permissions,
+      nil: nil_role_permissions
+    }
+  end
+
+  delegate :role_for, to: :unit
+
   before_destroy :delete_associated_files
 
   after_update :move_files_on_abbreviation_change, if: :saved_change_to_abbreviation?
   after_update :remove_old_group_submissions, if: :has_removed_group?
   after_update :check_and_update_tii_status, if: :saved_change_to_upload_requirements?
   after_update :update_tii_group, if: :saved_change_to_due_date?
+  after_update :update_overdue_tasks_aip, if: :saved_change_to_assess_in_portfolio_only?
+  after_update :reset_overdue_tasks, if: :saved_change_to_due_date?
 
   # Model associations
   belongs_to :unit, optional: false # Foreign key
@@ -16,11 +72,20 @@ class TaskDefinition < ApplicationRecord
 
   has_many :tasks, dependent:  :destroy # Destroying a task definition will also nuke any instances
   has_many :group_submissions, dependent: :destroy # Destroying a task definition will also nuke any group submissions
-  has_many :learning_outcome_task_links, dependent: :destroy # links to learning outcomes
-  has_many :learning_outcomes, -> { where('learning_outcome_task_links.task_id is NULL') }, through: :learning_outcome_task_links # only link staff relations
+  has_many :learning_outcomes, as: :context, dependent: :destroy
+  has_many :overseer_steps, -> { order(:sort_order) }, inverse_of: :task_definition, dependent: :destroy
 
-  has_many :tii_group_attachments, dependent: :destroy
+  has_many :tii_group_attachments, dependent: :destroy # destroy uploaded files to tii - after the tasks
   has_many :tii_actions, as: :entity, dependent: :destroy
+
+  has_many :task_prerequisites, dependent: :destroy
+  has_many :prerequisites, through: :task_prerequisites, source: :prerequisite
+
+  has_many :grade_due_dates,
+           class_name: "TaskDefinitionGradeDueDate",
+           dependent: :destroy
+
+  has_many :discussion_prompts, dependent: :destroy
 
   serialize :upload_requirements, coder: JSON
 
@@ -41,8 +106,44 @@ class TaskDefinition < ApplicationRecord
 
   validates :weighting, presence: true
 
+  validate :check_existing_prerequisites
+
+  validate :cant_disable_aip_only_if_aip_tasks_exist
+
   include TaskDefinitionTiiModule
   include TaskDefinitionSimilarityModule
+
+  # def p_target_date
+  #   due_date
+  # end
+
+  # Per-grade target date overrides
+
+  def c_target_date
+    grade_due_dates.find { |g| g.target_grade == 1 }&.target_due_date
+  end
+
+  def d_target_date
+    grade_due_dates.find { |g| g.target_grade == 2 }&.target_due_date
+  end
+
+  def hd_target_date
+    grade_due_dates.find { |g| g.target_grade == 3 }&.target_due_date
+  end
+
+  # Per-grade start date overrides
+
+  def c_start_date
+    grade_due_dates.find { |g| g.target_grade == 1 }&.start_date
+  end
+
+  def d_start_date
+    grade_due_dates.find { |g| g.target_grade == 2 }&.start_date
+  end
+
+  def hd_start_date
+    grade_due_dates.find { |g| g.target_grade == 3 }&.start_date
+  end
 
   def unit_must_be_same
     if unit.present? and tutorial_stream.present? and not unit.eql? tutorial_stream.unit
@@ -53,6 +154,31 @@ class TaskDefinition < ApplicationRecord
   def tutorial_stream_present?
     if tutorial_stream.nil? and unit.tutorial_streams.exists?
       errors.add(:tutorial_stream, "must be one of the tutorial streams in the unit")
+    end
+  end
+
+  def cant_disable_aip_only_if_aip_tasks_exist
+    return unless will_save_change_to_assess_in_portfolio_only?
+    return if assess_in_portfolio_only? # only care about disabling
+
+    if tasks.where(task_status_id: TaskStatus.assess_in_portfolio.id).exists?
+      errors.add(:assess_in_portfolio_only, "cannot be disabled while tasks are in the Assess in Portfolio state")
+    end
+  end
+
+  def check_existing_prerequisites
+    prereqs = TaskPrerequisite.where(task_definition_id: id)
+    prereqs.each do |dp|
+      if target_grade < dp.prerequisite.target_grade
+        errors.add(:target_grade, "cannot be lower than prerequisite #{dp.prerequisite.abbreviation}'s target grade")
+      end
+    end
+
+    dependents = TaskPrerequisite.where(prerequisite_id: id)
+    dependents.each do |pr|
+      if target_grade > pr.task_definition.target_grade
+        errors.add(:target_grade, "cannot exceed the target grade #{pr.task_definition.abbreviation} because this is a prerequisite")
+      end
     end
   end
 
@@ -95,6 +221,10 @@ class TaskDefinition < ApplicationRecord
       new_td.add_task_resources(task_resources, copy: true)
     end
 
+    if has_scorm_data?
+      new_td.add_scorm_data(task_scorm_data, copy: true)
+    end
+
     new_td.save!
 
     new_td
@@ -120,18 +250,52 @@ class TaskDefinition < ApplicationRecord
     "#{abbreviation} #{name}"
   end
 
+  def update_overdue_tasks_aip
+    return unless saved_change_to_assess_in_portfolio_only? && assess_in_portfolio_only?
+
+    overdue_statuses = [TaskStatus.time_exceeded.id]
+
+    tasks.where(task_status_id: overdue_statuses).find_each do |task|
+      task.add_status_comment(unit.main_convenor.user, TaskStatus.assess_in_portfolio)
+      task.update(task_status_id: TaskStatus.assess_in_portfolio.id)
+    end
+  end
+
+  def reset_overdue_tasks
+    original_due_date = saved_change_to_due_date&.first
+    return unless original_due_date
+    return if assess_in_portfolio_only
+
+    late_submissions = tasks
+                       .where('submission_date > ?', original_due_date)
+                       .where(task_status: [TaskStatus.time_exceeded, TaskStatus.assess_in_portfolio])
+
+    late_submissions.each do |task|
+      task.add_status_comment(unit.main_convenor.user, TaskStatus.ready_for_feedback)
+      task.update(task_status_id: TaskStatus.ready_for_feedback.id)
+    end
+  end
+
   def move_files_on_abbreviation_change
     old_abbr = saved_change_to_abbreviation[0] # 0 is original abbreviation
-    if File.exist? task_sheet_with_abbreviation(old_abbr)
+    if File.exist? task_sheet_with_abbreviation(old_abbr, false)
       FileUtils.mv(task_sheet_with_abbreviation(old_abbr), task_sheet())
     end
 
-    if File.exist? task_resources_with_abbreviation(old_abbr)
+    if File.exist? task_resources_with_abbreviation(old_abbr, false)
       FileUtils.mv(task_resources_with_abbreviation(old_abbr), task_resources())
     end
 
-    if File.exist? task_assessment_resources_with_abbreviation(old_abbr)
+    if File.exist? task_assessment_resources_with_abbreviation(old_abbr, false)
       FileUtils.mv(task_assessment_resources_with_abbreviation(old_abbr), task_assessment_resources())
+    end
+
+    if File.exist? task_scorm_data_with_abbreviation(old_abbr, false)
+      FileUtils.mv(task_scorm_data_with_abbreviation(old_abbr), task_scorm_data())
+    end
+
+    tasks.find_each do |task|
+      task.move_files_on_abbreviation_change(old_abbr)
     end
   end
 
@@ -176,6 +340,26 @@ class TaskDefinition < ApplicationRecord
         errors.add(:upload_requirements, "has additional values for item #{i + 1} --> #{req.keys.join(' ')}.")
       end
 
+      # Check the name matches a valid filename format
+      unless req['name'].match?(/^[a-zA-Z0-9_\- .]+$/)
+        errors.add(:upload_requirements, "the name for item #{i + 1} does not seem to be a valid filename --> #{req['name']}.")
+      end
+
+      # Check the type is either document or image or code
+      unless %w(document image code).include? req['type']
+        errors.add(:upload_requirements, "the type for item #{i + 1} is not valid --> #{req['type']}.")
+      end
+
+      # Check that tii check is a boolean
+      unless req['tii_check'].blank? || [true, false].include?(req['tii_check'])
+        errors.add(:upload_requirements, "the tii_check for item #{i + 1} is not a boolean --> #{req['tii_check']}.")
+      end
+
+      # Check that tii_pct is a non-negative number
+      unless req['tii_pct'].blank? || (req['tii_pct'].is_a?(Numeric) && req['tii_pct'] >= 0)
+        errors.add(:upload_requirements, "the tii_pct for item #{i + 1} is not a non-negative number --> #{req['tii_pct']}.")
+      end
+
       i += 1
     end
   end
@@ -208,6 +392,58 @@ class TaskDefinition < ApplicationRecord
         csv << task_definition.to_csv_row
       end
     end
+  end
+
+  # Export the learning outcomes for this task definition to a CSV file
+  # @param _include_tlos [Boolean] ignored as at the task definition level already
+  def export_learning_outcome_to_csv(*)
+    CSV.generate do |row|
+      row << LearningOutcome.csv_header
+      learning_outcomes.each do |outcome|
+        outcome.add_csv_row row
+      end
+    end
+  end
+
+  def export_feedback_chips_to_csv(*)
+    CSV.generate do |row|
+      row << Feedback::FeedbackChip.csv_header
+      learning_outcomes.each do |outcome|
+        outcome.feedback_chips.each do |chip|
+          chip.add_csv_row row
+        end
+      end
+    end
+  end
+
+  def export_title
+    abbreviation
+  end
+
+  def import_outcomes_from_csv(file)
+    result = {
+      success: [],
+      errors: [],
+      ignored: []
+    }
+
+    data = read_file_to_str(file)
+
+    CSV.parse(data,
+              headers: true,
+              header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr&.strip }],
+              converters: [->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }]).each do |row|
+      # Make sure we're not looking at the header or an empty line
+      next if row[0] =~ /abbreviation/
+
+      begin
+        LearningOutcome.create_from_csv(unit, self, row, result)
+      rescue StandardError => e
+        result[:errors] << { row: row, message: e.message.to_s }
+      end
+    end
+
+    result
   end
 
   def start_week
@@ -274,25 +510,42 @@ class TaskDefinition < ApplicationRecord
 
   def to_csv_row
     TaskDefinition.csv_columns
-                  .reject { |col| [:start_week, :start_day, :target_week, :target_day, :due_week, :due_day, :upload_requirements, :group_set, :tutorial_stream].include? col }
+                  .reject { |col| [:start_week, :start_day, :target_week, :target_day, :due_week, :due_day, :upload_requirements, :group_set, :tutorial_stream, :assess_in_portfolio_only, :task_prerequisites, :discussion_prompts].include? col}
                   .map { |column| attributes[column.to_s] } +
       [
         group_set.nil? ? "" : group_set.name,
-        upload_requirements.to_s,
+        upload_requirements.to_json,
         start_week,
         start_day,
         target_week,
         target_day,
         due_week,
         due_day,
-        tutorial_stream.present? ? tutorial_stream.abbreviation : nil
+        tutorial_stream.present? ? tutorial_stream.abbreviation : nil,
+        assess_in_portfolio_only,
+        task_prerequisites.map do |tp|
+          prereq = TaskDefinition.find(tp.prerequisite_id)
+          {
+            abbreviation: prereq.abbreviation,
+            task_status_id: tp.task_status_id
+          }
+        end.to_json,
+        discussion_prompts.map do |prompt|
+        {
+          content: prompt.content,
+          priority: prompt.priority
+        }
+        end.to_json
       ]
     # [target_date.strftime('%d-%m-%Y')] +
     # [ self['due_date'].nil? ? '' : due_date.strftime('%d-%m-%Y')]
   end
 
   def self.csv_columns
-    [:name, :abbreviation, :description, :weighting, :target_grade, :restrict_status_updates, :max_quality_pts, :is_graded, :plagiarism_warn_pct, :group_set, :upload_requirements, :start_week, :start_day, :target_week, :target_day, :due_week, :due_day, :tutorial_stream]
+    [:name, :abbreviation, :description, :weighting, :target_grade, :restrict_status_updates, :max_quality_pts,
+     :is_graded, :plagiarism_warn_pct, :scorm_enabled, :scorm_allow_review, :scorm_bypass_test, :scorm_time_delay_enabled,
+     :scorm_attempt_limit, :group_set, :upload_requirements, :start_week, :start_day, :target_week, :target_day,
+     :due_week, :due_day, :tutorial_stream, :assess_in_portfolio_only, :task_prerequisites, :discussion_prompts]
   end
 
   def self.task_def_for_csv_row(unit, row)
@@ -301,7 +554,7 @@ class TaskDefinition < ApplicationRecord
     new_task = false
     abbreviation = row[:abbreviation].strip
     name = row[:name].strip
-    tutorial_stream = unit.tutorial_streams.find_by_abbr_or_name("#{row[:tutorial_stream]}".strip)
+    tutorial_stream = unit.tutorial_streams.find_by('abbreviation = :name OR name = :name', name: "#{row[:tutorial_stream]}".strip)
     target_date = unit.date_for_week_and_day row[:target_week].to_i, "#{row[:target_day]}".strip
     return [nil, false, "Unable to determine target date for #{abbreviation} -- need week number, and day short text eg. 'Wed'"] if target_date.nil?
 
@@ -335,8 +588,17 @@ class TaskDefinition < ApplicationRecord
     result.is_graded                   = %w(Yes y Y yes true TRUE 1).include? "#{row[:is_graded]}".strip
     result.start_date                  = start_date
     result.target_date                 = target_date
-    result.upload_requirements         = JSON.parse(row[:upload_requirements]) unless row[:upload_requirements].nil?
+    unless row[:upload_requirements].nil?
+      upload_requirements = JSON.parse(row[:upload_requirements])
+      result.upload_requirements = normalize_upload_requirement_keys(upload_requirements)
+    end
     result.due_date                    = due_date
+
+    result.scorm_enabled               = %w(Yes y Y yes true TRUE 1).include? "#{row[:scorm_enabled]}".strip
+    result.scorm_allow_review          = %w(Yes y Y yes true TRUE 1).include? "#{row[:scorm_allow_review]}".strip
+    result.scorm_bypass_test           = %w(Yes y Y yes true TRUE 1).include? "#{row[:scorm_bypass_test]}".strip
+    result.scorm_time_delay_enabled    = %w(Yes y Y yes true TRUE 1).include? "#{row[:scorm_time_delay_enabled]}".strip
+    result.scorm_attempt_limit         = row[:scorm_attempt_limit].to_i
 
     result.plagiarism_warn_pct         = row[:plagiarism_warn_pct].to_i
 
@@ -347,6 +609,10 @@ class TaskDefinition < ApplicationRecord
     if row[:tutorial_stream].present?
       result.tutorial_stream = unit.tutorial_streams.where(abbreviation: row[:tutorial_stream]).first
     end
+
+    import_discussion_prompts_from_csv_row(result, row)
+
+    result.assess_in_portfolio_only = %w(Yes y Y yes true TRUE 1).include? "#{row[:assess_in_portfolio_only]}".strip
 
     if result.valid? && (row[:group_set].blank? || result.group_set.present?)
       begin
@@ -368,20 +634,76 @@ class TaskDefinition < ApplicationRecord
     [result, new_task, new_task ? "Added new task definition #{result.abbreviation}." : "Updated existing task #{result.abbreviation}"]
   end
 
+  def self.normalize_upload_requirement_keys(upload_requirements)
+    return upload_requirements unless upload_requirements.is_a?(Array)
+
+    upload_requirements.map.with_index do |requirement, idx|
+      next requirement unless requirement.is_a?(Hash)
+
+      requirement.merge('key' => "file#{idx}")
+    end
+  end
+
+  def self.import_discussion_prompts_from_csv_row(task_definition, row)
+    task_definition.discussion_prompts.destroy_all
+    return if row[:discussion_prompts].blank?
+
+    prompts = JSON.parse(row[:discussion_prompts])
+    prompts.each do |prompt|
+      DiscussionPrompt.create!({
+                                 task_definition: task_definition,
+                                 content: prompt['content'],
+                                 priority: prompt['priority']
+                               })
+    end
+  end
+
   def is_group_task?
     !group_set.nil?
   end
 
   def has_task_resources?
-    File.exist? task_resources
+    File.exist? task_resources(false)
   end
 
   def has_task_assessment_resources?
-    File.exist? task_assessment_resources
+    File.exist? task_assessment_resources(false)
+  end
+
+  def has_task_assessment_script?
+    File.exist? task_assessment_script(false)
   end
 
   def has_task_sheet?
-    File.exist? task_sheet
+    File.exist? task_sheet(false)
+  end
+
+  def has_scorm_data?
+    File.exist? task_scorm_data
+  end
+
+  def scorm_enabled?
+    scorm_enabled
+  end
+
+  def scorm_allow_review?
+    scorm_allow_review
+  end
+
+  def scorm_bypass_test?
+    scorm_bypass_test
+  end
+
+  def scorm_time_delay_enabled?
+    scorm_time_delay_enabled
+  end
+
+  def scorm_attempt_limit?
+    scorm_attempt_limit
+  end
+
+  def has_jplag_report?
+    File.exist? jplag_report
   end
 
   def is_graded?
@@ -436,17 +758,63 @@ class TaskDefinition < ApplicationRecord
     end
   end
 
+  def add_scorm_data(file, copy: false)
+    if copy
+      FileUtils.cp file, task_scorm_data
+    else
+      FileUtils.mv file, task_scorm_data
+    end
+  end
+
+  def remove_scorm_data()
+    if has_scorm_data?
+      FileUtils.rm task_scorm_data
+    end
+
+    reset_scorm_config()
+  end
+
   # Get the path to the task sheet - using the current abbreviation
-  def task_sheet
-    task_sheet_with_abbreviation(abbreviation)
+  def task_sheet(create = true)
+    task_sheet_with_abbreviation(abbreviation, create)
   end
 
-  def task_resources
-    task_resources_with_abbreviation(abbreviation)
+  def task_resources(create = true)
+    task_resources_with_abbreviation(abbreviation, create)
   end
 
-  def task_assessment_resources
-    task_assessment_resources_with_abbreviation(abbreviation)
+  def task_assessment_resources(create = true)
+    task_assessment_resources_with_abbreviation(abbreviation, create)
+  end
+
+  def overseer_resource_files
+    return [] unless File.exist?(task_assessment_resources)
+
+    files = []
+    Zip::File.open(task_assessment_resources) do |zip_file|
+      zip_file.each do |entry|
+      next if entry.directory?
+      # skip macOS metadata files and hidden files
+      next if File.basename(entry.name).start_with?('._', '.')
+
+      # remove top-level folder
+      parts = entry.name.split('/', 2)
+      files << "/#{parts.last}" unless parts.empty?
+      end
+    end
+    files
+  end
+
+  def task_assessment_script(create = true)
+    task_assessment_script_with_abbreviation(abbreviation, create)
+  end
+
+  def task_scorm_data(create = true)
+    task_scorm_data_with_abbreviation(abbreviation, create)
+  end
+
+  def jplag_report
+    task_jplag_report_with_abbreviation(abbreviation)
   end
 
   def related_tasks_with_files(consolidate_groups = true)
@@ -460,7 +828,7 @@ class TaskDefinition < ApplicationRecord
         if t.group.nil?
           result = false
         else
-          result = !seen_groups.include?(t.group)
+          result = seen_groups.exclude?(t.group)
           seen_groups << t.group if result
         end
         result
@@ -495,13 +863,14 @@ class TaskDefinition < ApplicationRecord
     remove_task_sheet()
     remove_task_resources()
     remove_task_assessment_resources()
+    remove_scorm_data()
   end
 
   # Calculate the path to the task sheet using the provided abbreviation
   # This allows the path to be calculated on abbreviation change to allow files to
   # be moved
-  def task_sheet_with_abbreviation(abbr)
-    task_path = FileHelper.task_file_dir_for_unit unit, create = true
+  def task_sheet_with_abbreviation(abbr, create = true)
+    task_path = FileHelper.task_file_dir_for_unit unit, create
 
     result_with_sanitised_path = "#{task_path}#{FileHelper.sanitized_path(abbr)}.pdf"
     result_with_sanitised_file = "#{task_path}#{FileHelper.sanitized_filename(abbr)}.pdf"
@@ -516,8 +885,8 @@ class TaskDefinition < ApplicationRecord
   # Calculate the path to the task sheet using the provided abbreviation
   # This allows the path to be calculated on abbreviation change to allow files to
   # be moved
-  def task_resources_with_abbreviation(abbr)
-    task_path = FileHelper.task_file_dir_for_unit unit, create = true
+  def task_resources_with_abbreviation(abbr, create = true)
+    task_path = FileHelper.task_file_dir_for_unit unit, create
 
     result_with_sanitised_path = "#{task_path}#{FileHelper.sanitized_path(abbr)}.zip"
     result_with_sanitised_file = "#{task_path}#{FileHelper.sanitized_filename(abbr)}.zip"
@@ -529,8 +898,8 @@ class TaskDefinition < ApplicationRecord
     end
   end
 
-  def task_assessment_resources_with_abbreviation(abbr)
-    task_path = FileHelper.task_file_dir_for_unit unit, create = true
+  def task_assessment_resources_with_abbreviation(abbr, create = true)
+    task_path = FileHelper.task_file_dir_for_unit unit, create
 
     result_with_sanitised_path = "#{task_path}#{FileHelper.sanitized_path(abbr)}-assessment.zip"
     result_with_sanitised_file = "#{task_path}#{FileHelper.sanitized_filename(abbr)}-assessment.zip"
@@ -540,5 +909,61 @@ class TaskDefinition < ApplicationRecord
     else
       result_with_sanitised_file
     end
+  end
+
+  def task_assessment_script_with_abbreviation(abbr, create = true)
+    task_path = FileHelper.task_file_dir_for_unit unit, create
+
+    result_with_sanitised_path = "#{task_path}#{FileHelper.sanitized_path(abbr)}-assessment-script.txt"
+    result_with_sanitised_file = "#{task_path}#{FileHelper.sanitized_filename(abbr)}-assessment-script.txt"
+
+    # TODO: currently its saving 1_P instead of 1.1P
+    if !File.exist?(result_with_sanitised_path) && create
+      FileUtils.mkdir_p(File.dirname(result_with_sanitised_path))
+      File.write(result_with_sanitised_path, '')
+    end
+
+    if File.exist? result_with_sanitised_path
+      result_with_sanitised_path
+    else
+      result_with_sanitised_file
+    end
+  end
+
+  # Calculate the path to the SCORM containzer zip file using the provided abbreviation
+  # This allows the path to be calculated on abbreviation change to allow files to
+  # be moved
+  def task_scorm_data_with_abbreviation(abbr, create = true)
+    task_path = FileHelper.task_file_dir_for_unit unit, create
+
+    result_with_sanitised_path = "#{task_path}#{FileHelper.sanitized_path(abbr)}.scorm.zip"
+    result_with_sanitised_file = "#{task_path}#{FileHelper.sanitized_filename(abbr)}.scorm.zip"
+
+    if File.exist? result_with_sanitised_path
+      result_with_sanitised_path
+    else
+      result_with_sanitised_file
+    end
+  end
+
+  def task_jplag_report_with_abbreviation(abbr)
+    task_path = FileHelper.task_jplag_report_dir unit
+
+    result_with_sanitised_path = "#{task_path}#{FileHelper.sanitized_path(abbr)}-result.jplag"
+    result_with_sanitised_file = "#{task_path}#{FileHelper.sanitized_filename(abbr)}-result.jplag"
+
+    if File.exist? result_with_sanitised_path
+      result_with_sanitised_path
+    else
+      result_with_sanitised_file
+    end
+  end
+
+  def reset_scorm_config()
+    self.scorm_enabled = false
+    self.scorm_allow_review = false
+    self.scorm_bypass_test = false
+    self.scorm_time_delay_enabled = false
+    self.scorm_attempt_limit = 0
   end
 end

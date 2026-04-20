@@ -61,6 +61,7 @@ class DatabasePopulator
     generate_fixed_data()
 
     generate_teaching_periods()
+    generate_global_learning_outcomes()
     generate_campuses
     generate_activity_types
   end
@@ -98,6 +99,25 @@ class DatabasePopulator
     tp = TeachingPeriod.create! data
 
     tp.add_break Date.parse('2018-12-24'), 2
+  end
+
+  def generate_global_learning_outcomes
+    data = [
+      {
+        abbreviation: 'GLO1',
+        short_description: 'Demonstrate discipline specific knowledge and skills',
+        full_outcome_description: 'Demonstrate discipline specific knowledge and skills',
+      },
+      {
+        abbreviation: 'GLO2',
+        short_description: 'Demonstrate communication skills',
+        full_outcome_description: 'Demonstrate communication skills written, oral, visual, etc',
+      },
+    ]
+
+    data.each do |d|
+      LearningOutcome.create! d
+    end
   end
 
   def generate_campuses
@@ -241,11 +261,70 @@ class DatabasePopulator
       # Generate other unit-related stuff
       generate_tasks_for_unit(unit, unit_details)
       generate_and_align_ilos_for_unit(unit, unit_details)
+      generate_feedback_chips_for_unit(unit, unit_details)
       generate_tutorial_streams_for(unit)
       generate_tutorials_and_enrol_students_for_unit(unit, unit_details)
+      generate_marking_sessions(unit)
     end
 
     DatabasePopulator.add_similarities
+  end
+
+  def generate_marking_sessions(unit)
+    tutors = unit.tutors
+    today = Time.zone.today
+
+    tutors.each do |tutor|
+      (-14..14).each do |days_ago|
+        date = today - days_ago
+
+        [:morning, :afternoon].each do |period|
+          start_hour = period == :morning ? 7 : 14
+          start_hour += rand(-2..8) if period == :afternoon
+          start_hour += rand(-2..5) if period == :morning
+          duration_minutes = rand(30..120)
+          start_time = Time.zone.local(date.year, date.month, date.day, start_hour, rand(0..30))
+          end_time   = start_time + duration_minutes.minutes
+
+          session = MarkingSession.create!(
+            user_id: tutor.id,
+            unit: unit,
+            ip_address: Faker::Internet.ip_v4_address,
+            start_time: start_time,
+            end_time: end_time
+          )
+
+          # Generate session activities
+          num_assessments = (duration_minutes / 7.0).ceil
+          num_assessments.times do |i|
+            activity_time = start_time + Rational(i * 7, 24*60)
+            activity = SessionActivity.create!(
+              marking_session: session,
+              action: 'assessing',
+              project_id: unit.projects.sample&.id,
+              task_id: nil,
+              task_definition_id: unit.task_definitions.sample&.id,
+              created_at: activity_time,
+              updated_at: activity_time
+            )
+
+            # Each assessment gets at least 1 comment
+            rand(1..3).times do
+              comment_time = activity_time + Rational(rand(1..5), 24*60)
+              SessionActivity.create!(
+                marking_session: session,
+                action: 'add-comment',
+                project_id: activity.project_id,
+                task_id: activity.task_id,
+                task_definition_id: activity.task_definition_id,
+                created_at: comment_time,
+                updated_at: comment_time
+              )
+            end
+          end
+        end
+      end
+    end
   end
 
   def generate_tutorial_streams_for(unit)
@@ -402,7 +481,7 @@ class DatabasePopulator
       if @user_cache.present?
         tutor = @user_cache[user_details[:user]]
       else
-        tutor = User.find_by_username(user_details[:user])
+        tutor = User.find_by(username: user_details[:user])
       end
 
       echo_line "----> Enrolling tutor #{tutor.name} with #{user_details[:num]} tutorials"
@@ -500,25 +579,12 @@ class DatabasePopulator
   end
 
   def self.assess_task(proj, task, tutor, status, complete_date)
-    alignments = []
-    task.unit.learning_outcomes.each do |lo|
-      next if rand(0..10) < 7
-
-      data = {
-        ilo_id: lo.id,
-        rating: rand(1..5),
-        rationale: "Simulated rationale text..."
-      }
-      alignments << data
-    end
-
     if task.group_task? && task.group.nil?
       return
     end
 
     contributions = nil
 
-    task.create_alignments_from_submission(alignments) unless alignments.nil?
     task.create_submission_and_trigger_state_change(proj.student) # , propagate = true, contributions = contributions, trigger = trigger)
     task.assess status, tutor, complete_date
 
@@ -532,10 +598,9 @@ class DatabasePopulator
 
     pdf_path = task.final_pdf_path
     if pdf_path && !File.exist?(pdf_path)
-      FileUtils.ln_s(Rails.root.join('test_files', 'unit_files', 'sample-student-submission.pdf'), pdf_path)
+      FileUtils.ln_s(Rails.root.join('test_files/unit_files/sample-student-submission.pdf'), pdf_path)
     end
 
-    task.portfolio_evidence_path = pdf_path
     task.save
   end
 
@@ -543,8 +608,8 @@ class DatabasePopulator
     portfolio_tmp_dir = project.portfolio_temp_path
     FileUtils.mkdir_p(portfolio_tmp_dir)
 
-    lsr_path = File.join(portfolio_tmp_dir, "000-document-LearningSummaryReport.pdf")
-    FileUtils.ln_s(Rails.root.join('test_files', 'unit_files', 'sample-learning-summary.pdf'), lsr_path) unless File.exist? lsr_path
+    lsr_path = File.join(portfolio_tmp_dir, '000-document-LearningSummaryReport.pdf')
+    FileUtils.ln_s(Rails.root.join('test_files/unit_files/sample-learning-summary.pdf'), lsr_path) unless File.exist? lsr_path
     project.compile_portfolio = true
     project.create_portfolio
   end
@@ -553,11 +618,15 @@ class DatabasePopulator
 
   # Output
   def echo *args
+    # rubocop:disable Rails/Output
     print(*args) if @echo
+    # rubocop:enable Rails/Output
   end
 
   def echo_line *args
+    # rubocop:disable Rails/Output
     puts(*args) if @echo
+    # rubocop:enable Rails/Output
   end
 
   #
@@ -579,11 +648,9 @@ class DatabasePopulator
       unless result[:errors].empty?
         raise("----> Task files import failed with the following errors: #{result[:errors]} \n")
       end
-
       unless result[:ignored].empty?
         echo "----> Task files import ignored the following files: #{result[:ignored]} \n"
       end
-
       return
     end
 
@@ -619,46 +686,45 @@ class DatabasePopulator
   #
   def generate_and_align_ilos_for_unit(unit, unit_details)
     # Create the ILOs
-    echo "----> Adding #{unit_details[:ilos]} ILOs\n"
 
-    if File.exist? Rails.root.join('test_files', "#{unit.code}-Outcomes.csv")
-      unit.import_outcomes_from_csv File.open(Rails.root.join('test_files', "#{unit.code}-Outcomes.csv"))
-      unit.import_task_alignment_from_csv File.open(Rails.root.join('test_files', "#{unit.code}-Alignment.csv")), nil
+    if File.exist? Rails.root.join('test_files', "#{unit.code}-UnitAndTaskLearningOutcomes.csv")
+      echo "----> Importing ILOs from CSV \n"
+      unit.import_outcomes_from_csv File.open(Rails.root.join('test_files', "#{unit.code}-UnitAndTaskLearningOutcomes.csv"))
       return
     end
+
+    echo "----> Adding #{unit_details[:ilos]} ILOs\n"
 
     ilo_cache = {}
     unit_details[:ilos].times do |index|
       ilo_number = index + 1
       ilo = LearningOutcome.create!(
-        unit_id: unit.id,
-        ilo_number: ilo_number,
+        # unit_id: unit.id,
+        context_id: unit.id,
+        context_type: 'Unit',
         abbreviation: "ILO#{ilo_number}",
-        name: faker_random_sentence(1, 4).capitalize,
-        description: faker_random_sentence(10, 15)
+        # tag: "ILO#{ilo_number}",
+        short_description: faker_random_sentence(1, 4).capitalize,
+        full_outcome_description: faker_random_sentence(10, 15)
       )
       ilo_cache[ilo.id] = ilo
       echo "."
     end
     echo_line "!"
+  end
 
-    # Align each of the ILOs to a task
-    if unit_details[:ilos] > 0
-      echo "----> Aligning tasks to ILOs"
-      20.times do
-        ilo_id = unit.learning_outcomes.pluck('id').sample
-        task_def_id = unit.task_definition_ids.sample
-        link = LearningOutcomeTaskLink.find_or_create_by(
-          task_definition_id: task_def_id,
-          learning_outcome_id: ilo_id,
-          task_id: nil
-        )
-        link.rating = Faker::Number.between(from: 1, to: 4)
-        link.description = faker_random_sentence(5, 10)
-        link.save!
-        echo '.'
-      end
-      echo_line '!'
+  #
+  # Generates Feedback chips related to learning outcomes
+  #
+  def generate_feedback_chips_for_unit(unit, _unit_details)
+    # Create the Feedback Chips
+
+    if File.exist? Rails.root.join('test_files', "#{unit.code}-UnitFeedbackChips.csv")
+      echo "----> Importing Feedback Chips from CSV \n"
+      Feedback::FeedbackChip.import_feedback_chips_from_csv(File.open(Rails.root.join('test_files', "#{unit.code}-UnitFeedbackChips.csv")), "Unit", unit)
+      return
     end
+    echo "---> No feedback ships CSV found."
+    echo_line "!"
   end
 end

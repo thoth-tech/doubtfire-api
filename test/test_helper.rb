@@ -60,9 +60,6 @@ class ActiveSupport::TestCase
   # -- they do not yet inherit this setting
   fixtures :all
 
-  # Silence deprecation warnings
-  ActiveSupport::Deprecation.silenced = true
-
   # Support rollback of db changes after all tests
   DatabaseCleaner.strategy = :transaction
 
@@ -73,7 +70,6 @@ class ActiveSupport::TestCase
 
     # Ensure turn it in states is cleared
     TurnItIn.reset_rate_limit
-    TurnItIn.global_error = nil
 
     TestHelpers::TiiTestHelper.setup_tii_eula
     TestHelpers::TiiTestHelper.setup_tii_features_enabled
@@ -90,5 +86,6 @@ class ActiveSupport::TestCase
 
     DatabaseCleaner.clean
     Faker::UniqueGenerator.clear
+    ActionMailer::Base.deliveries.clear
   end
 end

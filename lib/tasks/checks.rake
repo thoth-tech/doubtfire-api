@@ -1,9 +1,11 @@
 namespace :submission do
   desc 'Check active units for task plagiarism'
 
+  # rubocop:disable Rails/Delegate
   def logger
     Rails.logger
   end
+  # rubocop:enable Rails/Delegate
 
   #
   # Returns the file that indicates if this rake process is already executing...
@@ -69,7 +71,12 @@ namespace :submission do
           puts ' ------------------------------------------------------------ '
           puts "  Starting Plagiarism Check for #{unit.name}"
           puts ' ------------------------------------------------------------ '
-          unit.check_moss_similarity
+
+          unit.check_jplag_similarity
+
+          # MOSS is deprecated, replaced by JPlag
+          # unit.check_moss_similarity
+          # unit.update_moss_plagiarism_stats
         end
         puts ' ------------------------------------------------------------ '
         puts ' done.'

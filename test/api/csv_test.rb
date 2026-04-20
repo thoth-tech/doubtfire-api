@@ -10,21 +10,8 @@ class CsvTest < ActiveSupport::TestCase
     Rails.application
   end
 
-  # --------------------------------------------------------------------------- #
-  # --- Endpoint testing for:
-  # ------- /api/csv
-  # ------- GET POST
-
-  # --------------------------------------------------------------------------- #
-
-  #####--------------GET tests - Download CSV of all task definitions for the given unit------------######
-
-  #1: Testing for CSV download of all the task definitions for a given unit
-  #GET /api/csv/task_definitions
   def test_download_csv_all_task_definitions_unit
-
     unit_id_to_test = '1'
-
 
     # auth_token and username added to header
     add_auth_header_for(user: User.first)
@@ -39,10 +26,7 @@ class CsvTest < ActiveSupport::TestCase
     assert_equal "attachment; filename=COS10001-Tasks.csv",last_response.headers["content-disposition"]
   end
 
-  #2: Testing for unit ID error with empty user ID
-  #GET /api/csv/task_definitions
   def test_download_csv_all_task_definitions_unit_with_empty_unit_id
-
     unit_id_to_test = ''
 
     # auth_token and username added to header
@@ -124,14 +108,17 @@ class CsvTest < ActiveSupport::TestCase
 
   #####--------------POST tests - Upload CSV of task definitions to the provided unit------------######
 
-  #7: Testing for CSV upload all task definitions for the given unit
-  #POST /api/csv/task_definitions
+  # 7: Testing for CSV upload all task definitions for the given unit
+  # POST /api/csv/task_definitions
   def test_csv_upload_all_task_definitions_unit
-
     data_to_post = {
       unit_id: '1',
       file: upload_file_csv('test_files/csv_test_files/COS10001-Tasks.csv')
     }
+
+    activity_type = FactoryBot.create(:activity_type)
+    unit = Unit.find(1)
+    unit.add_tutorial_stream('Import-Tasks', 'import-tasks', activity_type)
 
     # auth_token and username added to header
     add_auth_header_for(user: User.first)
@@ -139,12 +126,100 @@ class CsvTest < ActiveSupport::TestCase
     # perform the POST
     post "/api/csv/task_definitions", data_to_post
 
-    assert_equal 201, last_response.status
+    assert_equal 201, last_response.status, last_response_body
     assert_equal 'Assignment 12', TaskDefinition.where(abbreviation: 'A12').first.name
+
+    td = unit.task_definitions.find_by(abbreviation: '5.5D')
+    assert_equal 2, td.task_prerequisites.count, last_response_body
+
+    task_prereq1 = td.task_prerequisites.first
+    assert_equal 2, task_prereq1.task_status_id
+
+    task_prereq2 = td.task_prerequisites.second
+    assert_equal 9, task_prereq2.task_status_id
+
+    # Attempt to call it again
+    post "/api/csv/task_definitions", data_to_post
+    assert_equal 201, last_response.status, last_response_body
+
+    # Expect the same data
+    td = unit.task_definitions.find_by(abbreviation: '5.5D')
+    assert_equal 2, td.task_prerequisites.count, last_response_body
+
+    task_prereq1 = td.task_prerequisites.first
+    assert_equal 2, task_prereq1.task_status_id
+
+    task_prereq2 = td.task_prerequisites.second
+    assert_equal 9, task_prereq2.task_status_id
+
+    # Upload same prerequisites in to task 5.5D.new, and clear 5.5D prerequisites
+    data_to_post = {
+      unit_id: '1',
+      file: upload_file_csv('test_files/csv_test_files/COS10001-Tasks-Prerequisites.csv')
+    }
+
+    # Attempt to call it again
+    post "/api/csv/task_definitions", data_to_post
+    assert_equal 201, last_response.status, last_response_body
+
+    td1 = unit.task_definitions.find_by(abbreviation: '5.5D')
+    td2 = unit.task_definitions.find_by(abbreviation: '5.5D.new')
+
+    assert_equal 0, td1.task_prerequisites.count, last_response_body
+    assert_equal 2, td2.task_prerequisites.count, last_response_body
+
+    task_prereq1 = td2.task_prerequisites.first
+    assert_equal 2, task_prereq1.task_status_id
+
+    task_prereq2 = td2.task_prerequisites.second
+    assert_equal 9, task_prereq2.task_status_id
   end
 
-  #8: Testing for CSV upload failure due to incorrect auth token
-  #POST /api/csv/task_definitions
+  # 7b: Testing CSV upload normalises bad upload_requirement file keys
+  # POST /api/csv/task_definitions
+  def test_csv_upload_normalises_bad_upload_requirement_file_keys
+    # Ensure our test csv has unordered or duplicate file keys
+    # This scenario can happen when moving upload requirements around from different tasks
+    expected_upload_requirements_by_task = {
+      '1.1P' => '[{"key":"file1","name":"HelloWorld.pas","type":"code"},{"key":"file1","name":"Screenshot","type":"image"}]',
+      '1.2P' => '[{"key":"file0","name":"PictureDrawing.pas","type":"code"},{"key":"file5","name":"Screenshot","type":"image"}]',
+      '1.3P' => '[{"key":"file0","name":"PictureDrawing.pas","type":"code"},{"key":"file3","name":"Screenshot","type":"image"},{"key":"file2","name":"Screenshot","type":"image"}]'
+    }
+
+    bad_csv_rows = CSV.parse(
+      File.read(Rails.root.join('test_files/COS10001-TasksUnorderedUploadReqs.csv')),
+      headers: true
+    )
+    expected_upload_requirements_by_task.each do |abbr, expected_upload_reqs|
+      row = bad_csv_rows.find { |csv_row| csv_row['abbreviation'] == abbr }
+      assert row.present?, "Missing row for #{abbr} in bad file-key fixture"
+      assert_equal expected_upload_reqs, row['upload_requirements']
+    end
+
+    unit = Unit.find(1)
+    activity_type = FactoryBot.create(:activity_type)
+    unit.add_tutorial_stream('Import-Tasks', 'import-tasks', activity_type)
+
+    data_to_post = {
+      unit_id: unit.id,
+      file: upload_file_csv('test_files/COS10001-TasksUnorderedUploadReqs.csv')
+    }
+
+    add_auth_header_for(user: User.first)
+    post '/api/csv/task_definitions', data_to_post
+
+    assert_equal 201, last_response.status, last_response_body
+
+    unit.reload
+
+    # Ensure that our file keys are now ordered correctly
+    assert_equal %w[file0 file1], unit.task_definitions.find_by!(abbreviation: '1.1P').upload_requirements.map { |req| req['key'] }, last_response_body
+    assert_equal %w[file0 file1], unit.task_definitions.find_by!(abbreviation: '1.2P').upload_requirements.map { |req| req['key'] }, last_response_body
+    assert_equal %w[file0 file1 file2], unit.task_definitions.find_by!(abbreviation: '1.3P').upload_requirements.map { |req| req['key'] }, last_response_body
+  end
+
+  # 8: Testing for CSV upload failure due to incorrect auth token
+  # POST /api/csv/task_definitions
   def test_csv_upload_all_task_definitions_unit_incorrect_auth_token
 
     data_to_post = {
@@ -388,28 +463,31 @@ class CsvTest < ActiveSupport::TestCase
 
   #####--------------POST tests - Upload CSV of all the students in a unit------------######
 
-  #22: Testing for CSV upload of all the students in a unit
-  #POST /api/csv/units/{id}
+  # 22: Testing for CSV upload of all the students in a unit
+  # POST /api/csv/units/{id}
   def test_csv_upload_all_students_in_unit
-    unit = FactoryBot.create(:unit, code: 'COS10001', with_students: false, stream_count: 0)
+    Sidekiq::Testing.inline! do
+      unit = FactoryBot.create(:unit, code: 'COS10001', with_students: false, stream_count: 0)
 
-    data_to_post = {
-      file: upload_file_csv('test_files/csv_test_files/COS10001-Students.csv')
-    }
+      data_to_post = {
+        file: upload_file_csv('test_files/csv_test_files/COS10001-Students.csv')
+      }
 
-    # auth_token and username added to header
-    add_auth_header_for(auth_token: auth_token(unit.main_convenor_user), username: unit.main_convenor_user.username)
+      # auth_token and username added to header
+      add_auth_header_for(auth_token: auth_token(unit.main_convenor_user), username: unit.main_convenor_user.username)
 
-    # perform the POST
-    post "/api/csv/units/#{unit.id}", data_to_post
+      # perform the POST
+      post "/api/csv/units/#{unit.id}", data_to_post
 
-    user_id_check = unit.projects.last.user_id
+      user_id_check = unit.projects.last.user_id
 
-    # Check for response
-    assert_equal 201, last_response.status
-    assert_equal 'test_csv_student', User.where(id: user_id_check).last.username, last_response_body
+      # Check for response
+      assert_equal 201, last_response.status
+      assert_equal 'test_csv_student', User.where(id: user_id_check).last.username, last_response_body
 
-    unit.destroy
+      unit.destroy
+      Sidekiq::Testing.fake!
+    end
   end
 
   #23: Testing for CSV upload failure due to incorrect auth token
@@ -668,6 +746,7 @@ class CsvTest < ActiveSupport::TestCase
   def test_csv_upload_students_un_enroll_in_unit_xlsx
 
     unit = FactoryBot.create(:unit, code: 'COS10001', with_students: false, stream_count: 0)
+
     unit.import_users_from_csv test_file_path 'csv_test_files/COS10001-Students.csv'
 
     unit_id_to_test = unit.id
@@ -717,8 +796,8 @@ class CsvTest < ActiveSupport::TestCase
     assert_equal true, Project.where(user_id: user_id_check).last.enrolled
   end
 
-  #38: Testing for CSV upload failure due to no file
-  #POST /api/csv/units/{id}/withdraw
+  # 38: Testing for CSV upload failure due to no file
+  # POST /api/csv/units/{id}/withdraw
   def test_csv_upload_students_un_enroll_in_unit_no_file
 
     unit = FactoryBot.create(:unit, code: 'COS10001', with_students: false, stream_count: 0)
@@ -771,25 +850,32 @@ class CsvTest < ActiveSupport::TestCase
     assert_equal true, Project.where(user_id: user_id_check).last.enrolled
   end
 
-  #####--------------GET tests - Download CSV of all student tasks in this unit------------######
+  # ####--------------GET tests - Download CSV of all student tasks in this unit------------######
 
-  #40: Testing for CSV download of all  students tasks in a unit
-  #GET /api/csv/units/{id}/task_completion
+  # 40: Testing for CSV download of all  students tasks in a unit
+  # GET /api/csv/units/{id}/task_completion
   def test_download_csv_all_student_tasks_in_unit
+    Sidekiq::Testing.inline! do
+      unit_id_to_test = '1'
+      unit = Unit.find(unit_id_to_test)
 
-    unit_id_to_test = '1'
+      # auth_token and username added to header
+      add_auth_header_for(user: User.first)
 
-   # auth_token and username added to header
-    add_auth_header_for(user: User.first)
+      # perform the get
+      get "/api/csv/units/#{unit_id_to_test}/task_completion"
 
-    # perform the get
-    get "/api/csv/units/#{unit_id_to_test}/task_completion"
+      # Check for response
+      assert_equal 200, last_response.status
 
-    # Check for response
-    assert_equal 200, last_response.status
+      task_completion_stats = unit.task_completion_csv
 
-    # Check for file
-    assert_equal "attachment; filename=COS10001-TaskCompletion.csv",last_response.headers["content-disposition"]
+      assert_not_nil last_response_body['result']
+
+      # Check for CSV data in completed sidekiq job
+      assert_equal task_completion_stats, last_response_body['result']
+      Sidekiq::Testing.fake!
+    end
   end
 
   #41: Testing for unit ID error with empty user ID
@@ -865,8 +951,8 @@ class CsvTest < ActiveSupport::TestCase
     # Add authentication token to header
     add_auth_header_for(user: User.first)
 
-    #Override header for empty auth_token
-    header 'auth_token',''
+    # Override header for empty auth_token
+    header 'auth_token', ''
 
     # perform the get
     get "/api/csv/units/#{unit_id_to_test}/task_completion"
@@ -877,23 +963,30 @@ class CsvTest < ActiveSupport::TestCase
 
   # #####--------------GET tests - Download stats related to the number of tasks assessed by each tutor------------######
 
-  #46: Testing for CSV download of stats related to number of tasks assessed by each tutor
-  #GET /api/csv/units/{id}/tutor_assessments
+  # 46: Testing for CSV download of stats related to number of tasks assessed by each tutor
+  # GET /api/csv/units/{id}/tutor_assessments
   def test_download_csv_stats_tutor_assessed
+    Sidekiq::Testing.inline! do
+      unit_id_to_test = '1'
+      unit = Unit.find(unit_id_to_test)
 
-    unit_id_to_test = '1'
+      # Add authentication token to header
+      add_auth_header_for(user: User.first)
 
-    # Add authentication token to header
-    add_auth_header_for(user: User.first)
+      # perform the get
+      get "/api/csv/units/#{unit_id_to_test}/tutor_assessments"
 
-    # perform the get
-    get "/api/csv/units/#{unit_id_to_test}/tutor_assessments"
+      # Check for response
+      assert_equal 200, last_response.status
 
-    # Check for response
-    assert_equal 200, last_response.status
+      tutor_assesment_stats = unit.tutor_assessment_csv
 
-    # Check for file
-    assert_equal "attachment; filename=COS10001-TutorAssessments.csv",last_response.headers["content-disposition"]
+      assert_not_nil last_response_body['result']
+
+      # Check for CSV data in completed sidekiq job
+      assert_equal tutor_assesment_stats, last_response_body['result']
+      Sidekiq::Testing.fake!
+    end
   end
 
   #47: Testing for unit ID error with empty user ID
@@ -1140,5 +1233,501 @@ class CsvTest < ActiveSupport::TestCase
 
     # Check for response
     assert_equal 400, last_response.status
+  end
+
+  def test_upload_unit_feedback_chips
+    glo = FactoryBot.create(:learning_outcome, abbreviation: 'GGG1', context_type: nil, context_id: nil)
+    # Create two identical units with different codes
+    unit = FactoryBot.create(:unit, code: 'UNIT1', student_count: 1, inactive_student_count: 0, unenrolled_student_count: 0, part_enrolled_student_count: 0, task_count: 0, outcome_count: 0)
+    other_unit = FactoryBot.create(:unit, code: 'UNIT2', student_count: 0, inactive_student_count: 0, unenrolled_student_count: 0, part_enrolled_student_count: 0, task_count: 0, outcome_count: 0)
+
+    ulos = [
+      FactoryBot.create(:learning_outcome, context_type: 'Unit', context_id: unit.id, abbreviation: 'ULO1'),
+      FactoryBot.create(:learning_outcome, context_type: 'Unit', context_id: unit.id, abbreviation: 'ULO2'),
+    ]
+    other_ulos = [
+      FactoryBot.create(:learning_outcome, context_type: 'Unit', context_id: other_unit.id, abbreviation: 'ULO1'),
+    ]
+    td = FactoryBot.create(:task_definition, unit: unit, abbreviation: 'P1', outcome_count: 0)
+    tlos = [
+      FactoryBot.create(:learning_outcome, context_type: 'TaskDefinition', context_id: td.id, abbreviation: 'TLO1'),
+      FactoryBot.create(:learning_outcome, context_type: 'TaskDefinition', context_id: td.id, abbreviation: 'TLO2'),
+    ]
+    other_td = FactoryBot.create(:task_definition, unit: other_unit, abbreviation: 'P1', outcome_count: 0)
+    other_tlos = [
+      FactoryBot.create(:learning_outcome, context_type: 'TaskDefinition', context_id: other_td.id, abbreviation: 'TLO1'),
+      FactoryBot.create(:learning_outcome, context_type: 'TaskDefinition', context_id: other_td.id, abbreviation: 'TLO2'),
+    ]
+
+    admin = FactoryBot.create(:user, :admin)
+    tutor = FactoryBot.create(:user, :tutor)
+
+    unit.employ_staff(tutor, Role.tutor)
+
+    num_rows_in_csv = 8
+
+    to_test = [
+      {
+        # Direct to ULO
+        url: "/api/units/#{unit.id}/outcomes/#{ulos[0].id}/feedback_chips/csv",
+        context: 'Direct - ULO1',
+        changed_models: [ulos[0]],
+        expected_count: 2,
+        unchanged_models: [ulos[1], tlos, other_ulos, other_tlos, glo].flatten
+      },
+      {
+        # To Unit
+        url: "/api/units/#{unit.id}/feedback_chips/csv",
+        context: 'Unit - all',
+        changed_models: [ulos[0], tlos[0]],
+        expected_count: 2,
+        unchanged_models: [ulos[1], tlos[1], other_ulos, other_tlos, glo].flatten
+      },
+      {
+        # To Task
+        url: "/api/task_definitions/#{td.id}/feedback_chips/csv",
+        context: 'TaskDef - TLO1',
+        changed_models: [tlos[0]],
+        expected_count: 2,
+        unchanged_models: [ulos, tlos[1], other_ulos, other_tlos, glo].flatten
+      }
+    ]
+
+    users_can = [
+      unit.main_convenor_user,
+      admin
+    ]
+    users_cant = [
+      FactoryBot.create(:user, :student),
+      FactoryBot.create(:user, :tutor),
+      tutor,
+      FactoryBot.create(:user, :convenor),
+      FactoryBot.create(:user, :auditor)
+    ]
+
+    global_chip_count = Feedback::FeedbackChip.global_chips.count
+    total_chip_count = Feedback::FeedbackChip.count
+
+    users_can.each do |user|
+      add_auth_header_for(user: user)
+
+      to_test.each do |test|
+        changed_models = test[:changed_models]
+        context = test[:context]
+        expected_count = test[:expected_count]
+        total_expected = expected_count * changed_models.count
+        unchanged_models = test[:unchanged_models]
+        url = test[:url]
+
+        [changed_models, unchanged_models].flatten.each do |model|
+          assert_equal 0, model.feedback_chips.count
+        end
+
+        post url, file: upload_file_csv('test_files/feedback/unit_feedback_chip.csv')
+        assert_equal 201, last_response.status, "#{user.role.name} - #{url} - #{last_response.status}"
+
+        assert_equal total_expected, last_response_body['success'].count, "#{context}: #{last_response_body}"
+        assert_equal 0, last_response_body['ignored'].count, "#{context}: #{last_response_body}"
+        assert_equal num_rows_in_csv - total_expected, last_response_body['errors'].count, "#{context}: #{last_response_body['errors']}"
+
+        changed_models.each do |model|
+          assert_equal expected_count, model.feedback_chips.count, "Incorrect number of chips for #{context} - #{model.abbreviation} - #{last_response_body}"
+        end
+        unchanged_models.each do |unchanged_model|
+          assert_equal 0, unchanged_model.feedback_chips.count, "Changes to #{context} affected #{unchanged_model.abbreviation}"
+        end
+
+        assert_equal global_chip_count, Feedback::FeedbackChip.global_chips.count, "Changes to #{context} affected global chips"
+
+        changed_models.each do |model|
+          model.reload
+          model.feedback_chips.destroy_all
+        end
+
+        # Make sure we have deleted all new chips
+        assert_equal total_chip_count, Feedback::FeedbackChip.count, "Chips not destroyed in - #{context}"
+      end
+    end
+
+    users_cant.each do |user|
+      add_auth_header_for(user: user)
+      to_test.each do |test|
+        url = test[:url]
+        post url, file: upload_file_csv('test_files/feedback/unit_feedback_chip.csv')
+        assert_equal 403, last_response.status, "#{user.role.name} - #{url} - #{last_response.status}"
+      end
+    end
+  end
+
+  def test_upload_global_feedback_chips
+    # Create things that could be updated
+    glo = FactoryBot.create(:learning_outcome, abbreviation: 'GGG1', context_type: nil, context_id: nil)
+    unit = FactoryBot.create(:unit, code: 'UNIT1', student_count: 1, inactive_student_count: 0, unenrolled_student_count: 0, part_enrolled_student_count: 0, task_count: 0, outcome_count: 0)
+    ulo = FactoryBot.create(:learning_outcome, context_type: 'Unit', context_id: unit.id, abbreviation: 'ULO1')
+    td = FactoryBot.create(:task_definition, unit: unit, abbreviation: 'P1', outcome_count: 0)
+    tlo = FactoryBot.create(:learning_outcome, context_type: 'TaskDefinition', context_id: td.id, abbreviation: 'TLO1')
+
+    admin = FactoryBot.create(:user, :admin)
+    tutor = FactoryBot.create(:user, :tutor)
+
+    unit.employ_staff(tutor, Role.tutor)
+
+    num_rows_in_csv = 8
+
+    to_test = [
+      {
+        # Direct to ULO
+        url: "/api/global/feedback_chips/csv",
+        context: 'Direct - GLOs',
+        changed_models: [glo],
+        expected_count: 2,
+        unchanged_models: [ulo, tlo].flatten
+      }
+    ]
+
+    users_can = [
+      admin
+    ]
+    users_cant = [
+      unit.main_convenor_user,
+      FactoryBot.create(:user, :student),
+      FactoryBot.create(:user, :tutor),
+      tutor,
+      FactoryBot.create(:user, :convenor),
+      FactoryBot.create(:user, :auditor)
+    ]
+
+    global_chip_count = Feedback::FeedbackChip.global_chips.count
+    total_chip_count = Feedback::FeedbackChip.count
+
+    users_can.each do |user|
+      add_auth_header_for(user: user)
+
+      to_test.each do |test|
+        changed_models = test[:changed_models]
+        context = test[:context]
+        expected_count = test[:expected_count]
+        total_expected = expected_count * changed_models.count
+        unchanged_models = test[:unchanged_models]
+        url = test[:url]
+
+        [changed_models, unchanged_models].flatten.each do |model|
+          assert_equal 0, model.feedback_chips.count
+        end
+
+        post url, file: upload_file_csv('test_files/feedback/unit_feedback_chip.csv')
+        assert_equal 201, last_response.status, "#{user.role.name} - #{url} - #{last_response.status}"
+
+        assert_equal total_expected, last_response_body['success'].count, "#{context}: #{last_response_body}"
+        assert_equal 0, last_response_body['ignored'].count, "#{context}: #{last_response_body}"
+        assert_equal num_rows_in_csv - total_expected, last_response_body['errors'].count, "#{context}: #{last_response_body['errors']}"
+
+        changed_models.each do |model|
+          assert_equal expected_count, model.feedback_chips.count, "Incorrect number of chips for #{context} - #{model.abbreviation} - #{last_response_body}"
+        end
+        unchanged_models.each do |unchanged_model|
+          assert_equal 0, unchanged_model.feedback_chips.count, "Changes to #{context} affected #{unchanged_model.abbreviation}"
+        end
+
+        changed_models.each do |model|
+          model.reload
+          model.feedback_chips.destroy_all
+        end
+
+        # Make sure we have deleted all new chips
+        assert_equal total_chip_count, Feedback::FeedbackChip.count, "Chips not destroyed in - #{context}"
+      end
+    end
+  end
+
+  def test_download_feedback_chips
+    # Create two identical units with different codes
+    unit = FactoryBot.create(:unit, code: 'UNIT1', student_count: 1, inactive_student_count: 0, unenrolled_student_count: 0, part_enrolled_student_count: 0, task_count: 0, outcome_count: 0)
+    ulos = [
+      FactoryBot.create(:learning_outcome, context_type: 'Unit', context_id: unit.id, abbreviation: 'ULO1'),
+      FactoryBot.create(:learning_outcome, context_type: 'Unit', context_id: unit.id, abbreviation: 'ULO2')
+    ]
+    td = FactoryBot.create(:task_definition, unit: unit, abbreviation: 'P1', outcome_count: 0)
+
+    admin = FactoryBot.create(:user, :admin)
+    tutor = FactoryBot.create(:user, :tutor)
+
+    unit.employ_staff(tutor, Role.tutor)
+
+    to_test = [
+      {
+        # Direct to ULO
+        url: "/api/units/#{unit.id}/outcomes/#{ulos[0].id}/feedback_chips/csv",
+        context: 'Direct - ULO1'
+      },
+      {
+        # To Unit
+        url: "/api/units/#{unit.id}/feedback_chips/csv",
+        context: 'Unit - all'
+      },
+      {
+        # To Task
+        url: "/api/task_definitions/#{td.id}/feedback_chips/csv",
+        context: 'TaskDef - TLO1'
+      }
+    ]
+
+    users_can = [
+      unit.main_convenor_user,
+      admin
+    ]
+    users_cant = [
+      FactoryBot.create(:user, :student),
+      FactoryBot.create(:user, :tutor),
+      tutor,
+      FactoryBot.create(:user, :convenor),
+      FactoryBot.create(:user, :auditor)
+    ]
+
+    users_can.each do |user|
+      add_auth_header_for(user: user)
+
+      to_test.each do |test|
+        url = test[:url]
+        get url
+        assert_equal 200, last_response.status, "#{user.role.name} - #{url} - #{last_response.status}"
+      end
+    end
+
+    users_cant.each do |user|
+      add_auth_header_for(user: user)
+      to_test.each do |test|
+        url = test[:url]
+        post url, file: upload_file_csv('test_files/feedback/unit_feedback_chip.csv')
+        assert_equal 403, last_response.status, "#{user.role.name} - #{url} - #{last_response.status}"
+      end
+    end
+  end
+
+  def test_upload_learning_outcomes
+    # Create two identical units with different codes
+    unit = FactoryBot.create(:unit, code: 'COS10001', student_count: 1, inactive_student_count: 0, unenrolled_student_count: 0, part_enrolled_student_count: 0, task_count: 0, outcome_count: 0)
+
+    td1 = FactoryBot.create(:task_definition, unit: unit, abbreviation: '1.1P', outcome_count: 0)
+    td2 = FactoryBot.create(:task_definition, unit: unit, abbreviation: '1.2P', outcome_count: 0)
+    td3 = FactoryBot.create(:task_definition, unit: unit, abbreviation: '1.3P', outcome_count: 0)
+    td4 = FactoryBot.create(:task_definition, unit: unit, abbreviation: '1.4C', outcome_count: 0)
+
+    admin = FactoryBot.create(:user, :admin)
+    tutor = FactoryBot.create(:user, :tutor)
+
+    unit.employ_staff(tutor, Role.tutor)
+
+    # 4 Unit Learning Outcomes (ULOs)
+    # 8 Task Learning Outcomes (TLOs)
+
+    num_rows_in_csv = 12
+
+    to_test = [
+      {
+        # To Task Definition
+        # NOTE: We expect all rows to fail, because our Unit outcomes don't exist yet
+        # Therefore, out Task outcomes will fail to link to non-existent ULOs
+        url: "/api/task_definitions/#{td1.id}/outcomes/csv",
+        context: 'TaskDef - (No ULOs to link)',
+        expected_success_count: 0,
+        expected_error_count: num_rows_in_csv
+      },
+      {
+        # To Unit
+        url: "/api/units/#{unit.id}/outcomes/csv",
+        context: 'Direct - ULO',
+        expected_success_count: num_rows_in_csv, # Both Unit and Task outcomes should be created
+        expected_error_count: 0
+
+      },
+      {
+        # To Task Definition
+        url: "/api/task_definitions/#{td1.id}/outcomes/csv",
+        context: 'TaskDef 1.1P - TLO',
+        expected_success_count: 2, # 2 outcomes for 1.1P
+        expected_error_count: 10
+      },
+      {
+        # To Task Definition
+        url: "/api/task_definitions/#{td2.id}/outcomes/csv",
+        context: 'TaskDef 1.2P - TLO',
+        expected_success_count: 3, # 3 outcomes for 1.2P
+        expected_error_count: 9
+      },
+      {
+        # To Task Definition
+        url: "/api/task_definitions/#{td3.id}/outcomes/csv",
+        context: 'TaskDef 1.3P - TLO',
+        expected_success_count: 2, # 2 outcomes for 1.3P
+        expected_error_count: 10
+      },
+      {
+        # To Task Definition
+        url: "/api/task_definitions/#{td4.id}/outcomes/csv",
+        context: 'TaskDef 1.4C - TLO',
+        expected_success_count: 1, # 1 outcome for 1.4C
+        expected_error_count: 11
+      }
+    ]
+
+    users_can = [
+      unit.main_convenor_user,
+      admin
+    ]
+
+    users_cant = [
+      FactoryBot.create(:user, :student),
+      FactoryBot.create(:user, :tutor),
+      tutor,
+      FactoryBot.create(:user, :convenor),
+      FactoryBot.create(:user, :auditor)
+    ]
+
+    users_can.each do |user|
+      add_auth_header_for(user: user)
+
+      to_test.each do |test|
+        context = test[:context]
+        expected_success_count = test[:expected_success_count]
+        expected_error_count = test[:expected_error_count]
+        url = test[:url]
+
+        post url, file: upload_file_csv('test_files/COS10001-UnitAndTaskLearningOutcomes.csv')
+        assert_equal 201, last_response.status, "#{user.role.name} - #{url} - #{last_response.status}"
+        assert_equal expected_success_count, last_response_body['success'].count, "#{context}: #{last_response_body}"
+        assert_equal expected_error_count, last_response_body['errors'].count, "#{context}: #{last_response_body}"
+      end
+
+      # Ensure we remove out Unit learning outcomes before going to the next user
+      unit.learning_outcomes.destroy_all
+    end
+
+    users_cant.each do |user|
+      add_auth_header_for(user: user)
+      to_test.each do |test|
+        url = test[:url]
+        post url, file: upload_file_csv('test_files/COS10001-UnitAndTaskLearningOutcomes.csv')
+        assert_equal 403, last_response.status, "#{user.role.name} - #{url} - #{last_response.status}"
+      end
+    end
+  end
+
+  def test_download_csv_days_tasks_awaiting_feedback_per_tutorial
+    Sidekiq::Testing.inline! do
+      unit = Unit.first
+
+      # auth_token and username added to header
+      add_auth_header_for(user: User.first)
+
+      # perform the get
+      get "/api/csv/units/#{unit.id}/tasks_awaiting_feedback"
+
+      # Check for response
+      assert_equal 200, last_response.status
+
+      days_awaiting_feedback_csv = unit.days_awaiting_feedback_by_tutorial_csv
+
+      assert_not_nil last_response_body['result']
+
+      # Check for CSV data in completed sidekiq job
+      assert_equal days_awaiting_feedback_csv, last_response_body['result']
+      Sidekiq::Testing.fake!
+    end
+  end
+
+  def test_download_csv_times_tasks_assessed
+    Sidekiq::Testing.inline! do
+      unit = Unit.first
+
+      # auth_token and username added to header
+      add_auth_header_for(user: User.first)
+
+      # perform the get
+      get "/api/csv/units/#{unit.id}/task_assessment_counts"
+
+      # Check for response
+      assert_equal 200, last_response.status, last_response_body['error']
+
+      times_tasks_assessed = unit.times_tasks_have_been_assessed
+
+      assert_not_nil last_response_body['result']
+
+      # Check for CSV data in completed sidekiq job
+      assert_equal times_tasks_assessed, last_response_body['result']
+
+      Sidekiq::Testing.fake!
+    end
+  end
+
+  def test_import_csv_student_grades
+    Sidekiq::Testing.inline! do
+      unit = FactoryBot.create(:unit, code: 'COS10001', with_students: false, stream_count: 0)
+      convenor = FactoryBot.create(:user, :convenor)
+      unit.employ_staff(convenor, Role.convenor)
+
+      student1 = FactoryBot.create(:user, :student)
+      student2 = FactoryBot.create(:user, :student)
+      student3 = FactoryBot.create(:user, :student)
+      student4 = FactoryBot.create(:user, :student)
+      student5 = FactoryBot.create(:user, :student)
+
+      student1.update!(username: 'student_1_test')
+      student2.update!(username: 'student_2_test')
+      student3.update!(username: 'student_3_test')
+      student4.update!(username: 'student_4_test')
+      student5.update!(username: 'student_5_test')
+
+      project1 = unit.enrol_student(student1, Campus.first)
+      project2 = unit.enrol_student(student2, Campus.first)
+      project3 = unit.enrol_student(student3, Campus.first)
+      project4 = unit.enrol_student(student4, Campus.first)
+      project5 = unit.enrol_student(student5, Campus.first)
+
+      add_auth_header_for(user: convenor)
+
+      data_to_post = {
+        file: upload_file_csv('test_files/csv_test_files/COS10001-Grades.csv')
+      }
+
+      post "/api/units/#{unit.id}/grades/csv", data_to_post
+
+      assert_equal 201, last_response.status, last_response_body['error']
+
+      assert_not_nil last_response_body['result']
+
+      result = JSON.parse(last_response_body['result'])
+      assert_equal 3, result['success'].size
+      assert_equal 2, result['ignored'].size
+      assert_equal 1, result['errors'].size
+
+      assert_equal 'Unit code is different', result['ignored'][1]['message']
+
+      project1.reload
+      project2.reload
+      project3.reload
+      project4.reload
+      project5.reload
+
+      assert_equal 63, project1.grade
+      assert_equal convenor, project1.assessor
+      assert_equal "test 1", project1.grade_rationale
+
+      assert_equal 0, project2.grade # No change, and attempted to save for a different unit
+      assert_nil project2.assessor
+
+      assert_equal 97, project3.grade
+      assert_equal convenor, project3.assessor
+      assert_equal "test 2", project3.grade_rationale
+
+      assert_equal 75, project4.grade
+      assert_equal convenor, project4.assessor
+      assert_equal "test 3", project4.grade_rationale
+
+      assert_equal 0, project5.grade # Student does not exist
+      assert_nil project5.assessor
+
+      Sidekiq::Testing.fake!
+    end
   end
 end

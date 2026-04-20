@@ -1,4 +1,17 @@
-<% @latex_config={ :recipe => [ {:command => "lualatex",:runs => 2} ], :supporting => Rails.root.join('app', 'views', 'layouts', 'jupynotex.py') } %>
+<%
+@latex_config = {
+  :supporting => [
+    Rails.root.join('app', 'views', 'layouts', 'jupynotex.py'),
+    Rails.root.join('lib', 'shell', 'latex_run.sh')
+  ],
+  :recipe => [
+    { :command => './latex_run.sh', :runs => 1 }
+  ],
+  :preservework => false,
+  :workdir => -> { @work_id }
+}
+%>
+
 \DocumentMetadata{uncompress}
 \documentclass[11pt,a4paper]{article}
 \usepackage[T1]{fontenc}
@@ -27,18 +40,24 @@
 \usepackage{amssymb}
 \usepackage{colortbl}
 \usepackage{lastpage}
+\usepackage{multirow}
 \usepackage[colorlinks]{hyperref}
+\usepackage{longtable}
 \hypersetup{colorlinks,
   linkcolor=black,
   filecolor=black,
   urlcolor=blue,
   citecolor=black}
-
+<%
+if @include_pax
+%>
 \usepackage{newpax}
 \newpaxsetup{usefileattributes=true, addannots=true}
 \directlua{require("newpax")}
 <%= yield :preamble_newpax %>
-
+<%
+end
+%>
 \epstopdfDeclareGraphicsRule{.tif}{png}{.png}{convert #1 \OutputFile}
 \AppendGraphicsExtensions{.tif}
 \epstopdfDeclareGraphicsRule{.tiff}{png}{.png}{convert #1 \OutputFile}
@@ -52,6 +71,7 @@
 
 \graphicspath{ {<%= @image_path %>/} }
 
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
 
 \fancypagestyle{title}{%
     \renewcommand{\headrulewidth}{0pt}
@@ -59,7 +79,7 @@
     \fancyhead[R]{}
     \fancyfoot[C]
     {
-        \footnotesize Produced by Doubtfire
+        \footnotesize Produced by <%= @doubtfire_product_name %>
     }
     \fancyfoot[R]{}
     \fancyfoot[L]{}
@@ -89,6 +109,7 @@
 \definecolor{demo}{rgb}{0.259, 0.545, 0.792}
 \definecolor{fail}{rgb}{0.851, 0.216, 0.075}
 \definecolor{timeexceeded}{rgb}{0.851, 0.216, 0.075}
+\definecolor{assessinportfolio}{rgb}{0.568, 0.721, 0.568}
 
 \begin{document}
 

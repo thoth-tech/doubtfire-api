@@ -65,11 +65,11 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     td = unit.task_definitions.first
 
     assert_json_matches_model td, last_response_body, all_task_def_keys
+    assert_equal [{ "key" => "file0", "name" => "Shape Class", "type" => "document" }], td.upload_requirements
     assert_equal unit.tutorial_streams.first.id, td.tutorial_stream_id
     assert_equal 4, td.weighting
     assert_equal (24 * 60), td.estimated_time_minutes
     assert_equal 0, last_response_body['estimated_hours']
-
 
     data_to_put = {
       task_def: {
@@ -102,6 +102,7 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
 
     assert_json_matches_model td, last_response_body, all_task_def_keys
     assert_equal unit.tutorial_streams.last.id, td.tutorial_stream_id
+    assert_equal [{ "key" => "file0", "name" => "Other Class", "type" => "document" }], td.upload_requirements
     assert_equal 2, td.weighting
     assert_equal 3060, td.estimated_time_minutes
     assert_equal 3, last_response_body['estimated_hours']
@@ -225,6 +226,25 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     assert_requested delete_stub, times: 1
   end
 
+  def test_post_scorm
+    test_unit = Unit.first
+    test_task_definition = TaskDefinition.first
+
+    data_to_post = {
+      file: upload_file('test_files/numbas.zip', 'application/zip')
+    }
+
+    # Add auth_token and username to header
+    add_auth_header_for(user: Unit.first.main_convenor_user)
+
+    post "/api/units/#{test_unit.id}/task_definitions/#{test_task_definition.id}/scorm_data", data_to_post
+
+    assert_equal 201, last_response.status
+    assert test_task_definition.task_scorm_data
+
+    assert_equal File.size(data_to_post[:file]), File.size(TaskDefinition.first.task_scorm_data)
+  end
+
   def test_submission_creates_folders
     unit = Unit.first
     td = TaskDefinition.new({
@@ -315,7 +335,7 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     assert_equal 201, last_response.status
 
     task = project.task_for_task_definition(td)
-    assert task.convert_submission_to_pdf
+    assert task.convert_submission_to_pdf(log_to_stdout: false)
     path = task.zip_file_path_for_done_task
     assert path
     assert File.exist? path
@@ -867,4 +887,108 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     task_def.reload
     assert_equal upload_reqs, task_def.upload_requirements
   end
- end
+
+  def test_task_prerequisites
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
+    upload_reqs = [{ 'key' => 'file0', 'name' => 'PDF Report', 'type' => 'document' }]
+    task_def1 = FactoryBot.create(:task_definition, unit: unit, upload_requirements: upload_reqs)
+    task_def2 = FactoryBot.create(:task_definition, unit: unit, upload_requirements: upload_reqs)
+
+    task_def1.update(target_grade: 0, target_date: Time.zone.today + 1.week)
+    task_def2.update(target_grade: 0, target_date: Time.zone.today + 1.week)
+
+    admin = FactoryBot.create(:user, :admin)
+    convenor = FactoryBot.create(:user, :convenor)
+    tutor = FactoryBot.create(:user, :tutor)
+    student = unit.students.first.user
+
+    unit.employ_staff(convenor, Role.convenor)
+    unit.employ_staff(tutor, Role.tutor)
+
+    users_can_create = [
+      admin,
+      convenor
+    ]
+
+    users_cant_create = [
+      student,
+      tutor
+    ]
+
+    users_can_create.each do |user|
+      add_auth_header_for(user: user)
+      data_to_post = {
+        prerequisite_id: task_def2.id
+      }
+      post "/api/units/#{unit.id}/task_definitions/#{task_def1.id}/prerequisites", data_to_post
+      assert_equal 201, last_response.status, last_response_body
+      assert_equal task_def1.id, last_response_body['task_definition_id']
+      assert_equal task_def2.id, last_response_body['prerequisite_id']
+      # We didn't pass in a task status, so we expect it to default to complete
+      assert_equal 'complete', last_response_body['task_status']
+
+      delete "/api/units/#{unit.id}/task_definitions/#{task_def1.id}/prerequisites/#{task_def2.id}"
+      assert_equal 200, last_response.status, last_response_body
+    end
+
+    users_cant_create.each do |user|
+      add_auth_header_for(user: user)
+      data_to_post = {
+        prerequisite_id: task_def2.id
+      }
+      post "/api/units/#{unit.id}/task_definitions/#{task_def1.id}/prerequisites", data_to_post
+      assert_equal 403, last_response.status, last_response_body
+
+      delete "/api/units/#{unit.id}/task_definitions/#{task_def1.id}/prerequisites/#{task_def2.id}"
+      assert_equal 403, last_response.status, last_response_body
+    end
+  end
+
+  def test_download_student_submission_jobs
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 2)
+
+    task_def1 = unit.task_definitions.first
+
+    admin = FactoryBot.create(:user, :admin)
+    convenor = FactoryBot.create(:user, :convenor)
+    tutor = FactoryBot.create(:user, :tutor)
+    student = unit.students.first.user
+
+    unit.employ_staff(convenor, Role.convenor)
+    unit.employ_staff(tutor, Role.tutor)
+
+    users_can = [
+      admin,
+      convenor,
+      tutor
+    ]
+
+    users_cant = [
+      student
+    ]
+
+    Sidekiq::Testing.inline! do
+      users_can.each do |user|
+        add_auth_header_for(user: user)
+
+        get "/api/submission/units/#{unit.id}/task_definitions/#{task_def1.id}/download_submissions/zip"
+        assert_equal 200, last_response.status, last_response_body
+        assert_not_nil last_response_body['id']
+
+        get "/api/submission/units/#{unit.id}/task_definitions/#{task_def1.id}/student_pdfs/zip"
+        assert_equal 200, last_response.status, last_response_body
+        assert_not_nil last_response_body['id']
+      end
+
+      users_cant.each do |user|
+        add_auth_header_for(user: user)
+
+        get "/api/submission/units/#{unit.id}/task_definitions/#{task_def1.id}/student_pdfs/zip"
+        assert_equal 403, last_response.status, "#{user.role.name} should not have permission to download student pdfs"
+
+        get "/api/submission/units/#{unit.id}/task_definitions/#{task_def1.id}/student_pdfs/zip"
+        assert_equal 403, last_response.status, "#{user.role.name} should not have permission to download student pdfs"
+      end
+    end
+  end
+end

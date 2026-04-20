@@ -3,6 +3,7 @@ require 'grape'
 class TaskCommentsApi < Grape::API
   helpers AuthenticationHelpers
   helpers AuthorisationHelpers
+  helpers FileStreamHelper
 
   before do
     authenticated?
@@ -26,24 +27,31 @@ class TaskCommentsApi < Grape::API
     attached_file = params[:attachment]
     reply_to_id = params[:reply_to_id]
 
+    task = project.task_for_task_definition(task_definition)
+    if task.active_overflow_task_claim
+      unit_role = project.unit.unit_role_for(current_user)
+      if unit_role && unit_role.id != task.overflow_task_claim.claimed_by_unit_role_id
+        error!({ error: 'This task is currently being reviewed by another tutor. Please try again later.' }, 403)
+      end
+    end
+
     if attached_file.present?
-      error!({ error: "Attachment is empty." }) unless File.size?(attached_file["tempfile"].path).present?
+      error!({ error: "Attachment is empty." }) if File.size?(attached_file["tempfile"].path).blank?
       error!({ error: "Attachment exceeds the maximum attachment size of 30MB." }) unless File.size?(attached_file["tempfile"].path) < 30_000_000
     end
 
-    task = project.task_for_task_definition(task_definition)
     type_string = content_type.to_s
 
     if reply_to_id.present?
       originalTaskComment = TaskComment.find(reply_to_id)
       error!(error: 'You do not have permission to read the replied comment') unless authorise?(current_user, originalTaskComment.project, :get) || (task.group_task? && task.group.role_for(current_user) != nil)
-      error!(error: 'Original comment is not in this task.') unless task.all_comments.find(reply_to_id).present?
+      error!(error: 'Original comment is not in this task.') if task.all_comments.find(reply_to_id).blank?
     end
 
     logger.info("#{current_user.username} - added comment for task #{task.id} (#{task_definition.abbreviation})")
 
-    if attached_file.nil? || attached_file.empty?
-      error!({ error: 'Comment text is empty, unable to add new comment' }, 403) unless text_comment.present?
+    if attached_file.blank?
+      error!({ error: 'Comment text is empty, unable to add new comment' }, 403) if text_comment.blank?
       result = task.add_text_comment(current_user, text_comment, reply_to_id)
     else
       file_result = FileHelper.accept_file(attached_file, 'comment attachment - TaskComment', 'comment_attachment')
@@ -57,6 +65,15 @@ class TaskCommentsApi < Grape::API
     if result.nil?
       error!({ error: 'No comment added. Comment duplicates last comment, so ignored.' }, 403)
     else
+
+      SessionTracker.record_assessment_activity(
+        action: 'add-comment',
+        user: current_user,
+        project: project,
+        ip_address: request.ip,
+        task: task
+      )
+
       present result.serialize(current_user), with: Grape::Presenters::Presenter
     end
   end
@@ -90,36 +107,17 @@ class TaskCommentsApi < Grape::API
       # mark as attachment
       if params[:as_attachment]
         header['Content-Disposition'] = "attachment; filename=#{comment.attachment_file_name}"
-        header['Access-Control-Expose-Headers'] = 'Content-Disposition'
       end
 
-      # Work out what part to return
-      file_size = File.size(comment.attachment_path)
-      begin_point = 0
-      end_point = file_size - 1
+      SessionTracker.record_assessment_activity(
+        action: 'get-comment-attachment',
+        user: current_user,
+        project: project,
+        ip_address: request.ip,
+        task: task
+      )
 
-      # Was it asked for just a part of the file?
-      if request.headers['Range']
-        # indicate partial content
-        status 206
-
-        # extract part desired from the content
-        if request.headers['Range'] =~ /bytes\=(\d+)\-(\d*)/
-          begin_point = Regexp.last_match(1).to_i
-          end_point = Regexp.last_match(2).to_i if Regexp.last_match(2).present?
-        end
-
-        end_point = file_size - 1 unless end_point < file_size - 1
-      end
-
-      # Return the requested content
-      content_length = end_point - begin_point + 1
-      header['Content-Range'] = "bytes #{begin_point}-#{end_point}/#{file_size}"
-      header['Content-Length'] = content_length.to_s
-      header['Accept-Ranges'] = 'bytes'
-
-      # Read the binary data and return
-      File.binread(comment.attachment_path, content_length, begin_point)
+      stream_file comment.attachment_path
     end
   end
 
@@ -146,6 +144,15 @@ class TaskCommentsApi < Grape::API
     else
       result = []
     end
+
+    SessionTracker.record_assessment_activity(
+      action: 'get-comments',
+      user: current_user,
+      project: project,
+      ip_address: request.ip,
+      task: task
+    )
+
     present result, with: Grape::Presenters::Presenter
   end
 
@@ -173,6 +180,14 @@ class TaskCommentsApi < Grape::API
 
     task_comment.destroy
 
+    SessionTracker.record_assessment_activity(
+      action: 'delete-comment',
+      user: current_user,
+      project: project,
+      ip_address: request.ip,
+      task: task
+    )
+
     present false
   end
 
@@ -189,6 +204,14 @@ class TaskCommentsApi < Grape::API
 
     task_comment = task.comments.find(params[:id])
     task_comment.mark_as_unread(current_user)
+
+    SessionTracker.record_assessment_activity(
+      action: 'mark-comment-unread',
+      user: current_user,
+      project: project,
+      ip_address: request.ip,
+      task: task
+    )
 
     present task_comment.serialize(current_user), with: Grape::Presenters::Presenter
   end

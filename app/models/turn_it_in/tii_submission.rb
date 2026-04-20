@@ -32,7 +32,7 @@ class TiiSubmission < ApplicationRecord
     submitted_by_user
   end
 
-  enum status: {
+  enum :status, {
     created: 0,
     has_id: 1,
     uploaded: 2,
@@ -66,6 +66,13 @@ class TiiSubmission < ApplicationRecord
         viewer_user_id: user.id
       }
     ).perform
+  end
+
+  # Should we flag this task for high similarity?
+  #
+  # @return [Boolean] true if the task should be flagged, false otherwise
+  def should_flag?
+    overall_match_percentage > task.tii_match_pct(idx)
   end
 
   private

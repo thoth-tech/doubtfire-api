@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require File.expand_path('../boot', __FILE__)
 require 'rails/all'
 require 'csv'
@@ -16,8 +18,16 @@ module Doubtfire
   class Application < Rails::Application
     config.load_defaults 7.0
 
+    # Remove Action Mailbox and Active Storage routes - not used
+    initializer(:remove_action_mailbox_and_activestorage_routes, after: :add_routing_paths) do |app|
+      app.routes_reloader.paths.delete_if { |path| path =~ /activestorage/ }
+      app.routes_reloader.paths.delete_if { |path| path =~ /actionmailbox/ }
+    end
+
     # Load .env variables
     Dotenv::Rails.load
+
+    config.silence_healthcheck_path = "/health"
 
     # ==> Authentication Method
     # Authentication method default is database, but possible settings
@@ -29,7 +39,49 @@ module Doubtfire
     # File server location for storing student's work. Defaults to `student_work`
     # directory under root but is overridden using DF_STUDENT_WORK_DIR environment
     # variable.
-    config.student_work_dir = ENV['DF_STUDENT_WORK_DIR'] || "#{Rails.root}/student_work"
+    config.student_work_dir = ENV['DF_STUDENT_WORK_DIR'] || Rails.root.join('student_work').to_s
+
+    # ==> Archive directory
+    # File server location for storing archived student work. Defaults to a subfolder of student work
+    # Set using DF_ARCHIVE_DIR environment variable.
+    config.archive_dir = ENV.fetch('DF_ARCHIVE_DIR', "#{config.student_work_dir}/archive")
+
+    # Allows for the archiving of units to be automated
+    config.archive_units = ENV['DF_ARCHIVE_UNITS'].present? && (ENV['DF_ARCHIVE_UNITS'].to_s.downcase == "true" || ENV['DF_ARCHIVE_UNITS'].to_i == 1)
+
+    # Period for which to keep units
+    config.unit_archive_after_period = ENV.fetch('DF_UNIT_ARCHIVE_PERIOD', 2).to_f * 1.year
+
+    # Limit number of pdf generators to run at once
+    config.pdfgen_max_processes = ENV['DF_MAX_PDF_GEN_PROCESSES'] || 2
+
+    # Date range for auditors to view
+    config.auditor_unit_access_years = ENV.fetch('DF_AUDITOR_UNIT_ACCESS_YEARS', 2).to_f * 1.year
+
+    config.student_import_weeks_before = ENV.fetch('DF_IMPORT_STUDENTS_WEEKS_BEFPRE', 1).to_f * 1.week
+
+    def self.fetch_boolean_env(name)
+      %w'true 1'.include?(ENV.fetch(name, 'false').downcase)
+    end
+
+    # ==> Log to stdout
+    config.log_to_stdout = Application.fetch_boolean_env('DF_LOG_TO_STDOUT')
+
+    # Have rails report errors and log messages to the following email address where present
+    config.email_errors_to = ENV.fetch('DF_EMAIL_ERRORS_TO', nil)
+
+    # ==> JPLAG report directory
+    # File server location for storing JPLAG reports. Defaults to `jplag/results`
+    # directory under root but is overridden using DF_JPLAG_REPORT_DIR environment
+    # variable.
+    config.jplag_report_dir = ENV['DF_JPLAG_REPORT_DIR'] || Rails.root.join('jplag/results').to_s
+    config.jplag_min_tokens = ENV.fetch('DF_JPLAG_MIN_TOKENS', -1)
+    config.jplag_skip_cluster_check = ENV['DF_JPLAG_SKIP_CLUSTER_CHECK'].present? && (ENV['DF_JPLAG_SKIP_CLUSTER_CHECK'].to_s.downcase == "true" || ENV['DF_JPLAG_SKIP_CLUSTER_CHECK'].to_i == 1)
+
+    # ==> File size limits
+    # Sets the global file size limit per upload requirement
+    # Defaults to 10MB (10,000,000 bytes)
+    config.max_file_size = ENV.fetch('DF_MAX_FILE_SIZE', 10_000_000)
 
     # ==> Load credentials from env
     credentials.secret_key_base = ENV.fetch('DF_SECRET_KEY_BASE', Rails.env.production? ? nil : '9e010ee2f52af762916406fd2ac488c5694a6cc784777136e657511f8bbc7a73f96d59c0a9a778a0d7cf6406f8ecbf77efe4701dfbd63d8248fc7cc7f32dea97')
@@ -38,33 +90,45 @@ module Doubtfire
     credentials.secret_key_aaf = ENV.fetch('DF_SECRET_KEY_AAF', Rails.env.production? ? nil : 'secretsecret12345')
     credentials.secret_key_moss = ENV.fetch('DF_SECRET_KEY_MOSS', nil)
 
-    # Limit number of pdf generators to run at once
-    config.pdfgen_max_processes = ENV['DF_MAX_PDF_GEN_PROCESSES'] || 2
+    # ==> LTI settings
+    # If enabled, mounts the LTI routes and enables LTI authentication.
+    config.lti_enabled = ENV.fetch('LTI_ENABLED', false).to_s.downcase == "true"
+    # Shared secret between Ruby on Rails API and the LTI.js API
+    # LTI.js will send signed JWT tokens using this secret
+    config.lti_api_secret = ENV.fetch('LTI_SHARED_API_SECRET', nil)
 
-    # Date range for auditors to view
-    config.auditor_unit_access_years = ENV.fetch('DF_AUDITOR_UNIT_ACCESS_YEARS', 2).years
+    # ==> Moderation settings
+    config.moderation_score_factor = Float(ENV.fetch('MODERATION_SCORE_FACTOR', 1.0))
 
     # ==> Institution settings
     # Institution YAML and ENV (override) config load
-    config.institution = YAML.load_file("#{Rails.root}/config/institution.yml").with_indifferent_access
+    config.institution = YAML.load_file(Rails.root.join('config/institution.yml').to_s).with_indifferent_access
     config.institution[:name] = ENV['DF_INSTITUTION_NAME'] if ENV['DF_INSTITUTION_NAME']
     config.institution[:email_domain] = ENV['DF_INSTITUTION_EMAIL_DOMAIN'] if ENV['DF_INSTITUTION_EMAIL_DOMAIN']
     config.institution[:host] = ENV['DF_INSTITUTION_HOST'] if ENV['DF_INSTITUTION_HOST']
+    config.institution[:cookie_domain] = ENV.fetch('DF_COOKIE_DOMAIN', URI.parse(Doubtfire::Application.config.institution[:host]).host)
     config.institution[:product_name] = ENV['DF_INSTITUTION_PRODUCT_NAME'] if ENV['DF_INSTITUTION_PRODUCT_NAME']
+
+    config.institution[:has_logo] = (ENV['DF_INSTITUTION_HAS_LOGO'].to_s.downcase == "true" || ENV['DF_INSTITUTION_HAS_LOGO'].to_i == 1) if ENV['DF_INSTITUTION_HAS_LOGO']
+    config.institution[:logo_url] = ENV['DF_INSTITUTION_LOGO_URL'] if ENV['DF_INSTITUTION_LOGO_URL']
+    config.institution[:logo_link_url] = ENV['DF_INSTITUTION_LOGO_LINK_URL'] if ENV['DF_INSTITUTION_LOGO_LINK_URL']
+
     config.institution[:privacy] = ENV['DF_INSTITUTION_PRIVACY'] if ENV['DF_INSTITUTION_PRIVACY']
     config.institution[:plagiarism] = ENV['DF_INSTITUTION_PLAGIARISM'] if ENV['DF_INSTITUTION_PLAGIARISM']
     # Institution host becomes localhost in development
-    config.institution[:host] ||= 'http://localhost:3000' if Rails.env.development?
+    config.institution[:host] ||= 'http://localhost:4200' if Rails.env.development?
     config.institution[:settings] = ENV['DF_INSTITUTION_SETTINGS_RB'] if ENV['DF_INSTITUTION_SETTINGS_RB']
     config.institution[:ffmpeg] = ENV['DF_FFMPEG_PATH'] || 'ffmpeg'
 
-    require "#{Rails.root}/config/#{config.institution[:settings]}" unless config.institution[:settings].nil?
+    require Rails.root.join("config/#{config.institution[:settings]}").to_s unless config.institution[:settings].nil?
 
     # ==> SAML2.0 authentication
     if config.auth_method == :saml
       config.saml = HashWithIndifferentAccess.new
-      # URL of the XML SAML Metadata (if available).
+      # URL and file path of the XML SAML Metadata (if available).
       config.saml[:SAML_metadata_url] = ENV.fetch('DF_SAML_METADATA_URL', nil)
+      config.saml[:SAML_metadata_file_path] = ENV.fetch('DF_SAML_METADATA_FILE_PATH', nil)
+
       # URL to return the SAML response to (e.g., 'https://doubtfire.edu/api/auth/jwt'
       config.saml[:assertion_consumer_service_url] = ENV.fetch('DF_SAML_CONSUMER_SERVICE_URL', nil)
       # URL of the registered application (e.g., https://doubtfire.unifoo.edu.au)
@@ -90,17 +154,18 @@ module Doubtfire
          config.saml[:entity_id].nil? ||
          config.saml[:idp_sso_target_url].nil?
         raise "Invalid values specified to saml, check the following environment variables: \n  " \
-              "key                          => variable set?\n  " \
-              "DF_SAML_CONSUMER_SERVICE_URL            => #{!ENV['DF_SAML_CONSUMER_SERVICE_URL'].nil?}\n  " \
+              "key                           => variable set?\n  " \
+              "DF_SAML_CONSUMER_SERVICE_URL  => #{!ENV['DF_SAML_CONSUMER_SERVICE_URL'].nil?}\n  " \
               "DF_SAML_SP_ENTITY_ID          => #{!ENV['DF_SAML_SP_ENTITY_ID'].nil?}\n  " \
-              "DF_SAML_IDP_SIGNOUT_URL         => #{!ENV['DF_SAML_IDP_SIGNOUT_URL'].nil?}\n  " \
-              "DF_SAML_IDP_TARGET_URL          => #{!ENV['DF_SAML_IDP_TARGET_URL'].nil?}\n"
+              "DF_SAML_IDP_SIGNOUT_URL       => #{!ENV['DF_SAML_IDP_SIGNOUT_URL'].nil?}\n  " \
+              "DF_SAML_IDP_TARGET_URL        => #{!ENV['DF_SAML_IDP_TARGET_URL'].nil?}\n"
       end
 
       # If there's no XML url, we need the cert
       if config.saml[:SAML_metadata_url].nil? &&
+         config.saml[:SAML_metadata_file_path].nil? &&
          config.saml[:idp_sso_cert].nil?
-        raise "Missing IDP certificate for SAML config: \n"
+        raise "Missing IDP certificate for SAML config: #{config.saml.inspect}"
       end
     end
 
@@ -136,7 +201,7 @@ module Doubtfire
               "DF_AAF_CALLBACK_URL          => #{!ENV['DF_AAF_CALLBACK_URL'].nil?}\n  " \
               "DF_AAF_IDENTITY_PROVIDER_URL => #{!ENV['DF_AAF_IDENTITY_PROVIDER_URL'].nil?}\n  " \
               "DF_AAF_UNIQUE_URL            => #{!ENV['DF_AAF_UNIQUE_URL'].nil?}\n  " \
-              "DF_SECRET_KEY_AAF            => #{!secrets.secret_key_aaf.nil?}\n"
+              "DF_SECRET_KEY_AAF            => #{!credentials.secret_key_aaf.nil?}\n"
       end
     end
     # Check secrets set for DF_SECRET_KEY_BASE, DF_SECRET_KEY_ATTR, DF_SECRET_KEY_DEVISE
@@ -166,15 +231,17 @@ module Doubtfire
 
     config.autoload_paths <<
       Rails.root.join('app') <<
-      Rails.root.join('app', 'models', 'comments') <<
-      Rails.root.join('app', 'models', 'turn_it_in') <<
-      Rails.root.join('app', 'models', 'similarity')
+      Rails.root.join('app/models/comments') <<
+      Rails.root.join('app/models/turn_it_in') <<
+      Rails.root.join('app/models/similarity') <<
+      Rails.root.join('app/models/d2l')
 
     config.eager_load_paths <<
       Rails.root.join('app') <<
-      Rails.root.join('app', 'models', 'comments') <<
-      Rails.root.join('app', 'models', 'turn_it_in') <<
-      Rails.root.join('app', 'models', 'similarity')
+      Rails.root.join('app/models/comments') <<
+      Rails.root.join('app/models/turn_it_in') <<
+      Rails.root.join('app/models/similarity') <<
+      Rails.root.join('app/models/d2l')
 
     # CORS config
     config.middleware.insert_before Warden::Manager, Rack::Cors do
@@ -183,6 +250,9 @@ module Doubtfire
         resource '*', headers: :any, methods: %i(get post put delete options)
       end
     end
+
+    config.active_support.to_time_preserves_timezone = :zone
+
     # Generators for test framework
     if Rails.env.test?
       config.generators do |g|
@@ -207,39 +277,50 @@ module Doubtfire
         DOCKER_USER: ENV.fetch('DOCKER_USER', nil)
       }
 
-      publisher_config = {
-        RABBITMQ_HOSTNAME: ENV.fetch('RABBITMQ_HOSTNAME', nil),
-        RABBITMQ_USERNAME: ENV.fetch('RABBITMQ_USERNAME', nil),
-        RABBITMQ_PASSWORD: ENV.fetch('RABBITMQ_PASSWORD', nil),
-        EXCHANGE_NAME: 'ontrack',
-        DURABLE_QUEUE_NAME: 'q.tasks',
-        # Publisher specific key -- all publishers will post task submissions with this key
-        ROUTING_KEY: 'task.submission'
-      }
+      # Path to a physical directory on the host used for mounting overseer task work directories.
+      #
+      # Example (macOS development):
+      #   OVERSEER_WORKDIR_VOLUME_MOUNT=/Users/<name>/Dev/doubtfire-deploy/doubtfire-api/tmp/overseer
+      #
+      # This must point to a real location on your disk or server.
+      # In production, mount a persistent host directory to the container, e.g.:
+      #   /var/lib/doubtfire/overseer:/app/tmp/overseer
+      # Then set:
+      #   OVERSEER_WORKDIR_VOLUME_MOUNT=/var/lib/doubtfire/overseer
+      config.overseer_workdir_volume_mount = ENV.fetch('OVERSEER_WORKDIR_VOLUME_MOUNT', nil)
 
-      subscriber_config = {
-        RABBITMQ_HOSTNAME: ENV.fetch('RABBITMQ_HOSTNAME', nil),
-        RABBITMQ_USERNAME: ENV.fetch('RABBITMQ_USERNAME', nil),
-        RABBITMQ_PASSWORD: ENV.fetch('RABBITMQ_PASSWORD', nil),
-        EXCHANGE_NAME: 'ontrack',
-        DURABLE_QUEUE_NAME: 'q.overseer',
-        # No need to define BINDING_KEYS for now!
-        # In future, OnTrack will listen to
-        # topics related to PDF generation too.
-        # That is when we should have BINDING_KEYS defined.
-        # BINDING_KEYS: ENV['BINDING_KEYS'],
+      # Optional fallback for when a physical mount cannot be used.
+      #
+      # You can define a shared container in docker-compose, e.g.:
+      #
+      # overseer-volumes:
+      #   container_name: doubtfire-overseer
+      #   image: alpine
+      #   command: sleep infinity
+      #   volumes:
+      #     - ../doubtfire-api/tmp/overseer:/overseer/work-dir
+      #
+      # Warning: this exposes the entire overseer directory to all overseer containers.
+      # A malicious script could potentially delete or corrupt other running overseer jobs.
+      #
+      # This setup is the default for development to avoid requiring a mount,
+      # but it is strongly recommended to leave this nil and use OVERSEER_WORKDIR_VOLUME_MOUNT instead.
+      config.overseer_fallback_volume_container = ENV.fetch('OVERSEER_FALLBACK_VOLUME_CONTAINER', nil)
 
-        # This is enough for now:
-        DEFAULT_BINDING_KEY: '*.result'
-      }
-
-      if config.docker_config[:DOCKER_TOKEN] && config.docker_config[:DOCKER_PROXY_URL]
-        # TODO: move to sidekiq
-        `echo \"${DOCKER_TOKEN}\" | docker login --username ${DOCKER_USER} --password-stdin ${DOCKER_PROXY_URL} >> /dev/null 2>&1`
+      if config.overseer_workdir_volume_mount.nil? && config.overseer_fallback_volume_container.nil?
+        raise 'Overseer configuration error: you must set either OVERSEER_WORKDIR_VOLUME_MOUNT or OVERSEER_FALLBACK_VOLUME_CONTAINER.'
       end
 
-      config.sm_instance = ServicesManager.instance
-      config.sm_instance.register_client(:ontrack, publisher_config, subscriber_config)
+      # Enables the endpoint to return how much available storage is left on the device the API is hosted on (often docker volume storage)
+      # Used to ensure enough space is available to pull new images for Overseer
+      config.disk_space_endpoint_enabled = %w[true 1 yes].include?(ENV['DISK_SPACE_ENDPOINT_ENABLED']&.downcase)
+
+      config.after_initialize do
+        if config.docker_config[:DOCKER_TOKEN] && config.docker_config[:DOCKER_PROXY_URL]
+          LoginDockerJob.perform_async
+        end
+      end
+
     end
   end
 end

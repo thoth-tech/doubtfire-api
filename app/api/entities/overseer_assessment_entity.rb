@@ -7,5 +7,10 @@ module Entities
     expose :status
     expose :created_at
     expose :updated_at
+
+    expose :total_steps
+    expose :passed_steps
+
+    expose :has_submission_files?, as: :has_submission_files
   end
 end

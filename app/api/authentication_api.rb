@@ -11,29 +11,29 @@ require 'entities/user_entity'
 class AuthenticationApi < Grape::API
   helpers LogHelper
   helpers AuthenticationHelpers
+  helpers AuthorisationHelpers
+  helpers LtiHelper
 
   #
-  # Sign in - only mounted if AAF auth is NOT used
+  # Sign in - only mounted if AAF and SAML auth is NOT used (database auth)
   #
   if !AuthenticationHelpers.aaf_auth? && !AuthenticationHelpers.saml_auth?
     desc 'Sign in'
     params do
       requires :username, type: String, desc: 'User username'
-      requires :password, type: String, desc: 'User\'s password'
+      optional :password, type: String, desc: 'User\'s password'
+      optional :auth_token, type: String, desc: 'User\'s auth token'
       optional :remember, type: Boolean, desc: 'User has requested to remember login', default: false
     end
     post '/auth' do
       username = params[:username]
       password = params[:password]
+      auth_token = params[:auth_token]
       remember = params[:remember]
       logger.info "Authenticate #{username} from #{request.ip}"
 
-      # Truncate the 's' from sXXX for Swinburne auth
-      truncate_s_match = (username =~ /^[Ss]\d{6,10}([Xx]|\d)$/)
-      username[0] = '' if !truncate_s_match.nil? && truncate_s_match.zero?
-
       # No provided credentials
-      if username.nil? || password.nil?
+      if username.nil? || (password.nil? && auth_token.nil?)
         error!({ error: 'The request must contain the user username and password.' }, 400)
       end
 
@@ -49,9 +49,12 @@ class AuthenticationApi < Grape::API
         new_user.login_id   = username
       end
 
-      # Try to authenticate
-      unless user.authenticate?(password)
+      # Try to authenticate with password
+      if password.present? && !user.authenticate?(password)
         error!({ error: 'Invalid email or password.' }, 401)
+        return
+      elsif auth_token.present? && !authenticated?(:login)
+        error!({ error: 'Invalid user or auth token.' }, 401)
         return
       end
 
@@ -69,9 +72,16 @@ class AuthenticationApi < Grape::API
 
       logger.info "Login #{username} from #{request.ip}"
 
+      user = User.find_by(username: params[:username])
+      token = user&.token_for_text?(params[:auth_token], :login)
+
+      token&.destroy!
+      token = user.generate_authentication_token!
+
       # Return user details
       present :user, user, with: Entities::UserEntity
-      present :auth_token, user.generate_authentication_token!(remember).authentication_token
+      present :auth_token, token.authentication_token
+      set_refresh_cookie_in_response(remember)
     end
   end
 
@@ -91,46 +101,43 @@ class AuthenticationApi < Grape::API
       # We validate the SAML Response and check if the user already exists in the system
       return error!({ error: 'Invalid SAML response.' }, 401) unless response.is_valid?
 
-      attributes = response.attributes
+      # Get the user identification data from the SAML response
+      # This includes the login_id, email and username
+      user_id_data = Doubtfire::Application.config.institution_settings.map_saml_response_to_user_id(response)
 
-      login_id = response.name_id || response.nameid
-      email = login_id
-
-      logger.info "Authenticate #{email} from #{request.ip}"
+      logger.info "Authenticate #{user_id_data[:email]} from #{request.ip}"
 
       # Lookup using login_id if it exists
       # Lookup using email otherwise and set login_id
       # Otherwise create new
-      user = User.find_by(login_id: login_id) ||
-             User.find_by_username(email[/(.*)@/, 1]) ||
-             User.find_by(email: email) ||
-             User.find_or_create_by(login_id: login_id) do |new_user|
-               role_response = attributes.fetch(/role/) || attributes.fetch(/userRole/)
-               role = role_response.include?('Staff') ? Role.tutor.id : Role.student.id
-               first_name = (attributes.fetch(/givenname/) || attributes.fetch(/cn/)).capitalize
-               last_name = attributes.fetch(/surname/).capitalize
-               username = email.split('@').first
-               # Some institutions may provide givenname and surname, others
-               # may only provide common name which we will use as first name
-               new_user.first_name = first_name
-               new_user.last_name  = last_name
-               new_user.email      = email
-               new_user.username   = username
-               new_user.nickname   = first_name
-               new_user.role_id    = role
+      user = User.find_by(login_id: user_id_data[:login_id]) ||
+             User.find_by(username: user_id_data[:username]) ||
+             User.find_by(email: user_id_data[:email]) ||
+             User.create do |new_user|
+               # Update new user with details from the SAML response
+               Doubtfire::Application.config.institution_settings.update_user_from_saml_response(
+                 new_user,
+                 user_id_data,
+                 response
+               )
              end
 
       # Set login id + username if not yet specified
-      user.login_id = login_id if user.login_id.nil?
-      user.username = username if user.username.nil?
+      if user.login_id.nil? || user.username.nil?
+        user.update(
+          login_id: user_id_data[:login_id],
+          username: user_id_data[:username]
+        )
+      end
 
       # Try and save the user once authenticated if new
       if user.new_record?
         user.encrypted_password = BCrypt::Password.create(SecureRandom.hex(32))
         unless user.valid?
-          error!(error: 'There was an error creating your account in Doubtfire. ' \
+          logger.error "User #{user.username} is invalid: #{user.errors.full_messages.join(', ')}"
+          error!(error: 'There was an error creating your account. ' \
                         'Please get in contact with your unit convenor or the ' \
-                        'Doubtfire administrators.')
+                        'system administrators.')
         end
         user.save
       end
@@ -146,8 +153,121 @@ class AuthenticationApi < Grape::API
         protocol = Rails.env.development? ? 'http' : 'https'
         host = "#{protocol}://#{host}"
       end
-      redirect "#{host}/#/sign_in?authToken=#{onetime_token.authentication_token}&username=#{user.username}"
+      redirect "#{host}/sign_in?authToken=#{onetime_token.authentication_token}&username=#{user.username}"
     end
+
+    # Saml 2 logout callback
+    desc 'SAML2.0 logout callback'
+    params do
+      requires :SAMLResponse, type: String, desc: 'SAML logout response data.'
+    end
+    post '/auth/saml_logout' do
+      response = OneLogin::RubySaml::Logoutresponse.new(params[:SAMLResponse], allowed_clock_drift: 1.second,
+                                                                               settings: AuthenticationHelpers.saml_settings)
+
+      # Check if the SAML response is valid - if not log an error
+      unless response.is_valid?
+        logger.error "Invalid SAML logout response: #{response.errors.join(', ')}"
+      end
+
+      redirect "#{host}/sign_in"
+    end
+  end
+
+  #
+  # LTI JWT callback - only mounted if LTI is used
+  #
+  if AuthenticationHelpers.lti_enabled?
+    desc 'LTI1.3 auth'
+    params do
+      requires :ltik, type: String, desc: 'JWT provided for further processing.'
+      # requires :member, type: Hash do
+      #   requires :status, type: String
+      #   requires :roles, type: Array[String]
+      #   requires :user_id, type: String
+      #   optional :lis_person_sourcedid, type: String
+      #   requires :name, type: String
+      #   requires :given_name, type: String
+      #   requires :family_name, type: String
+      #   requires :email, type: String
+      #   requires :ext_user_username, type: String
+      # end
+    end
+    post '/auth/lti' do
+      token = decode_lti_token(params[:ltik])
+
+      member = token['member']
+      if member.nil?
+        error!({ error: 'Invalid LTI token.' }, 400)
+      end
+
+      valid_member, missing = valid_lti_member?(member)
+      unless valid_member
+        error!({ error: "Missing required fields:  #{missing.join(', ')}" }, 400)
+      end
+
+      user_id_data = {
+        login_id: member['ext_user_username'] || member['user_id'],
+        email: member['email'],
+        username: member['email']&.split('@')&.first
+      }
+
+      logger.info "Authenticate #{user_id_data[:email]} from #{request.ip}"
+
+      # Lookup using login_id if it exists
+      # Lookup using email otherwise and set login_id
+      # Otherwise create new
+      user = User.find_by(login_id: user_id_data[:login_id]) ||
+             User.find_by(username: user_id_data[:username]) ||
+             User.find_by(email: user_id_data[:email]) ||
+             User.create do |new_user|
+               # Update new user with details from the LTI response
+               Doubtfire::Application.config.institution_settings.update_user_from_lti_response(
+                 new_user,
+                 user_id_data,
+                 member
+               )
+             end
+
+      # Set login id + username if not yet specified
+      if user.login_id.nil? || user.username.nil?
+        user.update(
+          login_id: user_id_data[:login_id],
+          username: user_id_data[:username]
+        )
+      end
+
+      # Try and save the user once authenticated if new
+      if user.new_record?
+        user.encrypted_password = BCrypt::Password.create(SecureRandom.hex(32))
+        unless user.valid?
+          logger.error "User #{user.username} is invalid: #{user.errors.full_messages.join(', ')}"
+          error!(error: 'There was an error linking your Lti account. ' \
+                        'Please get in contact with your unit convenor or the ' \
+                        'system administrators.')
+        end
+        user.save
+      end
+
+      # Generate a temporary auth_token for future requests
+      onetime_token = user.generate_temporary_authentication_token!
+
+      logger.info "Redirecting #{user.username} from #{request.ip}"
+
+      # Must redirect to the front-end after sign in
+      host = Doubtfire::Application.config.institution[:host]
+      unless host.starts_with?('http')
+        protocol = Rails.env.development? ? 'http' : 'https'
+        host = "#{protocol}://#{host}"
+      end
+
+      logger.info "Login #{params[:username]} from #{request.ip}"
+
+      # Respond user details with temporary auth token
+      present :username, user.username
+      present :auth_token, onetime_token.authentication_token
+    end
+
   end
 
   #
@@ -177,7 +297,7 @@ class AuthenticationApi < Grape::API
       # Lookup using email otherwise and set login_id
       # Otherwise create new
       user = User.find_by(login_id: login_id) ||
-             User.find_by_username(email[/(.*)@/, 1]) ||
+             User.find_by(username: email[/(.*)@/, 1]) ||
              User.find_by(email: email) ||
              User.find_or_create_by(login_id: login_id) do |new_user|
                role = Role.aaf_affiliation_to_role_id(attrs[:edupersonscopedaffiliation])
@@ -223,7 +343,7 @@ class AuthenticationApi < Grape::API
         protocol = Rails.env.development? ? 'http' : 'https'
         host = "#{protocol}://#{host}"
       end
-      redirect "#{host}/#/sign_in?authToken=#{onetime_token.authentication_token}&username=#{user.username}"
+      redirect "#{host}/sign_in?authToken=#{onetime_token.authentication_token}&username=#{user.username}"
     end
   end
 
@@ -235,26 +355,28 @@ class AuthenticationApi < Grape::API
     params do
       requires :username, type: String, desc: 'The user\'s username'
       requires :auth_token, type: String, desc: 'The user\'s temporary auth token'
+      optional :remember, type: Boolean, desc: 'User has requested to remember login', default: false
     end
     post '/auth' do
-      error!({ error: 'Invalid token.' }, 404) if params[:auth_token].nil?
-      logger.info "Get user via auth_token from #{request.ip}"
+      error!({ error: 'Invalid authentication details.' }, 404) if params[:auth_token].blank? || params[:username].blank?
+      logger.info "Get user via auth_token from #{request.ip} - #{params[:username]}"
 
       # Authenticate that the token is okay
-      if authenticated?
-        user = User.find_by_username(params[:username])
-        token = user.token_for_text?(params[:auth_token]) unless user.nil?
-        error!({ error: 'Invalid token.' }, 404) if token.nil?
+      if authenticated?(:login)
+        user = User.find_by(username: params[:username])
+        token = user.token_for_text?(params[:auth_token], :login) unless user.nil?
+        error!({ error: 'Invalid authentication details.' }, 404) if token.nil?
 
         # Invalidate the token and regenrate a new one
         token.destroy!
-        token = user.generate_authentication_token! true
+        token = user.generate_authentication_token!
 
         logger.info "Login #{params[:username]} from #{request.ip}"
 
         # Respond user details with new auth token
         present :user, user, with: Entities::UserEntity
         present :auth_token, token.authentication_token
+        set_refresh_cookie_in_response(params[:remember])
       end
     end
   end
@@ -293,52 +415,6 @@ class AuthenticationApi < Grape::API
   end
 
   #
-  # Update the expiry of an existing authentication token
-  #
-  desc 'Allow tokens to be updated',
-       {
-         headers:
-         {
-           "username" =>
-           {
-             description: "User username",
-             required: true
-           },
-           "auth_token" =>
-           {
-             description: "The user's temporary auth token",
-             required: true
-           }
-         }
-       }
-  params do
-    optional :remember, type: Boolean, desc: 'User has requested to remember login', default: false
-  end
-  put '/auth' do
-    token_param = headers['auth-token'] || headers['Auth-Token'] || params['Auth-Token']
-    user_param = headers['username'] || headers['Username'] || params['Username'] || params['username']
-
-    error!({ error: 'Invalid token/username.' }, 404) if token_param.nil? || user_param.nil?
-
-    logger.info "Update token #{token_param} from #{request.ip} for #{user_param}"
-
-    # Find user
-    user = User.find_by_username(user_param)
-    token = user.token_for_text?(token_param) unless user.nil?
-    remember = params[:remember] || false
-
-    # Token does not match user
-    if token.nil? || user.nil? || user.username != user_param
-      error!({ error: 'Invalid token.' }, 404)
-    else
-      token.extend_token remember if token.auth_token_expiry > Time.zone.now
-
-      # Return extended auth token
-      present :auth_token, token.authentication_token
-    end
-  end
-
-  #
   # Sign out
   #
   desc 'Sign out',
@@ -357,15 +433,76 @@ class AuthenticationApi < Grape::API
            }
          }
        }
+  params do
+    requires :remember, type: Boolean, desc: 'Retain the refresh token?', default: false
+  end
   delete '/auth' do
-    user = User.find_by_username(headers['username'] || headers['Username'])
-    token = user.token_for_text?(headers['auth-token'] || headers['Auth-Token']) unless user.nil?
+    user = User.find_by(username: headers['username'] || headers['Username'])
+    token = user&.token_for_text?(headers['auth-token'] || headers['Auth-Token'], :general)
 
     if token.present?
       logger.info "Sign out #{user.username} from #{request.ip}"
       token.destroy!
     end
 
+    if cookies['refresh_token'].present? && !params[:remember]
+      auth_param = cookies['refresh_token']
+      user_param = cookies['username']
+
+      user = User.find_by(username: user_param)
+      token = user&.token_for_text?(auth_param, :refresh_token)
+      if token.present?
+        logger.info "Destroy refresh token for #{user.username} from #{request.ip}"
+        token.destroy!
+      end
+    end
+
+    # Remove the refresh token cookie - if remember is false
+    set_refresh_cookie_in_response(false) unless params[:remember]
     present nil
+  end
+
+  desc 'Get SCORM authentication token'
+  get '/auth/scorm' do
+    if authenticated?(:general)
+      unless authorise? current_user, User, :get_scorm_token
+        error!({ error: 'You cannot get SCORM tokens' }, 403)
+      end
+
+      token = current_user.auth_tokens.find_by(token_type: :scorm)
+      if token.nil? || token.auth_token_expiry <= Time.zone.now
+        token&.destroy
+        token = current_user.generate_scorm_authentication_token!
+      end
+
+      present :scorm_auth_token, token.authentication_token
+    end
+  end
+
+  desc 'Get access token from the refresh token cookie'
+  params do
+    optional :delete_auth_token, type: Boolean, desc: 'Delete the auth token if also provided', default: true
+  end
+  post '/auth/access-token' do
+    if authenticated_via_refresh_token?
+      # Check if we have a auth token as well
+      if params[:delete_auth_token]
+        user_param, auth_param = get_user_and_token_from(:header)
+        case user_auth_token_type(user_param, auth_param, :general)
+        when :valid
+          # Valid token and user
+          token = current_user.token_for_text?(auth_param, :general)
+          if token.present?
+            token.destroy!
+            logger.info "Destroying auth token for #{current_user.username} from #{request.ip}"
+          end
+        end
+      end
+      # Return user details
+      present :user, current_user, with: Entities::UserEntity
+      present :auth_token, current_user.generate_authentication_token!(token_type: :general, force_new: false).authentication_token
+    else
+      present nil
+    end
   end
 end

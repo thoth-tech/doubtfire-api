@@ -1,8 +1,8 @@
-class NotificationsMailer < ActionMailer::Base
+class NotificationsMailer < ApplicationMailer
   def add_general
     @doubtfire_host = Doubtfire::Application.config.institution[:host]
     @doubtfire_product_name = Doubtfire::Application.config.institution[:product_name]
-    @unsubscribe_url = "#{@doubtfire_host}/#/home?notifications"
+    @unsubscribe_url = "#{@doubtfire_host}/edit_profile"
   end
 
   def weekly_staff_summary(unit_role, summary_stats)
@@ -13,7 +13,27 @@ class NotificationsMailer < ActionMailer::Base
     @staff = unit_role.user
     @unit_role = unit_role
     @unit = summary_stats[:unit]
-    @data = summary_stats[:staff][unit_role]
+
+    @received_comments = @unit.comments
+                              .where("task_comments.recipient_id = :uid AND task_comments.created_at > :start", uid: @staff.id, start: 7.days.ago)
+                              .where(content_type: [:text, :assessment, :audio, :image, :pdf, :discussion, :extension])
+                              .count
+
+    @sent_comments = @unit.comments
+                          .where("task_comments.user_id = :uid AND task_comments.created_at > :start", uid: @staff.id, start: 7.days.ago)
+                          .where(content_type: [:text, :assessment, :audio, :image, :pdf, :discussion, :extension])
+                          .count
+
+    @data = {
+      sent_comments: @sent_comments, # Sent by tutor
+      received_comments: @received_comments, # Received by tutor
+      tasks_awaiting_feedback_count: summary_stats[:staff][unit_role.user][:tasks_awaiting_feedback_count], # For the tutor
+      weekly_engagements_count: summary_stats[:staff][unit_role.user][:weekly_engagements_count], # Engagements from the student?
+      staff_engagements: summary_stats[:staff][unit_role.user][:staff_engagements], # Engagements by the tutor
+      oldest_task_days: summary_stats[:staff][unit_role.user][:oldest_task_days],
+      weekly_total_tasks_discussed: summary_stats[:staff][unit_role.user][:weekly_total_tasks_discussed] # Total for the tutor for the week for the tutor
+    }
+
     @convenor = @unit.main_convenor_user
     @summary_stats = summary_stats
 
@@ -41,12 +61,12 @@ class NotificationsMailer < ActionMailer::Base
 
     @student_engagements = @engagements.select { |e| [TaskStatus.not_started.name, TaskStatus.need_help.name, TaskStatus.working_on_it.name, TaskStatus.ready_for_feedback.name].include? e.engagement }.count
 
-    @staff_engagements = @engagements.select { |e| [TaskStatus.complete.name, TaskStatus.feedback_exceeded.name, TaskStatus.redo.name, TaskStatus.discuss.name, TaskStatus.demonstrate.name, TaskStatus.fail.name].include? e.engagement }.count
+    @staff_engagements = @engagements.select { |e| [TaskStatus.complete.name, TaskStatus.feedback_exceeded.name, TaskStatus.redo.name, TaskStatus.discuss.name, TaskStatus.attention_required.name, TaskStatus.demonstrate.name, TaskStatus.fail.name].include? e.engagement }.count
 
     @task_states = project.tasks.joins(:task_status).select("count(tasks.id) as number, task_statuses.name as status").group("task_statuses.name")
 
-    @received_comments = project.comments.where("recipient_id = :student_id AND task_comments.created_at > :start", student_id: @student.id, start: Time.zone.today - 7.days).count
-    @sent_comments = project.comments.where("user_id = :student_id AND task_comments.created_at > :start", student_id: @student.id, start: Time.zone.today - 7.days).count
+    @received_comments = project.comments.where("recipient_id = :student_id AND task_comments.created_at > :start", student_id: @student.id, start: Time.zone.now - 7.days).count
+    @sent_comments = project.comments.where("user_id = :student_id AND task_comments.created_at > :start", student_id: @student.id, start: Time.zone.now - 7.days).count
 
     @top_tasks = project.top_tasks
     @overdue_top = @top_tasks.select { |tt| tt[:reason] == :overdue }

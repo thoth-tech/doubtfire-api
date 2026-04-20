@@ -10,10 +10,13 @@ module Entities
     expose :enrolled, unless: :for_student
     expose :target_grade
 
+    expose :spec_con_days
+
     expose :submitted_grade, unless: :summary_only
     expose :portfolio_files, unless: :summary_only
     expose :compile_portfolio, unless: :summary_only
     expose :portfolio_available
+    expose :portfolio_submission_date, if: :for_staff
     expose :uses_draft_learning_summary, unless: :summary_only
 
     expose :task_stats, as: :stats, unless: :for_student
@@ -24,9 +27,10 @@ module Entities
 
     expose :tutorial_enrolments, using: TutorialEnrolmentEntity, unless: :summary_only
     expose :groups, using: GroupEntity, unless: :summary_only
-    expose :task_outcome_alignments, using: TaskOutcomeAlignmentEntity, unless: :summary_only
 
     expose :grade, if: :for_staff
     expose :grade_rationale, if: :for_staff
+
+    expose :escalation_attempts_remaining
   end
 end

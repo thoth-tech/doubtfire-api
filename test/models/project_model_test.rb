@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require "test_helper"
 
 class ProjectModelTest < ActiveSupport::TestCase
@@ -136,13 +138,15 @@ class ProjectModelTest < ActiveSupport::TestCase
     project.update compile_portfolio: true
     assert project.compile_portfolio
 
-    project.move_to_portfolio( {
-      filename: "LearningSummaryReport.pdf",
-      'tempfile' => File.new(test_file_path("submissions/1.2P.pdf"))
-    }, "LearningSummaryReport", "document")
+    project.move_to_portfolio(
+      {
+        filename: 'LearningSummaryReport.pdf',
+        'tempfile' => File.new(test_file_path("submissions/1.2P.pdf"))
+      }, "LearningSummaryReport", "document"
+    )
 
     project.create_portfolio
-    refute project.reload.compile_portfolio
+    assert_not project.reload.compile_portfolio
     assert project.portfolio_exists?
     assert File.exist?(project.portfolio_path)
 
@@ -190,5 +194,80 @@ class ProjectModelTest < ActiveSupport::TestCase
     unit.destroy!
   end
 
+  def test_can_update_spec_con_days
+    project = FactoryBot.create(:project)
+    assert_equal 0, project.spec_con_days
 
+    project.update(spec_con_days: 5)
+    assert_equal 5, project.reload.spec_con_days
+
+    project.spec_con_days = nil
+    assert_not project.valid?
+    assert_equal 5, project.reload.spec_con_days
+  end
+
+  def test_spec_con_adjusts_task_deadlines
+    unit = FactoryBot.create(:unit, with_students: false, task_count: 0)
+    task_definition = FactoryBot.create(:task_definition, unit: unit, target_date: 1.week.from_now, due_date: 2.weeks.from_now)
+    project = FactoryBot.create(:project, unit: unit)
+    task = project.task_for_task_definition(task_definition)
+
+    # Adjust deadlines based on spec con days
+    project.update(spec_con_days: 2)
+
+    # add extensions - to take up the spec con days
+    task.extensions = 2
+
+    # Check that the deadline has been extended by the spec con days
+    assert_equal task_definition.reload.due_date.to_date + 2.days, task.due_date
+  end
+
+  def test_spec_con_reverts_overdue_tasks
+    unit = FactoryBot.create(:unit, with_students: false, task_count: 0)
+    unit.update!(allow_flexible_dates: true)
+
+    task_definition1 = FactoryBot.create(:task_definition, unit: unit, target_date: Time.zone.today - 1.week, due_date: Time.zone.today - 1.day)
+    task_definition2 = FactoryBot.create(:task_definition, unit: unit, target_date: Time.zone.today - 1.week, due_date: Time.zone.today - 4.days)
+    project = FactoryBot.create(:project, unit: unit)
+    task1 = project.task_for_task_definition(task_definition1)
+    task2 = project.task_for_task_definition(task_definition2)
+
+    task1.update!(submission_date: Time.zone.now, task_status: TaskStatus.time_exceeded)
+    task2.update!(submission_date: Time.zone.now, task_status: TaskStatus.assess_in_portfolio)
+
+    project.update!(spec_con_days: 2)
+
+    task1.reload
+    task2.reload
+
+    assert_equal TaskStatus.ready_for_feedback, task1.task_status
+    assert_equal TaskStatus.assess_in_portfolio, task2.task_status
+
+    project.update!(spec_con_days: 4)
+
+    task1.reload
+    task2.reload
+
+    assert_equal TaskStatus.ready_for_feedback, task1.task_status
+    assert_equal TaskStatus.ready_for_feedback, task2.task_status
+  end
+
+  def test_unique_project_on_unit_and_user
+    unit = FactoryBot.create(:unit, with_students: false, task_count: 0)
+    student1 = FactoryBot.create(:user, :student)
+    student2 = FactoryBot.create(:user, :student)
+
+    # Create project for student1
+    project1 = FactoryBot.create(:project, unit: unit, user: student1)
+    assert project1.valid?
+
+    # Create project for student2
+    project2 = FactoryBot.build(:project, unit: unit, user: student2)
+    assert project2.valid?
+
+    # Attempt to create duplicate project for student1
+    project3 = FactoryBot.build(:project, unit: unit, user: student1)
+    assert_not project3.valid?
+    assert_includes project3.errors[:user_id], "has already been taken"
+  end
 end

@@ -5,6 +5,7 @@ class TasksApiTest < ActiveSupport::TestCase
   include TestHelpers::AuthHelper
   include TestHelpers::JsonHelper
   include TestHelpers::TestFileHelper
+  include ActiveSupport::Testing::TimeHelpers
 
   def app
     Rails.application
@@ -22,9 +23,9 @@ class TasksApiTest < ActiveSupport::TestCase
 
     assert_equal expected_data.count, last_response_body.count
 
-    last_response_body.each_with_index do |r, i|
+    last_response_body.each_with_index do |r, _i|
       t = Task.find(r['id'])
-      assert_json_matches_model t, r, ['id', 'task_definition_id']
+      assert_json_matches_model t, r, %w[id task_definition_id]
       assert_equal t.status.to_s, r['status']
       tutorial = t.project.tutorial_for(t.task_definition)
       if tutorial.present?
@@ -39,6 +40,72 @@ class TasksApiTest < ActiveSupport::TestCase
         assert_nil r['tutorial_stream_id']
       end
     end
+  end
+
+  def test_get_task_submission_details_creates_session_and_activity
+    # Start with a fresh unit and task definition
+    unit = FactoryBot.create(:unit, auto_apply_extension_before_deadline: false)
+    td = TaskDefinition.new({
+                              unit_id: unit.id,
+                              tutorial_stream: unit.tutorial_streams.first,
+                              name: 'Task past due - for revert',
+                              description: 'Task past due',
+                              weighting: 4,
+                              target_grade: 0,
+                              start_date: Time.zone.now - 2.weeks,
+                              target_date: Time.zone.now - 1.week,
+                              due_date: Time.zone.now + 1.week,
+                              abbreviation: 'TaskPastDueForRevert',
+                              restrict_status_updates: false,
+                              upload_requirements: [],
+                              plagiarism_warn_pct: 0.8,
+                              is_graded: false,
+                              max_quality_pts: 0
+                            })
+    td.save!
+
+    data_to_post = {
+      trigger: 'ready_for_feedback'
+    }
+
+    # Get the first student - who now has this task
+    project = unit.active_projects.first
+
+    # Track the counts before we make the request
+    session_count_before = MarkingSession.count
+    activity_count_before = SessionActivity.count
+
+    # Add username and auth_token to Header
+    add_auth_header_for(user: unit.main_convenor_user)
+
+    # Make a submission for this student
+    post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission", data_to_post
+    assert_equal 201, last_response.status
+
+    # Make the request
+    get "/api/projects/#{project.id}/task_def_id/#{td.id}/submission_details"
+
+    # Check if counts increased
+    session_count_after = MarkingSession.count
+    activity_count_after = SessionActivity.count
+
+    # Assert that we created at least one new session and activity
+    assert_operator session_count_after, :>, session_count_before, "No new sessions created"
+    assert_operator activity_count_after, :>, activity_count_before, "No new activities created"
+
+    # Get the most recent session and activity
+    # Since we know they were just created
+    session = MarkingSession.last
+    activity = SessionActivity.last
+
+    # Now test the associations
+    assert_equal unit.id, session.unit_id
+    assert_equal activity.marking_session_id, session.id
+    assert_equal 'get-submission-details', activity.action
+
+    # Clean up session activities first to avoid foreign key constraint issues
+    SessionActivity.delete_all
+    MarkingSession.delete_all
   end
 
   def test_task_get_with_streams
@@ -53,9 +120,9 @@ class TasksApiTest < ActiveSupport::TestCase
 
     assert_equal expected_data.count, last_response_body.count
 
-    last_response_body.each_with_index do |r, i|
+    last_response_body.each_with_index do |r, _i|
       t = Task.find(r['id'])
-      assert_json_matches_model t, r, ['id', 'task_definition_id']
+      assert_json_matches_model t, r, %w[id task_definition_id]
       assert_equal t.status.to_s, r['status']
       tutorial = t.project.tutorial_for(t.task_definition)
       if tutorial.present?
@@ -72,25 +139,24 @@ class TasksApiTest < ActiveSupport::TestCase
     end
   end
 
-
   def test_time_exceeded_grade
     unit = FactoryBot.create(:unit)
     td = TaskDefinition.new({
-        unit_id: unit.id,
-        tutorial_stream: unit.tutorial_streams.first,
-        name: 'Task past due',
-        description: 'Task past due',
-        weighting: 4,
-        target_grade: 0,
-        start_date: Time.zone.now - 2.weeks,
-        target_date: Time.zone.now - 1.week,
-        abbreviation: 'TaskPastDue',
-        restrict_status_updates: false,
-        upload_requirements: [ ],
-        plagiarism_warn_pct: 0.8,
-        is_graded: true,
-        max_quality_pts: 0
-      })
+                              unit_id: unit.id,
+                              tutorial_stream: unit.tutorial_streams.first,
+                              name: 'Task past due',
+                              description: 'Task past due',
+                              weighting: 4,
+                              target_grade: 0,
+                              start_date: Time.zone.now - 2.weeks,
+                              target_date: Time.zone.now - 1.week,
+                              abbreviation: 'TaskPastDue',
+                              restrict_status_updates: false,
+                              upload_requirements: [],
+                              plagiarism_warn_pct: 0.8,
+                              is_graded: true,
+                              max_quality_pts: 0
+                            })
     td.save!
 
     data_to_post = {
@@ -107,7 +173,7 @@ class TasksApiTest < ActiveSupport::TestCase
     assert_equal 201, last_response.status
 
     task = project.task_for_task_definition(td)
-    assert_equal -1, task.grade
+    assert_equal(-1, task.grade)
     assert_equal TaskStatus.time_exceeded, task.task_status
 
     td.destroy
@@ -116,22 +182,22 @@ class TasksApiTest < ActiveSupport::TestCase
   def test_extension_reverts_time_exceeded
     unit = FactoryBot.create(:unit, auto_apply_extension_before_deadline: false)
     td = TaskDefinition.new({
-        unit_id: unit.id,
-        tutorial_stream: unit.tutorial_streams.first,
-        name: 'Task past due - for revert',
-        description: 'Task past due',
-        weighting: 4,
-        target_grade: 0,
-        start_date: Time.zone.now - 2.weeks,
-        target_date: Time.zone.now - 1.week,
-        due_date: Time.zone.now + 1.week,
-        abbreviation: 'TaskPastDueForRevert',
-        restrict_status_updates: false,
-        upload_requirements: [ ],
-        plagiarism_warn_pct: 0.8,
-        is_graded: false,
-        max_quality_pts: 0
-      })
+                              unit_id: unit.id,
+                              tutorial_stream: unit.tutorial_streams.first,
+                              name: 'Task past due - for revert',
+                              description: 'Task past due',
+                              weighting: 4,
+                              target_grade: 0,
+                              start_date: Time.zone.now - 2.weeks,
+                              target_date: Time.zone.now - 1.week,
+                              due_date: Time.zone.now + 1.week,
+                              abbreviation: 'TaskPastDueForRevert',
+                              restrict_status_updates: false,
+                              upload_requirements: [],
+                              plagiarism_warn_pct: 0.8,
+                              is_graded: false,
+                              max_quality_pts: 0
+                            })
     td.save!
 
     data_to_post = {
@@ -154,7 +220,7 @@ class TasksApiTest < ActiveSupport::TestCase
     assert_equal TaskStatus.time_exceeded, task.task_status
     assert_equal 2, task.weeks_can_extend
     assert task.can_apply_for_extension?
-    refute task.submitted_before_due?
+    assert_not task.submitted_before_due?
 
     data_to_post = {
       comment: 'Help me!',
@@ -170,7 +236,7 @@ class TasksApiTest < ActiveSupport::TestCase
 
     # Reload to get new details
     task.reload
-    refute task.submitted_before_due?
+    assert_not task.submitted_before_due?
 
     assert_equal TaskStatus.time_exceeded, task.task_status
 
@@ -182,7 +248,7 @@ class TasksApiTest < ActiveSupport::TestCase
     # After extension... no more extensions are possible
     task.reload
     assert_equal 0, task.weeks_can_extend
-    refute task.can_apply_for_extension?
+    assert_not task.can_apply_for_extension?
     assert_equal 2, task.extensions
     assert task.submitted_before_due?
 
@@ -194,22 +260,22 @@ class TasksApiTest < ActiveSupport::TestCase
   def test_extension_reverts_time_exceeded_auto_apply
     unit = FactoryBot.create(:unit)
     td = TaskDefinition.new({
-        unit_id: unit.id,
-        tutorial_stream: unit.tutorial_streams.first,
-        name: 'Task past due - for revert',
-        description: 'Task past due',
-        weighting: 4,
-        target_grade: 0,
-        start_date: Time.zone.now - 2.weeks,
-        target_date: Time.zone.now - 1.week,
-        due_date: Time.zone.now + 1.week,
-        abbreviation: 'TaskPastDueForRevert',
-        restrict_status_updates: false,
-        upload_requirements: [ ],
-        plagiarism_warn_pct: 0.8,
-        is_graded: false,
-        max_quality_pts: 0
-      })
+                              unit_id: unit.id,
+                              tutorial_stream: unit.tutorial_streams.first,
+                              name: 'Task past due - for revert',
+                              description: 'Task past due',
+                              weighting: 4,
+                              target_grade: 0,
+                              start_date: Time.zone.now - 2.weeks,
+                              target_date: Time.zone.now - 1.week,
+                              due_date: Time.zone.now + 1.week,
+                              abbreviation: 'TaskPastDueForRevert',
+                              restrict_status_updates: false,
+                              upload_requirements: [],
+                              plagiarism_warn_pct: 0.8,
+                              is_graded: false,
+                              max_quality_pts: 0
+                            })
     td.save!
 
     data_to_post = {
@@ -232,7 +298,7 @@ class TasksApiTest < ActiveSupport::TestCase
     assert_equal TaskStatus.time_exceeded, task.task_status
     assert_equal 2, task.weeks_can_extend
     assert task.can_apply_for_extension?
-    refute task.submitted_before_due?
+    assert_not task.submitted_before_due?
 
     data_to_post = {
       comment: 'Help me!',
@@ -249,7 +315,7 @@ class TasksApiTest < ActiveSupport::TestCase
     # After extension... no more extensions are possible
     task.reload
     assert_equal 0, task.weeks_can_extend
-    refute task.can_apply_for_extension?
+    assert_not task.can_apply_for_extension?
     assert_equal 2, task.extensions
     assert task.submitted_before_due?
 
@@ -368,21 +434,21 @@ class TasksApiTest < ActiveSupport::TestCase
   def test_can_submit_ipynb
     unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
     td = TaskDefinition.create!({
-        unit_id: unit.id,
-        tutorial_stream: unit.tutorial_streams.first,
-        name: 'Code task',
-        description: 'Code task',
-        weighting: 4,
-        target_grade: 0,
-        start_date: Time.zone.now - 2.weeks,
-        target_date: Time.zone.now + 1.week,
-        abbreviation: 'CodeTask',
-        restrict_status_updates: false,
-        upload_requirements: [ { "key" => 'file0', "name" => 'Shape Class', "type" => 'code' } ],
-        plagiarism_warn_pct: 0.8,
-        is_graded: true,
-        max_quality_pts: 0
-      })
+                                  unit_id: unit.id,
+                                  tutorial_stream: unit.tutorial_streams.first,
+                                  name: 'Code task',
+                                  description: 'Code task',
+                                  weighting: 4,
+                                  target_grade: 0,
+                                  start_date: Time.zone.now - 2.weeks,
+                                  target_date: Time.zone.now + 1.week,
+                                  abbreviation: 'CodeTask',
+                                  restrict_status_updates: false,
+                                  upload_requirements: [{ "key" => 'file0', "name" => 'Shape Class', "type" => 'code' }],
+                                  plagiarism_warn_pct: 0.8,
+                                  is_graded: true,
+                                  max_quality_pts: 0
+                                })
 
     project = unit.active_projects.first
 
@@ -400,11 +466,658 @@ class TasksApiTest < ActiveSupport::TestCase
     assert_equal 201, last_response.status, last_response_body
 
     task = project.task_for_task_definition(td)
-    task.convert_submission_to_pdf
+    task.convert_submission_to_pdf(log_to_stdout: false)
     assert File.exist? task.final_pdf_path
 
-    td.destroy
+    unit.destroy
   end
 
+  def test_invalid_latex_in_ipynb
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
+    td = TaskDefinition.create!({
+                                  unit_id: unit.id,
+                                  tutorial_stream: unit.tutorial_streams.first,
+                                  name: 'Code task',
+                                  description: 'Code task',
+                                  weighting: 4,
+                                  target_grade: 0,
+                                  start_date: Time.zone.now - 2.weeks,
+                                  target_date: Time.zone.now + 1.week,
+                                  abbreviation: 'CodeTask',
+                                  restrict_status_updates: false,
+                                  upload_requirements: [{ "key" => 'file0', "name" => 'Shape Class', "type" => 'code' }],
+                                  plagiarism_warn_pct: 0.8,
+                                  is_graded: true,
+                                  max_quality_pts: 0
+                                })
+
+    project = unit.active_projects.first
+
+    # Add username and auth_token to Header
+    add_auth_header_for(user: project.user)
+
+    data_to_post = {
+      trigger: 'ready_for_feedback'
+    }
+
+    data_to_post = with_file('test_files/submissions/invalid_notebook.ipynb', 'application/json', data_to_post)
+
+    post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission", data_to_post
+
+    assert_equal 201, last_response.status, last_response_body
+
+    task = project.task_for_task_definition(td)
+    task.convert_submission_to_pdf(log_to_stdout: true)
+    assert File.exist? task.final_pdf_path
+
+    unit.destroy
+  end
+
+  def test_download_task_pdf
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
+    td = TaskDefinition.create!({
+                                  unit_id: unit.id,
+                                  tutorial_stream: unit.tutorial_streams.first,
+                                  name: 'Code task',
+                                  description: 'Code task',
+                                  weighting: 4,
+                                  target_grade: 0,
+                                  start_date: Time.zone.now - 2.weeks,
+                                  target_date: Time.zone.now + 1.week,
+                                  abbreviation: 'CodeTask',
+                                  restrict_status_updates: false,
+                                  upload_requirements: [{ "key" => 'file0', "name" => 'Shape Class', "type" => 'code' }],
+                                  plagiarism_warn_pct: 0.8,
+                                  is_graded: true,
+                                  max_quality_pts: 0
+                                })
+
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+
+    # Add username and auth_token to Header
+    add_auth_header_for(user: project.user)
+
+    get "/api/projects/#{project.id}/task_def_id/#{td.id}/submission"
+
+    assert_equal 200, last_response.status
+    assert_equal File.size(Rails.root.join('public/resources/FileNotFound.pdf')), last_response.length
+
+    dir = FileHelper.student_work_dir(:new, task, true)
+
+    get "/api/projects/#{project.id}/task_def_id/#{td.id}/submission"
+
+    assert_equal 200, last_response.status
+    assert_equal File.size(Rails.root.join('public/resources/AwaitingProcessing.pdf')), last_response.length
+
+    FileUtils.rm_r dir
+
+    src_file = Rails.root.join('test_files/submissions/1.2P.pdf')
+    FileUtils.cp src_file, task.final_pdf_path
+
+    get "/api/projects/#{project.id}/task_def_id/#{td.id}/submission"
+
+    assert_equal 200, last_response.status
+    assert_equal File.size(src_file), last_response.length
+
+    unit.destroy
+  end
+
+  def test_cant_submit_until_prerequisites_submitted
+    Sidekiq::Testing.inline! do
+      # Create a unit and two task definitions
+      unit = FactoryBot.create(:unit, student_count: 1, task_count: 2)
+      td1 = unit.task_definitions.first
+      td2 = unit.task_definitions.second
+      project = unit.active_projects.first
+
+      task = project.task_for_task_definition(td2)
+
+      td1.update(
+        upload_requirements: [{ "key" => 'file0', "name" => 'Shape Class', "type" => 'code' }],
+        target_grade: 0, # Pass
+        start_date: Time.zone.now - 2.weeks,
+        target_date: Time.zone.now + 1.week
+      )
+
+      td2.update(
+        upload_requirements: [{ "key" => 'file0', "name" => 'Shape Class', "type" => 'code' }],
+        target_grade: 3, # HD
+        start_date: Time.zone.now - 2.weeks,
+        target_date: Time.zone.now + 1.week
+      )
+
+      # Create a prerequisite on the second taskDef that adds the first taskDef as a prereq
+      prereq = TaskPrerequisite.create!(
+        task_definition: td2, # Before you can submit td2...
+        prerequisite: td1, # You need to submit td1
+        task_status_id: TaskStatus.ready_for_feedback.id
+      )
+
+      assert prereq.valid?
+
+      # Add username and auth_token to Header
+      add_auth_header_for(user: project.user)
+
+      data_to_post = {
+        trigger: 'ready_for_feedback'
+      }
+
+      data_to_post = with_file('test_files/submissions/program.cs', 'application/json', data_to_post)
+
+      # Attempt to make a submission that has an unsubmitted prerequisite
+      post "/api/projects/#{project.id}/task_def_id/#{td2.id}/submission", data_to_post
+      assert_equal 409, last_response.status, last_response_body
+      task = project.task_for_task_definition(td2)
+      # Ensure the submission was denied
+      assert_equal TaskStatus.not_started, task.task_status
+      assert_equal last_response_body['error'], "Cannot submit this task until prerequisite '#{td1.abbreviation}' has been submitted"
+
+      prereq.update(task_status_id: TaskStatus.discuss.id)
+      post "/api/projects/#{project.id}/task_def_id/#{td2.id}/submission", data_to_post
+      assert_equal 409, last_response.status, last_response_body
+      task.reload
+      # Ensure the submission was denied
+      assert_equal TaskStatus.not_started, task.task_status
+      assert_equal last_response_body['error'], "Cannot submit this task until prerequisite '#{td1.abbreviation}' has been discussed"
+
+      prereq.update(task_status_id: TaskStatus.demonstrate.id)
+      post "/api/projects/#{project.id}/task_def_id/#{td2.id}/submission", data_to_post
+      assert_equal 409, last_response.status, last_response_body
+      task.reload
+      # Ensure the submission was denied
+      assert_equal TaskStatus.not_started, task.task_status
+      assert_equal last_response_body['error'], "Cannot submit this task until prerequisite '#{td1.abbreviation}' has been demonstrated"
+
+      prereq.update(task_status_id: TaskStatus.complete.id)
+      post "/api/projects/#{project.id}/task_def_id/#{td2.id}/submission", data_to_post
+      assert_equal 409, last_response.status, last_response_body
+      task.reload
+      # Ensure the submission was denied
+      assert_equal TaskStatus.not_started, task.task_status
+      assert_equal last_response_body['error'], "Cannot submit this task until prerequisite '#{td1.abbreviation}' has been completed"
+
+      prereq.update(task_status_id: TaskStatus.ready_for_feedback.id)
+
+      # Make a submission to the prerequsite task
+      post "/api/projects/#{project.id}/task_def_id/#{td1.id}/submission", data_to_post
+      assert_equal 201, last_response.status, last_response_body
+      task1 = project.task_for_task_definition(td1)
+      assert_equal TaskStatus.ready_for_feedback, task1.task_status
+
+      # Re-attempt to make a submission (Prerequisite status is ready for feedback, expecting complete)
+      post "/api/projects/#{project.id}/task_def_id/#{td2.id}/submission", data_to_post
+      assert_equal 201, last_response.status, last_response_body
+      task.reload
+      assert_equal TaskStatus.ready_for_feedback, task.task_status
+
+      prereq.destroy
+      unit.destroy
+    end
+  end
+
+  def test_prerequisites_task_status
+    # Create a unit and two task definitions
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 10)
+    td1 = unit.task_definitions.first
+    td2 = unit.task_definitions.second
+
+    td1.update(
+      upload_requirements: [{ "key" => 'file0', "name" => 'Shape Class', "type" => 'code' }],
+      target_grade: 0, # Pass
+      start_date: Time.zone.now - 2.weeks,
+      target_date: Time.zone.now + 1.week
+    )
+
+    td2.update(
+      upload_requirements: [{ "key" => 'file0', "name" => 'Shape Class', "type" => 'code' }],
+      target_grade: 3, # HD
+      start_date: Time.zone.now - 2.weeks,
+      target_date: Time.zone.now + 1.week
+    )
+
+    project = unit.active_projects.first
+
+    # Add username and auth_token to Header
+    add_auth_header_for(user: project.user)
+
+    data_to_post = {
+      trigger: 'ready_for_feedback'
+    }
+
+    # Create a prerequisite on the second taskDef that adds the first taskDef as a prereq
+    prereq = TaskPrerequisite.create!(
+      task_definition: td2, # Before you can submit td2...
+      prerequisite: td1, # You need to submit td1
+      task_status_id: TaskStatus.ready_for_feedback.id
+    )
+
+    assert prereq.valid?
+
+    tests = [
+      {
+        prerequisite_status: TaskStatus.ready_for_feedback,
+        required_status: TaskStatus.ready_for_feedback,
+        expected_status: 201,
+        expected_error: nil
+      },
+      {
+        prerequisite_status: TaskStatus.discuss,
+        required_status: TaskStatus.discuss,
+        expected_status: 201,
+        expected_error: nil
+      },
+      {
+        prerequisite_status: TaskStatus.demonstrate,
+        required_status: TaskStatus.demonstrate,
+        expected_status: 201,
+        expected_error: nil
+      },
+      {
+        prerequisite_status: TaskStatus.discuss,
+        required_status: TaskStatus.demonstrate,
+        expected_status: 201,
+        expected_error: nil
+      },
+      {
+        prerequisite_status: TaskStatus.demonstrate,
+        required_status: TaskStatus.discuss,
+        expected_status: 201,
+        expected_error: nil
+      },
+      {
+        prerequisite_status: TaskStatus.complete,
+        required_status: TaskStatus.complete,
+        expected_status: 201,
+        expected_error: nil
+      },
+      {
+        prerequisite_status: TaskStatus.complete,
+        required_status: TaskStatus.ready_for_feedback,
+        expected_status: 201,
+        expected_error: nil
+      },
+      {
+        prerequisite_status: TaskStatus.discuss,
+        required_status: TaskStatus.ready_for_feedback,
+        expected_status: 201,
+        expected_error: nil
+      }
+    ]
+
+    Sidekiq::Testing.inline! do
+      prereq_task = project.task_for_task_definition(td1)
+      task = project.task_for_task_definition(td2)
+      data_to_post = with_file('test_files/submissions/program.cs', 'application/json', data_to_post)
+
+      tests.each do |test|
+        prereq_task.update(task_status_id: test[:prerequisite_status].id)
+        task.update(task_status_id: TaskStatus.not_started.id)
+
+        post "/api/projects/#{project.id}/task_def_id/#{td2.id}/submission", data_to_post
+        assert_equal test[:expected_status], last_response.status, last_response_body
+        task.reload
+        if test[:expected_status] == 201
+          # Ensure submission was accepted
+          assert_equal TaskStatus.ready_for_feedback, task.task_status
+        else
+          # Ensure submission was denied
+          assert_equal TaskStatus.not_started, task.task_status
+        end
+      end
+
+      prereq.destroy
+      unit.destroy
+    end
+  end
+
+  def test_check_in_comment
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
+    td = TaskDefinition.create!({
+                                  unit_id: unit.id,
+                                  tutorial_stream: unit.tutorial_streams.first,
+                                  name: 'Code task',
+                                  description: 'Code task',
+                                  weighting: 4,
+                                  target_grade: 0,
+                                  start_date: Time.zone.now - 2.weeks,
+                                  target_date: Time.zone.now + 1.week,
+                                  abbreviation: 'CodeTask',
+                                  restrict_status_updates: false,
+                                  upload_requirements: [{ "key" => 'file0', "name" => 'Shape Class', "type" => 'code' }],
+                                  plagiarism_warn_pct: 0.8,
+                                  is_graded: true,
+                                  max_quality_pts: 0
+                                })
+
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+
+    student = project.student
+    tutor = unit.tutors.first
+
+    # Ensure student can not add this type of comment
+    add_auth_header_for(user: student)
+    post "/api/projects/#{project.id}/task_def_id/#{td.id}/check_in"
+    assert_equal 403, last_response.status
+
+    # Ensure not comment was created
+    lc = task.comments.last
+    assert lc.nil?
+
+    # Ensure tutor can add this type of comment
+    add_auth_header_for(user: tutor)
+    post "/api/projects/#{project.id}/task_def_id/#{td.id}/check_in"
+    assert_equal 201, last_response.status
+
+    lc = task.comments.last
+
+    # Ensure comment was created
+    assert_not lc.nil?
+    assert lc.valid?
+    assert "Checked In", lc.comment
+    assert TaskCheckedInComment, lc.type
+  end
+
+  def test_requires_discussion_blocks_complete_until_discussed_comment_added
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
+    td = TaskDefinition.create!({
+                                  unit_id: unit.id,
+                                  tutorial_stream: unit.tutorial_streams.first,
+                                  name: 'Discussion required task',
+                                  description: 'Task that requires discussion before complete',
+                                  weighting: 4,
+                                  target_grade: 0,
+                                  start_date: Time.zone.now - 2.weeks,
+                                  target_date: Time.zone.now + 1.week,
+                                  abbreviation: 'DiscussReqTask',
+                                  restrict_status_updates: false,
+                                  requires_discussion: true,
+                                  upload_requirements: [],
+                                  plagiarism_warn_pct: 0.8,
+                                  is_graded: false,
+                                  max_quality_pts: 0
+                                })
+
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+    tutor = unit.tutors.first
+
+    add_auth_header_for(user: tutor)
+
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { trigger: 'complete' }
+    assert_equal 403, last_response.status
+    assert_equal 'This task must be discussed in class before it can be marked complete.', last_response_body['error']
+    task.reload
+    assert_not_equal TaskStatus.complete, task.task_status
+
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { discussed: true }
+    assert_equal 200, last_response.status
+    task.reload
+    discussed_comment = task.comments.last
+    assert_not_nil discussed_comment
+    assert_instance_of TaskDiscussedComment, discussed_comment
+    assert_equal 'discussed_in_class', discussed_comment.content_type
+
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { trigger: 'complete' }
+    assert_equal 200, last_response.status
+    task.reload
+    assert_equal TaskStatus.complete, task.task_status
+  end
+
+  def test_require_comment_for_feedback_submission_assess_in_portfolio
+    Sidekiq::Testing.inline! do
+      unit = FactoryBot.create(:unit, student_count: 1, task_count: 2)
+      td1 = unit.task_definitions.first
+      project = unit.active_projects.first
+
+      task = project.task_for_task_definition(td1)
+
+      td1.update(
+        upload_requirements: [{ "key" => 'file0', "name" => 'Shape Class', "type" => 'code' }],
+        target_grade: 0, # Pass
+        start_date: Time.zone.now - 2.weeks,
+        target_date: Time.zone.now + 1.week,
+        assess_in_portfolio_only: false
+      )
+
+      add_auth_header_for(user: project.user)
+
+      # Make a submission where a comment isn't required
+      post "/api/projects/#{project.id}/task_def_id/#{td1.id}/submission",
+           with_file('test_files/submissions/program.cs', 'application/json', {
+                       trigger: 'ready_for_feedback'
+                     })
+      assert_equal 201, last_response.status, last_response_body
+      task.reload
+      assert_equal TaskStatus.ready_for_feedback, task.task_status
+
+      task.update(task_status: TaskStatus.not_started)
+
+      td1.update(assess_in_portfolio_only: true)
+
+      # Make a submission where a comment is required
+      post "/api/projects/#{project.id}/task_def_id/#{td1.id}/submission",
+           with_file('test_files/submissions/program.cs', 'application/json', {
+                       trigger: 'ready_for_feedback'
+                     })
+      assert_equal 422, last_response.status, last_response_body
+      task.reload
+      assert_equal TaskStatus.not_started, task.task_status
+
+      comment = 'I would like feedback with my code..'
+
+      # Make a submission with comment
+      post "/api/projects/#{project.id}/task_def_id/#{td1.id}/submission",
+           with_file('test_files/submissions/program.cs', 'application/json', {
+                       trigger: 'ready_for_feedback',
+                       comment: comment
+                     })
+      assert_equal 201, last_response.status, last_response_body
+      task.reload
+      assert_equal TaskStatus.ready_for_feedback, task.task_status
+
+      status_comment = task.comments.last
+      text_comment = task.comments.second_to_last
+
+      assert_not status_comment.nil?
+      assert_not text_comment.nil?
+
+      assert_equal TaskStatus.ready_for_feedback.name, status_comment.comment
+      assert_equal comment, text_comment.comment
+    end
+  end
+
+  def test_resubmission_doesnt_change_submission_date
+    Sidekiq::Testing.inline! do
+      unit = FactoryBot.create(:unit, task_count: 2, student_count: 0)
+      tutor = FactoryBot.create(:user, :tutor)
+
+      unit_role = unit.employ_staff(tutor, Role.tutor)
+      tutorial_stream = FactoryBot.create(:tutorial_stream, unit: unit)
+      tutorial = FactoryBot.create(:tutorial, unit: unit, tutorial_stream: tutorial_stream, campus: nil, unit_role: unit_role)
+
+      td = unit.task_definitions.first
+
+      td.update!(due_date: Time.zone.today + 1.day, tutorial_stream: tutorial_stream)
+      assert_not td.nil?
+
+      student1 = FactoryBot.create(:user, :student)
+      student2 = FactoryBot.create(:user, :student)
+
+      project1 = unit.enrol_student(student1, nil)
+      project2 = unit.enrol_student(student2, nil)
+
+      project1.enrol_in(tutorial)
+      project2.enrol_in(tutorial)
+
+      tasks = unit.tasks_for_task_inbox(tutor, false)
+
+      assert tasks.to_a.empty?
+
+      # Submit a task before the due date (student 1)
+      add_auth_header_for(user: student1)
+      data_to_post = {
+        trigger: 'ready_for_feedback'
+      }
+      data_to_post = with_file('test_files/submissions/program.cs', 'application/json', data_to_post)
+      post "/api/projects/#{project1.id}/task_def_id/#{td.id}/submission", data_to_post
+      assert_equal 201, last_response.status, last_response_body
+
+      travel 10.minutes
+
+      # Submit a task before the due date (student 2)
+      add_auth_header_for(user: student2)
+      data_to_post = {
+        trigger: 'ready_for_feedback'
+      }
+      data_to_post = with_file('test_files/submissions/program.cs', 'application/json', data_to_post)
+      post "/api/projects/#{project2.id}/task_def_id/#{td.id}/submission", data_to_post
+      assert_equal 201, last_response.status, last_response_body
+
+      tasks = unit.tasks_for_task_inbox(tutor, false)
+
+      assert_equal 2, tasks.to_a.count
+
+      assert_equal project1.id, tasks.first.project.id, "First task in inbox should be project1's task"
+      assert_equal project2.id, tasks.second.project.id, "Second task in inbox should be project2's task"
+
+      task1 = project1.task_for_task_definition(td)
+      task2 = project2.task_for_task_definition(td)
+
+      assert_equal TaskStatus.ready_for_feedback, task1.task_status
+      assert_equal TaskStatus.ready_for_feedback, task2.task_status
+
+      assert task2.submission_date > task1.submission_date
+
+      # Submit the task again, ensure the submission_date hasn't changed (student1)
+      travel 10.minutes
+
+      # Submit a task before the due date (student 1)
+      add_auth_header_for(user: student1)
+      data_to_post = {
+        trigger: 'ready_for_feedback'
+      }
+      data_to_post = with_file('test_files/submissions/program.cs', 'application/json', data_to_post)
+      post "/api/projects/#{project1.id}/task_def_id/#{td.id}/submission", data_to_post
+      assert_equal 201, last_response.status, last_response_body
+
+      tasks = unit.tasks_for_task_inbox(tutor, false)
+
+      assert_equal project1.id, tasks.first.project.id, "First task in inbox should be project1's task"
+      assert_equal project2.id, tasks.second.project.id, "Second task in inbox should be project2's task"
+
+      task1 = project1.task_for_task_definition(td)
+      task2 = project2.task_for_task_definition(td)
+      assert task2.submission_date > task1.submission_date
+      assert TaskStatus.ready_for_feedback, task1.task_status
+
+      # Submit the task again after the duedate, ensure the submission_date hasn't changed (student1)
+      travel 2.days
+
+      # Submit a task before the due date (student 1)
+      add_auth_header_for(user: student1)
+      data_to_post = {
+        trigger: 'ready_for_feedback'
+      }
+      data_to_post = with_file('test_files/submissions/program.cs', 'application/json', data_to_post)
+      post "/api/projects/#{project1.id}/task_def_id/#{td.id}/submission", data_to_post
+      assert_equal 201, last_response.status, last_response_body
+
+      tasks = unit.tasks_for_task_inbox(tutor, false)
+
+      assert_equal project1.id, tasks.first.project.id, "First task in inbox should be project1's task"
+      assert_equal project2.id, tasks.second.project.id, "Second task in inbox should be project2's task"
+
+      task1 = project1.task_for_task_definition(td)
+      task2 = project2.task_for_task_definition(td)
+      assert task2.submission_date > task1.submission_date
+      assert TaskStatus.ready_for_feedback, task1.task_status
+
+      task1.update(task_status_id: TaskStatus.fix_and_resubmit.id)
+
+      # Submit the task again, now expecting submission date to update
+      travel 10.minutes
+
+      # Submit a task before the due date (student 1)
+      add_auth_header_for(user: student1)
+      data_to_post = {
+        trigger: 'ready_for_feedback'
+      }
+      data_to_post = with_file('test_files/submissions/program.cs', 'application/json', data_to_post)
+      post "/api/projects/#{project1.id}/task_def_id/#{td.id}/submission", data_to_post
+      assert_equal 201, last_response.status, last_response_body
+
+      tasks = unit.tasks_for_task_inbox(tutor, false)
+
+      assert_equal project2.id, tasks.first.project.id, "First task in inbox should be project1's task"
+      assert_equal project1.id, tasks.second.project.id, "Second task in inbox should be project2's task"
+
+      task1 = project1.task_for_task_definition(td)
+      task2 = project2.task_for_task_definition(td)
+      assert task1.submission_date > task2.submission_date
+    end
+  end
+
+  def test_task_target_date_permissions
+    unit = FactoryBot.create(:unit, task_count: 2, student_count: 1)
+    # tutor = FactoryBot.create(:user, :tutor)
+    # convenor = FactoryBot.create(:user, :convenor)
+
+    # convenor_role = unit.employ_staff(convenor, Role.convenor)
+    # tutor_role = unit.employ_staff(tutor, Role.tutor)
+
+    td = unit.task_definitions.first
+
+    original_start_date = Time.zone.today
+    original_end_date = Time.zone.today + 1.day
+    td.update!(target_date: original_end_date, start_date: original_start_date)
+    assert_not td.nil?
+
+    student1 = FactoryBot.create(:user, :student)
+
+    project1 = unit.enrol_student(student1, nil)
+    task = project1.task_for_task_definition(td)
+
+    assert_equal original_end_date, task.due_date
+
+    unit.update!(allow_flexible_dates: false)
+
+    new_start_date = Time.zone.today + 2.days
+    new_end_date = Time.zone.today + 4.days
+
+    add_auth_header_for(user: student1)
+
+    put "/api/projects/#{project1.id}/task_def_id/#{td.id}/target_dates", {
+      target_start_date: new_start_date,
+      target_due_date: new_end_date
+    }
+
+    assert_equal 403, last_response.status
+    assert_equal original_end_date, task.due_date
+
+    unit.update!(allow_flexible_dates: true)
+
+    put "/api/projects/#{project1.id}/task_def_id/#{td.id}/target_dates"
+    assert_equal 400, last_response.status # target_start_date and target_due_date are required
+
+    put "/api/projects/#{project1.id}/task_def_id/#{td.id}/target_dates", {
+      target_start_date: new_start_date,
+      target_due_date: new_end_date
+    }
+    assert_equal 200, last_response.status
+
+    task.reload
+    assert_equal new_start_date, task.target_start_date
+    assert_equal new_end_date, task.target_due_date
+
+    put "/api/projects/#{project1.id}/reset_target_dates"
+    assert_equal 200, last_response.status
+    task.reload
+    assert_nil task.target_start_date
+    assert_nil task.target_due_date
+
+    unit.update!(allow_flexible_dates: false)
+  end
 
 end

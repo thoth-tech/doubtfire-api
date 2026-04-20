@@ -19,27 +19,35 @@ class Project < ApplicationRecord
   belongs_to :unit, optional: false
   belongs_to :user, optional: false
   belongs_to :campus, optional: true
+  belongs_to :assessor, class_name: 'User', optional: true
 
   # has_one :user, through: :student
   has_many :tasks, dependent: :destroy # Destroying a project will also nuke all of its tasks
-
   has_many :group_memberships, dependent: :destroy
+  has_many :tutorial_enrolments, dependent: :destroy
+
   has_many :groups, -> { where('group_memberships.active = :value', value: true) }, through: :group_memberships
   has_many :task_engagements, through: :tasks
   has_many :comments, through: :tasks
   has_many :tutorial_enrolments, dependent: :destroy
+  has_many :session_activities,  dependent: :destroy
 
-  has_many :learning_outcome_task_links, through: :tasks
+  has_many :staff_notes, dependent: :destroy
 
   # Callbacks - methods called are private
   before_destroy :can_destroy?
 
   validates :grade_rationale, length: { maximum: 4095, allow_blank: true }
+  validates :spec_con_days, presence: true, numericality: { only_integer: true, greater_than_or_equal_to: 0 }, if: :spec_con_days_changed?
 
   validate :tutorial_enrolment_same_campus, if: :will_save_change_to_enrolled?
 
   after_update :check_withdraw_from_groups, if: :saved_change_to_enrolled?
   after_update :update_task_stats, if: :saved_change_to_target_grade? # TODO: consider making this an async task!
+  after_update :revert_overdue_tasks, if: :saved_change_to_spec_con_days?
+
+  # Don't create project if one already exists for user_id in this unit_id
+  validates :user_id, uniqueness: { scope: :unit_id }
 
   #
   # Permissions around project data
@@ -50,7 +58,8 @@ class Project < ApplicationRecord
       :get,
       :make_submission,
       :get_submission,
-      :change
+      :change,
+      :reprocess_submission
     ]
     # What can tutors do with projects?
     tutor_role_permissions = [
@@ -61,18 +70,30 @@ class Project < ApplicationRecord
       :get_submission,
       :change,
       :assess,
-      :change_campus
+      :change_campus,
+      :get_staff_note,
+      :create_staff_note,
+      :reprocess_submission,
+      :get_discussion_prompt
     ]
+
     # What can admins do with projects?
     admin_role_permissions = [
       :get,
-      :get_submission
+      :get_submission,
+      :reprocess_submission,
+      :get_discussion_prompt
     ]
+
     # What can auditors do with projects?
     auditor_role_permissions = [
       :get,
-      :get_submission
+      :get_submission,
+      :get_staff_note,
+      :reprocess_submission,
+      :get_discussion_prompt
     ]
+
     # What can nil users do with projects?
     nil_role_permissions = []
 
@@ -173,10 +194,6 @@ class Project < ApplicationRecord
     "#{id} - #{student.name} (#{student.username}) #{unit.code}"
   end
 
-  def task_outcome_alignments
-    learning_outcome_task_links
-  end
-
   #
   # All "discuss" and "demonstrate" become complete
   #
@@ -225,9 +242,7 @@ class Project < ApplicationRecord
     (tutorial.present? and tutorial.tutor.present?) ? tutorial.tutor : main_convenor_user
   end
 
-  def main_convenor_user
-    unit.main_convenor_user
-  end
+  delegate :main_convenor_user, to: :unit
 
   def user_role(user)
     if user == student then :student
@@ -292,9 +307,12 @@ class Project < ApplicationRecord
           num_new_comments: r.number_unread,
           similarity_flag: AuthorisationHelpers.authorise?(user, t, :view_plagiarism) ? r.similar_to_count > 0 : false,
           extensions: t.extensions,
+          scorm_extensions: t.scorm_extensions,
           due_date: t.due_date,
           submission_date: t.submission_date,
-          completion_date: t.completion_date
+          completion_date: t.completion_date,
+          target_start_date: t.target_start_date,
+          target_due_date: t.target_due_date
         }
       end
   end
@@ -342,8 +360,6 @@ class Project < ApplicationRecord
     # Start with overdue...
     #
     overdue_tasks = task_states.select { |ts| to_target.call(ts) < Time.zone.today }
-
-    grades = ["Pass", "Credit", "Distinction", "High Distinction"]
 
     for i in GradeHelper::RANGE
       graded_tasks = overdue_tasks.select { |ts| ts[:task_definition].target_grade == i  }
@@ -514,6 +530,17 @@ class Project < ApplicationRecord
     }
   end
 
+  def revert_overdue_tasks
+    tasks.each do |task|
+      next if task.submission_date.blank?
+
+      if task.submitted_before_due? && (task.task_status == TaskStatus.assess_in_portfolio || task.task_status == TaskStatus.time_exceeded)
+        task.update!(task_status: TaskStatus.ready_for_feedback)
+        task.add_status_comment(unit.main_convenor.user, TaskStatus.ready_for_feedback)
+      end
+    end
+  end
+
   # Recalculate the task stats for the project, and store in the
   # task_stats field
   def update_task_stats
@@ -641,25 +668,57 @@ class Project < ApplicationRecord
     group_memberships.joins(:group).where('groups.group_set_id = :id', id: gs).first
   end
 
-  def export_task_alignment_to_csv
-    LearningOutcomeTaskLink.export_task_alignment_to_csv(unit, self)
-  end
-
   def send_weekly_status_email(summary_stats, middle_of_unit)
     did_revert_to_pass = false
-    if middle_of_unit && should_revert_to_pass && !portfolio_exists?
-      self.target_grade = 0
-      save
-      did_revert_to_pass = true
+    # TODO: refactor automatic target grade reset
+    # if middle_of_unit && should_revert_to_pass && !portfolio_exists?
+    #   self.target_grade = 0
+    #   save
+    #   did_revert_to_pass = true
 
-      summary_stats[:revert_count] = summary_stats[:revert_count] + 1
-      summary_stats[:revert][main_convenor_user] << self
-    end
+    #   summary_stats[:revert_count] = summary_stats[:revert_count] + 1
+    #   summary_stats[:revert][main_convenor_user] << self
+    # end
 
     return unless student.receive_feedback_notifications
     return if portfolio_exists? && !middle_of_unit
 
-    NotificationsMailer.weekly_student_summary(self, summary_stats, did_revert_to_pass).deliver_now
+    begin
+      NotificationsMailer.weekly_student_summary(self, summary_stats, did_revert_to_pass).deliver_now
+    rescue StandardError => e
+      logger.error "Failed to send weekly status email for project #{id}!\n#{e.message}"
+    end
+  end
+
+  def archive_submissions(out)
+    out.puts " - Archiving submissions for project #{id}"
+    tasks.each(&:archive_submission)
+
+    FileUtils.rm_f(portfolio_path) if portfolio_available
+  end
+
+  def add_staff_note(user, text, reply_to_id = nil)
+    text = text.strip
+    return nil if user.nil? || text.nil? || text.empty?
+
+    ln = staff_notes.last
+
+    # don't add if duplicate note
+    return if ln && ln.user == user && ln.note == text
+
+    note = StaffNote.create
+    note.note = text
+    note.user = user
+    note.project = self
+    note.reply_to_id = reply_to_id
+    note.save!
+    note
+  end
+
+  # TODO: env var for escalation attempts -- per unit setting? max_feedback_escalation_attempts
+
+  def escalation_attempts_remaining
+    3 - ModeratedTask.where(task: tasks, moderation_type: :escalation, outcome: [nil, 'upheld']).count
   end
 
   private
@@ -679,7 +738,7 @@ class Project < ApplicationRecord
     group_memberships.each do |gm|
       next unless gm.active
 
-      if !gm.valid? || gm.group.beyond_capacity?
+      if gm.invalid? || gm.group.beyond_capacity?
         gm.update(active: false)
       end
     end
