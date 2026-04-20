@@ -57,7 +57,6 @@ module Entities
     expose :has_jplag_report?, as: :has_jplag_report, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :is_graded
     expose :max_quality_pts
-<<<<<<< HEAD
     expose :overseer_image_id, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :assessment_enabled, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :moss_language, if: ->(unit, options) { staff?(options[:my_role]) }
@@ -69,7 +68,6 @@ module Entities
     expose :estimated_hours do |task_def, _options|
       task_def.estimated_hours
     end
-=======
     expose :overseer_image_id, if: ->(unit, options) { staff?(options[:my_role]) }, expose_nil: false
     # expose :assessment_enabled, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :assessment_enabled
@@ -91,6 +89,5 @@ module Entities
     end
     expose :overseer_resource_files, if: ->(task_def, options) { staff?(options[:my_role]) }
 
->>>>>>> upstream/Feature/AI-Suggestion
   end
 end
