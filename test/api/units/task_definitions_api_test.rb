@@ -24,7 +24,8 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
       'restrict_status_updates',
       'plagiarism_warn_pct',
       'is_graded',
-      'max_quality_pts'
+      'max_quality_pts',
+      'estimated_hours'
     ]
   end
 
@@ -49,7 +50,8 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
         upload_requirements:      '[ { "key": "file0", "name": "Shape Class", "type": "document" } ]',
         plagiarism_warn_pct:      80,
         is_graded:                false,
-        max_quality_pts:          0
+        max_quality_pts:          0,
+        estimated_hours:          0
       }
     }
 
@@ -66,6 +68,8 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     assert_equal [{ "key" => "file0", "name" => "Shape Class", "type" => "document" }], td.upload_requirements
     assert_equal unit.tutorial_streams.first.id, td.tutorial_stream_id
     assert_equal 4, td.weighting
+    assert_equal (24 * 60), td.estimated_time_minutes
+    assert_equal 0, last_response_body['estimated_hours']
 
     data_to_put = {
       task_def: {
@@ -83,7 +87,8 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
         upload_requirements:      [ { "key": "file0", "name": "Other Class", "type": "document" } ].to_json,
         plagiarism_warn_pct:      80,
         is_graded:                false,
-        max_quality_pts:          0
+        max_quality_pts:          0,
+        estimated_hours:          3
       }
     }
 
@@ -99,6 +104,8 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     assert_equal unit.tutorial_streams.last.id, td.tutorial_stream_id
     assert_equal [{ "key" => "file0", "name" => "Other Class", "type" => "document" }], td.upload_requirements
     assert_equal 2, td.weighting
+    assert_equal 3060, td.estimated_time_minutes
+    assert_equal 3, last_response_body['estimated_hours']
   end
 
   def test_post_invalid_file_tasksheet
