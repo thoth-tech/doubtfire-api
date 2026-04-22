@@ -41,3 +41,9 @@ _history
 # Institution specific config
 config/*_setting.rb
 !config/no_institution_setting.rb
+
+# Ignore TorchServe logs and config
+ml_services/logs/*
+
+# Ignore TorchServe auto-generated key file
+ml_services/key_file.json

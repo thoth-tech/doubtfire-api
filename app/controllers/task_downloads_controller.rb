@@ -49,4 +49,28 @@ class TaskDownloadsController < ApplicationController
   rescue MyException => e
     render json: e.message, status: e.status
   end
+
+  # prediction effort function
+
+  protect_from_forgery with: :null_session # allow API POST without CSRF token
+  # skip_before_action :verify_authenticity_token, only: [:predict_effort]
+
+  # POST /tasks/predict_effort
+  def predict_effort
+    features = params[:features]
+
+    if features.blank?
+      render json: { error: "Features parameter is required" }, status: :bad_request
+      return
+    end
+
+    prediction_value = EffortPredictionService.predicted_effort(features)
+
+    if prediction_value
+      render json: { predicted_effort: prediction_value }
+    else
+      render json: { error: "Prediction failed" }, status: :internal_server_error
+    end
+  end
+
 end

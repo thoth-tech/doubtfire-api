@@ -31,7 +31,8 @@ RUN apt-get update && \
 ENV PATH=$PATH:/opt/texlive/bin/x86_64-linux:/opt/texlive/bin/aarch64-linux
 
 # Install required TeX Live packages for lualatex compilation
-RUN tlmgr install \
+RUN tlmgr update --self && tlmgr update --all && tlmgr install \
+#RUN tlmgr install \
   catchfile \
   csvsimple \
   environ \
@@ -53,7 +54,7 @@ RUN tlmgr install \
   paralist \
   pdfcol \
   pdflscape \
-  pdfmanagement-testphase \
+  #pdfmanagement-testphase \
   pdfpages \
   tagpdf \
   tcolorbox \
