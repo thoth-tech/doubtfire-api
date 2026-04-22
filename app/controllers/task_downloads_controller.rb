@@ -73,9 +73,4 @@ class TaskDownloadsController < ApplicationController
     end
   end
 
-
-
-
 end
-
-
