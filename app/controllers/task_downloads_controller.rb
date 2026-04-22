@@ -64,36 +64,18 @@ class TaskDownloadsController < ApplicationController
       return
     end
 
-    uri = URI("http://localhost:8080/predictions/effort-predictor")
-    headers = {
-      "Content-Type" => "application/json",
-      "Authorization" => "Bearer #{ENV.fetch('TORCHSERVE_INFERENCE_KEY', nil)}"
-    }
-    body = { features: features }.to_json
+    prediction_value = EffortPredictionService.predicted_effort(features)
 
-    response = Net::HTTP.post(uri, body, headers)
-    Rails.logger.info("TorchServe raw response: #{response.body}")
-
-    if response.is_a?(Net::HTTPSuccess)
-      prediction = begin
-        JSON.parse(response.body)
-      rescue StandardError
-        response.body
-      end
-      prediction_value =
-        case prediction
-        when Array
-          prediction.first
-        when Hash
-          prediction["predicted_effort"] || prediction.values.first
-        else
-          prediction
-        end
-
+    if prediction_value
       render json: { predicted_effort: prediction_value }
     else
-      Rails.logger.error("TorchServe error: #{response.code} #{response.body}")
       render json: { error: "Prediction failed" }, status: :internal_server_error
     end
   end
+
+
+
+
 end
+
+

@@ -28,4 +28,18 @@ class EffortPredictionService
       nil
     end
   end
+
+  # Added a new helper method
+  def self.predicted_effort(features)
+    result = predict(features)
+    case result
+    when Array
+      result.first
+    when Hash
+      result["predicted_effort"] || result.values.first
+    else
+      result
+    end
+  end
+
 end
