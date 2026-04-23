@@ -474,6 +474,10 @@ class Project < ApplicationRecord
     orange_pct: 0,
     blue_pct: 0,
     green_pct: 0,
+    hd_pct: 0,
+    oa_pct: 0,
+    a_pct: 1,
+    ba_pct: 0,
     order_scale: 0
   }.freeze
 
@@ -495,6 +499,11 @@ class Project < ApplicationRecord
       grey_pct = (1 - red_pct - orange_pct - green_pct - blue_pct).signif(2)
 
       order_scale = (green_pct * 100) + (blue_pct * 100) + (orange_pct * 10) - red_pct
+      
+      hd_pct = green_pct
+      oa_pct = blue_pct
+      a_pct = grey_pct
+      ba_pct = (orange_pct + red_pct).signif(2)
     else
       red_pct = 0
       orange_pct = 0
@@ -502,6 +511,10 @@ class Project < ApplicationRecord
       blue_pct = 0
       grey_pct = 1
       order_scale = 0
+      hd_pct = 0
+      oa_pct = 0
+      a_pct = 1
+      ba_pct = 0
     end
 
     {
@@ -510,6 +523,10 @@ class Project < ApplicationRecord
       orange_pct: orange_pct,
       blue_pct: blue_pct,
       green_pct: green_pct,
+      hd_pct: hd_pct,
+      oa_pct: oa_pct,
+      a_pct: a_pct,
+      ba_pct: ba_pct,
       order_scale: order_scale
     }
   end
