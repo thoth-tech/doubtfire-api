@@ -20,7 +20,7 @@ class StatusTest < ActiveSupport::TestCase
         abbreviation: 'test_status_comments',
         name: 'test_status_comments',
         description: 'test_status_comments',
-        weighting: 4,
+        estimated_hours: 4,
         target_grade: 0,
         start_date: Time.zone.now - 2.weeks,
         target_date: Time.zone.now - 1.week,

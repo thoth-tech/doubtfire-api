@@ -38,7 +38,7 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
         tutorial_stream_abbr:     unit.tutorial_streams.first.abbreviation,
         name:                     'New Task Def',
         description:              'First task def',
-        weighting:                4,
+        estimated_hours:                4,
         target_grade:             1,
         group_set_id:             unit.group_sets.first.id,
         start_date:               unit.start_date,
@@ -65,14 +65,14 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     assert_json_matches_model td, last_response_body, all_task_def_keys
     assert_equal [{ "key" => "file0", "name" => "Shape Class", "type" => "document" }], td.upload_requirements
     assert_equal unit.tutorial_streams.first.id, td.tutorial_stream_id
-    assert_equal 4, td.weighting
+    assert_equal 4, td.estimated_hours
 
     data_to_put = {
       task_def: {
         tutorial_stream_abbr:     unit.tutorial_streams.last.abbreviation,
         name:                     'New Task Def 1',
         description:              'First task def 1',
-        weighting:                2,
+        estimated_hours:                2,
         target_grade:             2,
         group_set_id:             nil,
         start_date:               unit.start_date + 2.days,
@@ -98,7 +98,7 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     assert_json_matches_model td, last_response_body, all_task_def_keys
     assert_equal unit.tutorial_streams.last.id, td.tutorial_stream_id
     assert_equal [{ "key" => "file0", "name" => "Other Class", "type" => "document" }], td.upload_requirements
-    assert_equal 2, td.weighting
+    assert_equal 2, td.estimated_hours
   end
 
   def test_post_invalid_file_tasksheet
@@ -245,7 +245,7 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
         tutorial_stream: unit.tutorial_streams.first,
         name: 'test_submission_creates_folders',
         description: 'test def',
-        weighting: 4,
+        estimated_hours: 4,
         target_grade: 0,
         start_date: unit.start_date + 1.week,
         target_date: unit.start_date + 2.weeks,
@@ -299,7 +299,7 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
         tutorial_stream: unit.tutorial_streams.first,
         name: 'Task to switch from ind to group after submission',
         description: 'test def',
-        weighting: 4,
+        estimated_hours: 4,
         target_grade: 0,
         start_date: unit.start_date + 1.week,
         target_date: unit.start_date + 2.weeks,

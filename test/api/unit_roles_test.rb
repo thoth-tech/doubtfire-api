@@ -220,7 +220,7 @@ class UnitRolesTest < ActiveSupport::TestCase
           task_def: {
             name: "Sample Task",
             description: "This is a test task",
-            weighting: 10,
+            estimated_hours: 10,
             target_grade: 50,
             start_date: Time.zone.today,
             target_date: Time.zone.today + 7.days,
