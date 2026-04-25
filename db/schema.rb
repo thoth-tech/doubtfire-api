@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_03_22_230239) do
+ActiveRecord::Schema[8.0].define(version: 2026_04_25_091151) do
   create_table "activity_types", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
     t.string "name", null: false
     t.string "abbreviation", null: false
@@ -420,7 +420,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_03_22_230239) do
     t.bigint "unit_id"
     t.string "name"
     t.string "description", limit: 4096
-    t.decimal "weighting", precision: 10
+    t.decimal "estimated_hours", precision: 10
     t.datetime "target_date", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false

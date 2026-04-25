@@ -837,7 +837,7 @@ class Task < ApplicationRecord
   end
 
   def weight
-    task_definition.weighting.to_f
+    task_definition.estimated_hours.to_f
   end
 
   def add_text_comment(user, text, reply_to_id = nil)

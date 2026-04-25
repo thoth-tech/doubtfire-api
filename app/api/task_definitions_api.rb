@@ -19,7 +19,7 @@ class TaskDefinitionsApi < Grape::API
       optional :tutorial_stream_abbr,     type: String,   desc: 'The abbreviation of tutorial stream'
       requires :name,                     type: String,   desc: 'The name of this task def'
       requires :description,              type: String,   desc: 'The description of this task def'
-      requires :weighting,                type: Integer,  desc: 'The weighting of this task'
+      requires :estimated_hours,          type: Integer,  desc: 'The estimated number of hours to complete this task'
       requires :target_grade,             type: Integer,  desc: 'Minimum grade for task'
       optional :group_set_id,             type: Integer,  desc: 'Related group set'
       requires :start_date,               type: Date,     desc: 'The date when the task should be started'
@@ -57,7 +57,7 @@ class TaskDefinitionsApi < Grape::API
                                               .permit(
                                                 :name,
                                                 :description,
-                                                :weighting,
+                                                :estimated_hours,
                                                 :target_grade,
                                                 :start_date,
                                                 :target_date,
@@ -115,7 +115,7 @@ class TaskDefinitionsApi < Grape::API
       optional :tutorial_stream_abbr,     type: String,   desc: 'The abbreviation of the tutorial stream'
       optional :name,                     type: String,   desc: 'The name of this task def'
       optional :description,              type: String,   desc: 'The description of this task def'
-      optional :weighting,                type: Integer,  desc: 'The weighting of this task'
+      optional :estimated_hours,          type: Integer,  desc: 'The estimated number of hours to complete this task'
       optional :target_grade,             type: Integer,  desc: 'Target grade for task'
       optional :group_set_id,             type: Integer,  desc: 'Related group set'
       optional :start_date,               type: Date,     desc: 'The date when the task should be started'
@@ -171,7 +171,7 @@ class TaskDefinitionsApi < Grape::API
                                               .permit(
                                                 :name,
                                                 :description,
-                                                :weighting,
+                                                :estimated_hours,
                                                 :target_grade,
                                                 :start_date,
                                                 :target_date,

@@ -104,7 +104,7 @@ class TaskDefinition < ApplicationRecord
   validate :unit_must_be_same
   validate :tutorial_stream_present?
 
-  validates :weighting, presence: true
+  validates :estimated_hours, presence: true
 
   validate :check_existing_prerequisites
 
@@ -542,7 +542,7 @@ class TaskDefinition < ApplicationRecord
   end
 
   def self.csv_columns
-    [:name, :abbreviation, :description, :weighting, :target_grade, :restrict_status_updates, :max_quality_pts,
+    [:name, :abbreviation, :description, :estimated_hours, :target_grade, :restrict_status_updates, :max_quality_pts,
      :is_graded, :plagiarism_warn_pct, :scorm_enabled, :scorm_allow_review, :scorm_bypass_test, :scorm_time_delay_enabled,
      :scorm_attempt_limit, :group_set, :upload_requirements, :start_week, :start_day, :target_week, :target_day,
      :due_week, :due_day, :tutorial_stream, :assess_in_portfolio_only, :task_prerequisites, :discussion_prompts]
@@ -572,7 +572,7 @@ class TaskDefinition < ApplicationRecord
       result = TaskDefinition.find_or_create_by(unit_id: unit.id, tutorial_stream: tutorial_stream, name: name, abbreviation: abbreviation) do |td|
         td.target_date = target_date
         td.start_date = start_date
-        td.weighting = row[:weighting].to_i
+        td.estimated_hours = row[:estimated_hours].to_i
       end
       new_task = true
     end
@@ -581,7 +581,7 @@ class TaskDefinition < ApplicationRecord
     result.unit_id                     = unit.id
     result.abbreviation                = abbreviation
     result.description                 = "#{row[:description]}".strip
-    result.weighting                   = row[:weighting].to_i
+    result.estimated_hours             = row[:estimated_hours].to_i
     result.target_grade                = row[:target_grade].to_i
     result.restrict_status_updates     = %w(Yes y Y yes true TRUE 1).include? "#{row[:restrict_status_updates]}".strip
     result.max_quality_pts             = row[:max_quality_pts].to_i
