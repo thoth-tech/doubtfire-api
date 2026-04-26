@@ -9,13 +9,13 @@ class PredictEffortJob
     payload = build_payload(td)
     Rails.logger.info("ML payload: #{payload.to_json}")
     response = Net::HTTP.post(
-      URI("#{ENV.fetch('ML_SERVICE_URL')}/predict"),
+      URI("#{ENV.fetch('ML_SERVICE_URL')}predict"),
       payload.to_json,
       "Content-Type" => "application/json"
     )
 
     result = JSON.parse(response.body)
-
+    Rails.logger.info("FastAPI response: #{response.body}")
     td.update(predicted_effort: result["predicted_effort"])
   end
 
