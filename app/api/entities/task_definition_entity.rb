@@ -13,6 +13,7 @@ module Entities
     expose :name
     expose :description
     expose :estimated_hours
+    expose :predicted_effort
     expose :target_grade
 
     with_options(format_with: :date_only) do

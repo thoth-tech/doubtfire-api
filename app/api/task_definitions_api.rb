@@ -20,6 +20,7 @@ class TaskDefinitionsApi < Grape::API
       requires :name,                     type: String,   desc: 'The name of this task def'
       requires :description,              type: String,   desc: 'The description of this task def'
       requires :estimated_hours,          type: Integer,  desc: 'The estimated number of hours to complete this task'
+      optional :predicted_effort,         type: Float,    desc: 'The predicted effort of the task based on task features'
       requires :target_grade,             type: Integer,  desc: 'Minimum grade for task'
       optional :group_set_id,             type: Integer,  desc: 'Related group set'
       requires :start_date,               type: Date,     desc: 'The date when the task should be started'
@@ -58,6 +59,7 @@ class TaskDefinitionsApi < Grape::API
                                                 :name,
                                                 :description,
                                                 :estimated_hours,
+                                                :predicted_effort,
                                                 :target_grade,
                                                 :start_date,
                                                 :target_date,
@@ -116,6 +118,7 @@ class TaskDefinitionsApi < Grape::API
       optional :name,                     type: String,   desc: 'The name of this task def'
       optional :description,              type: String,   desc: 'The description of this task def'
       optional :estimated_hours,          type: Integer,  desc: 'The estimated number of hours to complete this task'
+      optional :predicted_effort,         type: Float,    desc: 'The predicted effort of the task based on task features'
       optional :target_grade,             type: Integer,  desc: 'Target grade for task'
       optional :group_set_id,             type: Integer,  desc: 'Related group set'
       optional :start_date,               type: Date,     desc: 'The date when the task should be started'
@@ -172,6 +175,7 @@ class TaskDefinitionsApi < Grape::API
                                                 :name,
                                                 :description,
                                                 :estimated_hours,
+                                                :predicted_effort,
                                                 :target_grade,
                                                 :start_date,
                                                 :target_date,
@@ -924,6 +928,24 @@ class TaskDefinitionsApi < Grape::API
     job = setup_job(job_id)
 
     present job, with: Entities::SidekiqJobEntity
+  end
+
+  desc 'Predict the effort required for a task description'
+  params do
+    requires :unit_id, type: Integer, desc: 'The unit that has the task definition'
+    requires :task_def_id, type: Integer, desc: 'The task definition to predict effort for'
+  end
+  post '/units/:unit_id/task_definitions/:task_def_id/predict_effort' do
+    unit = Unit.find(params[:unit_id])
+    unless authorise? current_user, unit, :get_students
+      error!({ error: "Not authorised to run prediction." }, 403)
+    end
+
+    td = unit.task_definitions.find(params[:task_def_id])
+
+    PredictEffortJob.perform_async(td.id)
+
+    present status: "Prediction queued"
   end
 
   # desc 'Retrieve the contents of the overseer execution script'
