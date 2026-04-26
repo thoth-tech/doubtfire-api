@@ -10,6 +10,11 @@ class ApiRoot < Grape::API
   format :json
 
   before do
+    header['X-Frame-Options'] = 'DENY'
+    header['X-Content-Type-Options'] = 'nosniff'
+    header['Referrer-Policy'] = 'no-referrer'
+    header['Permissions-Policy'] = 'geolocation=(), camera=(), microphone=()'
+    header['Content-Security-Policy'] = "default-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self';"
     header['Access-Control-Allow-Origin'] = '*'
     header['Access-Control-Request-Method'] = '*'
 
