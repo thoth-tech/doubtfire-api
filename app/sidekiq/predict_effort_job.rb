@@ -9,9 +9,14 @@ class PredictEffortJob
     store initiator: user_id
     td = TaskDefinition.find(task_def_id)
     payload = build_payload(td)
+
+    ml_url = ENV.fetch('ML_SERVICE_URL')
+    if ml_url.blank?
+      raise StandardError, "ML_SERVICE_URL is not configured"
+    end
     Rails.logger.info("ML payload: #{payload.to_json}")
     response = Net::HTTP.post(
-      URI("#{ENV.fetch('ML_SERVICE_URL')}predict"),
+      URI("#{ml_url}predict"),
       payload.to_json,
       "Content-Type" => "application/json"
     )
@@ -19,6 +24,17 @@ class PredictEffortJob
     result = JSON.parse(response.body)
     Rails.logger.info("FastAPI response: #{response.body}")
     td.update(predicted_effort: result["predicted_effort"])
+    store result: result
+  rescue StandardError => e
+    Rails.logger.error("PredictEffortJob failed: #{e.message}")
+
+    store(
+      status: 'failed',
+      message: e.message,
+      result: { error: e.message }
+    )
+
+    raise e
   end
 
   private
