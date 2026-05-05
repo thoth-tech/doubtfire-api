@@ -943,9 +943,12 @@ class TaskDefinitionsApi < Grape::API
 
     td = unit.task_definitions.find(params[:task_def_id])
 
-    PredictEffortJob.perform_async(td.id)
+    job_id = PredictEffortJob.perform_async(td.id)
 
-    present status: "Prediction queued"
+    present(
+      status: "Prediction queued",
+      job_id: job_id
+    )
   end
 
   # desc 'Retrieve the contents of the overseer execution script'
