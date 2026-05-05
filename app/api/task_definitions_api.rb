@@ -943,12 +943,29 @@ class TaskDefinitionsApi < Grape::API
 
     td = unit.task_definitions.find(params[:task_def_id])
 
-    job_id = PredictEffortJob.perform_async(td.id)
+    begin
+      job_id = PredictEffortJob.perform_async(td.id)
 
-    present(
-      status: "Prediction queued",
-      job_id: job_id
-    )
+      error!({ error: "Failed to enqueue prediction job" }, 500) if job_id.nil?
+
+      present(
+        {
+          job_id: job_id,
+          message: "Prediction queued",
+          success: true
+        }
+      )
+    rescue StandardError => e
+      Rails.logger.error("Failed to enqueue prediction job: #{e.message}")
+
+      error!(
+        {
+          message: "Failed to enqueue job",
+          error: "Could not queue prediction job",
+          success: false
+        }, 500
+      )
+    end
   end
 
   # desc 'Retrieve the contents of the overseer execution script'
