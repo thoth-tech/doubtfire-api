@@ -18,6 +18,13 @@ module Doubtfire
   class Application < Rails::Application
     config.load_defaults 7.0
 
+    config.action_dispatch.default_headers.merge!({
+    'X-Frame-Options' => 'DENY',
+    'X-Content-Type-Options' => 'nosniff',
+    'Referrer-Policy' => 'no-referrer',
+    'Permissions-Policy' => 'geolocation=(), camera=(), microphone=()',
+    'Content-Security-Policy' => "default-src 'self';"})
+
     # Remove Action Mailbox and Active Storage routes - not used
     initializer(:remove_action_mailbox_and_activestorage_routes, after: :add_routing_paths) do |app|
       app.routes_reloader.paths.delete_if { |path| path =~ /activestorage/ }
