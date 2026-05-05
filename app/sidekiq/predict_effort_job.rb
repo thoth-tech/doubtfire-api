@@ -3,8 +3,10 @@ require "json"
 
 class PredictEffortJob
   include Sidekiq::Worker
+  include Sidekiq::Status::Worker
 
-  def perform(task_def_id)
+  def perform(task_def_id, user_id)
+    store initiator: user_id
     td = TaskDefinition.find(task_def_id)
     payload = build_payload(td)
     Rails.logger.info("ML payload: #{payload.to_json}")

@@ -944,14 +944,13 @@ class TaskDefinitionsApi < Grape::API
     td = unit.task_definitions.find(params[:task_def_id])
 
     begin
-      job_id = PredictEffortJob.perform_async(td.id)
-
-      error!({ error: "Failed to enqueue prediction job" }, 500) if job_id.nil?
+      job_id = PredictEffortJob.perform_async(td.id, current_user.id)
+      error!({ error: 'Failed to enqueue prediction job' }, 500) if job_id.nil?
 
       present(
         {
           job_id: job_id,
-          message: "Prediction queued",
+          message: 'Prediction queued',
           success: true
         }
       )
@@ -960,8 +959,8 @@ class TaskDefinitionsApi < Grape::API
 
       error!(
         {
-          message: "Failed to enqueue job",
-          error: "Could not queue prediction job",
+          message: 'Failed to enqueue job',
+          error: e.message,
           success: false
         }, 500
       )
