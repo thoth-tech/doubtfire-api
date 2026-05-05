@@ -49,6 +49,9 @@ module Entities
     expose :allow_student_change_tutorial, unless: :summary_only
     expose :allow_flexible_dates, unless: :summary_only
     expose :mark_late_submissions_as_assess_in_portfolio, unless: :summary_only
+    expose :feedback_warning_threshold_days, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
+    expose :feedback_overflow_threshold_days, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
+    expose :allow_effort_predictions
 
     expose :learning_outcomes, using: LearningOutcomeEntity, as: :ilos, unless: :summary_only
     expose :tutorial_streams, using: TutorialStreamEntity, unless: :summary_only
@@ -65,7 +68,5 @@ module Entities
     #   unit.group_memberships.where(active: true)
     # end
 
-    expose :feedback_warning_threshold_days, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
-    expose :feedback_overflow_threshold_days, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
   end
 end
