@@ -53,7 +53,6 @@ RUN tlmgr install \
   paralist \
   pdfcol \
   pdflscape \
-  pdfmanagement-testphase \
   pdfpages \
   tagpdf \
   tcolorbox \

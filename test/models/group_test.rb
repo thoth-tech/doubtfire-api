@@ -150,7 +150,7 @@ class GroupModelTest < ActiveSupport::TestCase
         tutorial_stream: unit.tutorial_streams.first,
         name: 'Task for test',
         description: 'test def',
-        weighting: 4,
+        estimated_hours: 4,
         target_grade: 0,
         start_date: Time.zone.now + 3.days,
         target_date: Time.zone.now + 1.week,
