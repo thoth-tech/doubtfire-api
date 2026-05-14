@@ -23,8 +23,7 @@ module Doubtfire
     'X-Content-Type-Options' => 'nosniff',
     'Referrer-Policy' => 'no-referrer',
     'Permissions-Policy' => 'geolocation=(), camera=(), microphone=()',
-    'Content-Security-Policy' => "default-src 'self';"})
-
+    'Content-Security-Policy' => "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' http://fonts.googleapis.com https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;"})
     # Remove Action Mailbox and Active Storage routes - not used
     initializer(:remove_action_mailbox_and_activestorage_routes, after: :add_routing_paths) do |app|
       app.routes_reloader.paths.delete_if { |path| path =~ /activestorage/ }
