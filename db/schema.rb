@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_04_26_101725) do
+ActiveRecord::Schema[8.0].define(version: 2026_05_04_104656) do
   create_table "activity_types", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
     t.string "name", null: false
     t.string "abbreviation", null: false
@@ -744,6 +744,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_04_26_101725) do
     t.boolean "mark_late_submissions_as_assess_in_portfolio", default: false, null: false
     t.integer "feedback_warning_threshold_days", default: 5
     t.integer "feedback_overflow_threshold_days", default: 7
+    t.boolean "allow_effort_predictions", default: false, null: false
     t.index ["draft_task_definition_id"], name: "index_units_on_draft_task_definition_id"
     t.index ["main_convenor_id"], name: "index_units_on_main_convenor_id"
     t.index ["overseer_image_id"], name: "index_units_on_overseer_image_id"
