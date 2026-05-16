@@ -15,12 +15,16 @@ class PredictEffortJob
       raise StandardError, "ML_SERVICE_URL is not configured"
     end
     Rails.logger.info("ML payload: #{payload.to_json}")
+
     response = Net::HTTP.post(
       URI("#{ml_url}predict"),
       payload.to_json,
       "Content-Type" => "application/json"
     )
 
+    unless response.is_a?(Net::HTTPSuccess)
+      raise StandardError, "ML service returned #{response.code}: #{response.body}"
+    end
     result = JSON.parse(response.body)
     Rails.logger.info("FastAPI response: #{response.body}")
     td.update(predicted_effort: result["predicted_effort"])
