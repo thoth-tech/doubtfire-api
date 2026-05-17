@@ -92,6 +92,7 @@ class UnitsApi < Grape::API
       optional :assessment_enabled, type: Boolean
       optional :feedback_warning_threshold_days, type: Integer, desc: 'Number of days since a submission without feedback before its highlighted in the tutors inbox'
       optional :feedback_overflow_threshold_days, type: Integer, desc: 'Number of days since a submission without feedback before its added to overflow marking'
+      optional :allow_effort_predictions, type: Boolean, desc: 'Turn on/off ability for admins to run AI effort predictions for tasks belonging to this unit'
 
       mutually_exclusive :teaching_period_id, :start_date
       mutually_exclusive :teaching_period_id, :end_date
@@ -126,7 +127,8 @@ class UnitsApi < Grape::API
                                                           :overseer_image_id,
                                                           :assessment_enabled,
                                                           :feedback_warning_threshold_days,
-                                                          :feedback_overflow_threshold_days
+                                                          :feedback_overflow_threshold_days,
+                                                          :allow_effort_predictions,
                                                           )
 
     if unit.teaching_period_id.present? && (unit_parameters.key?(:start_date) || unit_parameters['teaching_period_id'] == -1)
@@ -174,6 +176,7 @@ class UnitsApi < Grape::API
       optional :allow_student_change_tutorial, type: Boolean, desc: 'Can turn on/off student ability to change tutorials', default: true
       optional :feedback_warning_threshold_days, type: Integer, desc: 'Number of days since a submission without feedback before its highlighted in the tutors inbox'
       optional :feedback_overflow_threshold_days, type: Integer, desc: 'Number of days since a submission without feedback before its added to overflow marking'
+      optional :allow_effort_predictions, type: Boolean, desc: 'Turn on/off ability for admins to run AI effort predictions for tasks belonging to this unit', default: false
 
       mutually_exclusive :teaching_period_id, :start_date
       mutually_exclusive :teaching_period_id, :end_date
@@ -205,7 +208,8 @@ class UnitsApi < Grape::API
                                                     :portfolio_auto_generation_date,
                                                     :allow_student_change_tutorial,
                                                     :feedback_warning_threshold_days,
-                                                    :feedback_overflow_threshold_days
+                                                    :feedback_overflow_threshold_days,
+                                                    :allow_effort_predictions,
                                                   )
 
     # Ensure the user is authorised to convene units

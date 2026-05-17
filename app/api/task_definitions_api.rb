@@ -19,7 +19,8 @@ class TaskDefinitionsApi < Grape::API
       optional :tutorial_stream_abbr,     type: String,   desc: 'The abbreviation of tutorial stream'
       requires :name,                     type: String,   desc: 'The name of this task def'
       requires :description,              type: String,   desc: 'The description of this task def'
-      requires :weighting,                type: Integer,  desc: 'The weighting of this task'
+      requires :estimated_hours,          type: Integer,  desc: 'The estimated number of hours to complete this task'
+      optional :predicted_effort,         type: Float,    desc: 'The predicted effort of the task based on task features'
       requires :target_grade,             type: Integer,  desc: 'Minimum grade for task'
       optional :group_set_id,             type: Integer,  desc: 'Related group set'
       requires :start_date,               type: Date,     desc: 'The date when the task should be started'
@@ -57,7 +58,8 @@ class TaskDefinitionsApi < Grape::API
                                               .permit(
                                                 :name,
                                                 :description,
-                                                :weighting,
+                                                :estimated_hours,
+                                                :predicted_effort,
                                                 :target_grade,
                                                 :start_date,
                                                 :target_date,
@@ -115,7 +117,8 @@ class TaskDefinitionsApi < Grape::API
       optional :tutorial_stream_abbr,     type: String,   desc: 'The abbreviation of the tutorial stream'
       optional :name,                     type: String,   desc: 'The name of this task def'
       optional :description,              type: String,   desc: 'The description of this task def'
-      optional :weighting,                type: Integer,  desc: 'The weighting of this task'
+      optional :estimated_hours,          type: Integer,  desc: 'The estimated number of hours to complete this task'
+      optional :predicted_effort,         type: Float,    desc: 'The predicted effort of the task based on task features'
       optional :target_grade,             type: Integer,  desc: 'Target grade for task'
       optional :group_set_id,             type: Integer,  desc: 'Related group set'
       optional :start_date,               type: Date,     desc: 'The date when the task should be started'
@@ -171,7 +174,8 @@ class TaskDefinitionsApi < Grape::API
                                               .permit(
                                                 :name,
                                                 :description,
-                                                :weighting,
+                                                :estimated_hours,
+                                                :predicted_effort,
                                                 :target_grade,
                                                 :start_date,
                                                 :target_date,
@@ -924,6 +928,43 @@ class TaskDefinitionsApi < Grape::API
     job = setup_job(job_id)
 
     present job, with: Entities::SidekiqJobEntity
+  end
+
+  desc 'Predict the effort required for a task description'
+  params do
+    requires :unit_id, type: Integer, desc: 'The unit that has the task definition'
+    requires :task_def_id, type: Integer, desc: 'The task definition to predict effort for'
+  end
+  post '/units/:unit_id/task_definitions/:task_def_id/predict_effort' do
+    unit = Unit.find(params[:unit_id])
+    unless authorise? current_user, unit, :get_students
+      error!({ error: "Not authorised to run prediction." }, 403)
+    end
+
+    td = unit.task_definitions.find(params[:task_def_id])
+
+    begin
+      job_id = PredictEffortJob.perform_async(td.id, current_user.id)
+      error!({ error: 'Failed to enqueue prediction job' }, 500) if job_id.nil?
+
+      present(
+        {
+          job_id: job_id,
+          message: 'Prediction queued',
+          success: true
+        }
+      )
+    rescue StandardError => e
+      Rails.logger.error("Failed to enqueue prediction job: #{e.message}")
+
+      error!(
+        {
+          message: 'Failed to enqueue job',
+          error: e.message,
+          success: false
+        }, 500
+      )
+    end
   end
 
   # desc 'Retrieve the contents of the overseer execution script'

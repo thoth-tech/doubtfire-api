@@ -11,7 +11,7 @@ FactoryBot.define do
     upload_requirements       { [{'key' => 'file0','name' => 'Imported Code','type' => 'code'}] }
     start_date                { unit.start_date + rand(1..12).weeks }
     sequence(:abbreviation)   { |n| "#{GradeHelper.short_grade_for target_grade}#{((unit.start_date - start_date) / 1.week).floor + 1}.#{n}" }
-    weighting                 { rand(1..5) }
+    estimated_hours                 { rand(1..5) }
     target_date               { start_date + rand(1..2).weeks }
     group_set                 { nil }
     tutorial_stream           { unit.tutorial_streams.sample }

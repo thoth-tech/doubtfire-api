@@ -464,7 +464,7 @@ class Project < ApplicationRecord
   # get the weight of all tasks completed or marked as ready to assess
   #
   def completed_tasks_weight
-    ready_or_complete_tasks.empty? ? 0.0 : ready_or_complete_tasks.map { |task| task.task_definition.weighting }.inject(:+)
+    ready_or_complete_tasks.empty? ? 0.0 : ready_or_complete_tasks.map { |task| task.task_definition.estimated_hours }.inject(:+)
   end
 
   def convert_hash_to_pct(hash, total)
@@ -594,7 +594,7 @@ class Project < ApplicationRecord
   end
 
   def total_task_weight
-    assigned_task_defs.map(&:weighting).inject(:+)
+    assigned_task_defs.map(&:estimated_hours).inject(:+)
   end
 
   def remaining_days

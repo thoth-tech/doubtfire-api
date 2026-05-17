@@ -15,8 +15,12 @@ class SidekiqApi < Grape::API
   get '/sidekiq/:id' do
     job_id = params[:id]
     job_data = Sidekiq::Status.get_all(job_id)
-
     initiator = Sidekiq::Status.get(job_id, :initiator)
+
+    if job_data.blank? || initiator.nil?
+      error!({ error: 'Job not found or has no owner' }, 404)
+    end
+
     if current_user.id != initiator.to_i
       error!({ error: 'You do not have permission to access this job' }, 403)
     end

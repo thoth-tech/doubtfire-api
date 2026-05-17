@@ -27,7 +27,7 @@ namespace :db do
         unit_id: unit.id,
         tutorial_stream: unit.tutorial_streams.first,
         description: faker_random_sentence(5, 10),
-        weighting: BigDecimal("2"),
+        estimated_hours: BigDecimal("2"),
         target_date: target_date,
         upload_requirements: [
           {
