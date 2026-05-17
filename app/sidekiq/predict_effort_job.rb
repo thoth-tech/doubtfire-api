@@ -48,6 +48,7 @@ class PredictEffortJob
       estimated_hours: task_def.estimated_hours,
       target_grade: task_def.target_grade,
       start_date: task_def.start_date,
+      target_date: task_def.target_date,
       due_date: task_def.due_date # ,
       # TODO: task sheet for TF-IDF
     }
