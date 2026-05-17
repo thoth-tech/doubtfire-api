@@ -157,6 +157,7 @@ class ApiRoot < Grape::API
   AuthenticationHelpers.add_auth_to DiscussionPromptsApi
   AuthenticationHelpers.add_auth_to OverseerStepsApi
   AuthenticationHelpers.add_auth_to TutorNotesApi
+  AuthenticationHelpers.add_auth_to TaskPrioritizationApi
 
   add_swagger_documentation \
     base_path: nil,
