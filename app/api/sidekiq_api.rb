@@ -17,8 +17,8 @@ class SidekiqApi < Grape::API
     job_data = Sidekiq::Status.get_all(job_id)
     initiator = Sidekiq::Status.get(job_id, :initiator)
 
-    if job_data.nil? || job_data.empty?
-      error!({ error: 'Job not found' }, 404)
+    if job_data.blank? || initiator.nil?
+      error!({ error: 'Job not found or has no owner' }, 404)
     end
 
     if current_user.id != initiator.to_i
