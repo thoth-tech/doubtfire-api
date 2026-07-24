@@ -1,6 +1,12 @@
 require 'grape'
 
 class SettingsApi < Grape::API
+  helpers AuthenticationHelpers
+
+  before do
+    authenticated?
+  end
+
   #
   # Returns the current auth method
   #
