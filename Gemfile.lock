@@ -456,6 +456,13 @@ GEM
     ruby2_keywords (0.0.5)
     rubyzip (2.4.1)
     securerandom (0.4.1)
+    sentry-rails (6.5.0)
+      railties (>= 5.2.0)
+      sentry-ruby (~> 6.5.0)
+    sentry-ruby (6.5.0)
+      bigdecimal
+      concurrent-ruby (~> 1.0, >= 1.0.2)
+      logger
     set (1.1.1)
     sexp_processor (4.17.3)
     shellwords (0.2.2)
@@ -539,7 +546,7 @@ GEM
     unicode-display_width (3.1.4)
       unicode-emoji (~> 4.0, >= 4.0.4)
     unicode-emoji (4.0.4)
-    uri (1.0.3)
+    uri (1.1.1)
     useragent (0.16.11)
     version_gem (1.1.6)
     warden (1.2.9)
@@ -582,6 +589,7 @@ DEPENDENCIES
   grape-swagger-rails
   hirb
   icalendar
+  ice_cube
   json-jwt
   listen
   minitest
@@ -613,6 +621,8 @@ DEPENDENCIES
   ruby-lsp
   ruby-saml
   rubyzip
+  sentry-rails
+  sentry-ruby
   shellwords
   sidekiq
   sidekiq-cron
@@ -623,6 +633,7 @@ DEPENDENCIES
   sprockets-rails
   sys-filesystem
   tca_client
+  uri (>= 1.1.1)
   webmock
 
 RUBY VERSION
