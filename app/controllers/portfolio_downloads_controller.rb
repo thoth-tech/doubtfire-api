@@ -29,13 +29,12 @@ class PortfolioDownloadsController < ApplicationController
       error!({ error: "Not authorised to download portfolios for unit '#{params[:id]}'" }, 401)
     end
 
-    output_zip = unit.get_portfolio_zip(current_user)
-
-    error!({ error: 'No files to download' }, 403) if output_zip.nil?
+    output_zip = unit.get_portfolio_zip_filename(current_user)
+    error!({ error: 'No files to download' }, 403) unless File.exist?(output_zip)
 
     # Set download headers...
     # content_type "application/octet-stream"
-    download_id = "#{Time.new.strftime('%Y-%m-%d %H:%m:%S')}-portfolios-#{unit.code}-#{current_user.username}"
+    download_id = "#{Time.zone.now.strftime('%Y-%m-%d %H:%m:%S')}-portfolios-#{unit.code}-#{current_user.username}"
     download_id.gsub! /[\\\/]/, '-'
     download_id = FileHelper.sanitized_filename(download_id)
     # header['Content-Disposition'] = "attachment; filename=#{download_id}.zip"

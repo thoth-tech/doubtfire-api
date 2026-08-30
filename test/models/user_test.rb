@@ -23,6 +23,7 @@ class UserTest < ActiveSupport::TestCase
     }
     User.create!(profile)
     assert User.last, profile
+    assert User.last.display_peer_progress?
   end
 
   def test_user_is_valid

@@ -1,0 +1,15 @@
+<p>Hi <%= @user.name %>,</p>
+
+<p>Your tutorial has changed.</p>
+
+<p><%= @notification.message %></p>
+
+<p>Please use the new tutorial day and time for your next class.</p>
+
+<% if @notification.link.present? %>
+  <p>
+    <a href="<%= @doubtfire_host %><%= @notification.link %>">
+      Open your unit in <%= @doubtfire_product_name %>
+    </a>
+  </p>
+<% end %>

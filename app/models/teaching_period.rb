@@ -1,6 +1,6 @@
 class TeachingPeriod < ApplicationRecord
   # Relationships
-  has_many :units
+  has_many :units, dependent: :restrict_with_exception
   has_many :breaks, dependent: :delete_all
 
   # Callbacks - methods called are private
@@ -18,6 +18,7 @@ class TeachingPeriod < ApplicationRecord
   validate :validate_end_date_after_start_date, :validate_active_until_after_end_date
 
   after_update :propogate_date_changes
+  after_update :refresh_communication_schedule_caches, if: :saved_change_to_teaching_dates?
 
   # Public methods
 
@@ -115,7 +116,10 @@ class TeachingPeriod < ApplicationRecord
 
     start_day_num = start_date.wday
 
-    result = week_start + (day_num - start_day_num).days
+    day_offset = day_num - start_day_num
+    day_offset += 7 if day_offset.negative?
+
+    result = week_start + day_offset.days
 
     for a_break in breaks do
       if result >= a_break.start_date && result < a_break.end_date
@@ -132,35 +136,11 @@ class TeachingPeriod < ApplicationRecord
     TeachingPeriod.where("start_date > :end_date", end_date: end_date)
   end
 
-  def rollover(rollover_to, search_forward = true, rollover_inactive = false)
-    if rollover_to.start_date < Time.zone.now || rollover_to.start_date <= start_date
-      self.errors.add(:base, "Units can only be rolled over to future teaching periods")
-
-      false
-    else
-      units_to_rollover = units
-
-      unless rollover_inactive
-        units_to_rollover = units_to_rollover.where(active: true)
-      end
-
-      if search_forward
-        ftp = future_teaching_periods.where("start_date < :date", date: rollover_to.start_date).order(start_date: "desc")
-
-        units_to_rollover = units_to_rollover.map do |u|
-          ftp.map { |tp| tp.units.where(code: u.code).first }.select { |u| u.present? }.first || u
-        end
-      end
-
-      for unit in units_to_rollover do
-        # skip if the unit already exists in the teaching period
-        next if rollover_to.units.where(code: unit.code).count > 0
-
-        unit.rollover(rollover_to, nil, nil)
-      end
-
-      true
-    end
+  def refresh_communication_schedule_caches
+    CommunicationSetSchedule
+      .joins(communication_set: :unit)
+      .where(units: { teaching_period_id: id })
+      .find_each(&:refresh_next_run_at!)
   end
 
   private
@@ -190,5 +170,9 @@ class TeachingPeriod < ApplicationRecord
     units.each do |u|
       u.update(start_date: self.start_date, end_date: self.end_date)
     end
+  end
+
+  def saved_change_to_teaching_dates?
+    saved_change_to_start_date? || saved_change_to_end_date?
   end
 end

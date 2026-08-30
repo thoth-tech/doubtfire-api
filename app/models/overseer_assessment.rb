@@ -1,89 +1,123 @@
+# rubocop:disable Rails/Output
 class OverseerAssessment < ApplicationRecord
   belongs_to :task, optional: false
+  belongs_to :submission_history, optional: false
 
   has_one :project, through: :task
-  has_many :assessment_comments, dependent: :destroy
+  has_many :assessment_comments, as: :commentable, dependent: :destroy
+  has_many :overseer_step_results, dependent: :destroy
 
   validates :status,                  presence: true
   validates :task_id,                 presence: true
   validates :submission_timestamp,    presence: true
 
-  validates_uniqueness_of :submission_timestamp, scope: :task_id
+  validates :submission_timestamp, uniqueness: { scope: :task_id }
+  validates :submission_history_id, uniqueness: true
+  validate :submission_history_matches_task
 
-  enum status: { pre_queued: 0, queued: 1, queue_failed: 2, done: 3 }
+  enum :status, { pre_queued: 0, passed: 1, failed: 2 }
 
-  after_destroy :delete_associated_files
+  def submission_history_matches_task
+    return if submission_history.nil? || task.nil? || submission_history.task_id == task_id
+
+    errors.add(:submission_history, 'must belong to the same task')
+  end
+
+  def self.student_notification_grace_period
+    Doubtfire::Application.config.overseer_student_notification_grace_period
+  end
+
+  scope :awaiting_student_failure_notification, lambda { |grace_period: student_notification_grace_period|
+    notification_cutoff = grace_period.ago
+
+    joins(task: { project: :user })
+      .joins(<<~SQL.squish)
+        INNER JOIN task_comments assessment_comments
+          ON assessment_comments.commentable_type = 'OverseerAssessment'
+         AND assessment_comments.commentable_id = overseer_assessments.id
+         AND assessment_comments.type = 'AssessmentComment'
+      SQL
+      .joins(<<~SQL.squish)
+        LEFT JOIN comments_read_receipts student_read_receipts
+          ON student_read_receipts.task_comment_id = assessment_comments.id
+         AND student_read_receipts.user_id = projects.user_id
+      SQL
+      .where(status: statuses[:failed], student_notified_at: nil)
+      .where(users: { receive_task_notifications: true })
+      .where('overseer_assessments.updated_at <= ?', notification_cutoff)
+      .where('student_read_receipts.id IS NULL')
+      .where(<<~SQL.squish)
+        assessment_comments.id = (
+          SELECT latest_comment.id
+          FROM task_comments latest_comment
+          WHERE latest_comment.commentable_type = 'OverseerAssessment'
+            AND latest_comment.commentable_id = overseer_assessments.id
+            AND latest_comment.type = 'AssessmentComment'
+          ORDER BY latest_comment.created_at DESC, latest_comment.id DESC
+          LIMIT 1
+        )
+      SQL
+      .where(<<~SQL.squish)
+        NOT EXISTS (
+          SELECT 1
+          FROM overseer_assessments newer_assessments
+          WHERE newer_assessments.task_id = overseer_assessments.task_id
+            AND (
+              newer_assessments.created_at > overseer_assessments.created_at OR
+              (
+                newer_assessments.created_at = overseer_assessments.created_at AND
+                newer_assessments.id > overseer_assessments.id
+              )
+            )
+        )
+      SQL
+  }
+
+  # TODO: track how many tests ran, and how many tests total at the time
+  # TODO: we might not have an overseerStepResult because a new test was added later
 
   # Creates an OverseerAssessment object for a new submission
-  def self.create_for(task)
+  def self.create_for(submission_history, test_submission)
     # Create only if:
     # unit's assessment is enabled &&
     # task's assessment is enabled &&
     # task definition has an assessment resources zip file &&
     # task has a student submission
 
+    task = submission_history.task
     task_definition = task.task_definition
     unit = task_definition.unit
 
-    return nil unless unit.assessment_enabled
-    return nil unless task_definition.assessment_enabled
-    return nil unless task_definition.has_task_assessment_resources?
-    return nil unless task.has_new_files? || task.has_done_file?
+    return nil unless task.overseer_enabled? || test_submission
+
+    active_overseer_steps = task.task_definition.overseer_steps.select(&:enabled)
+    return nil if active_overseer_steps.empty?
 
     docker_image_name_tag = task_definition.docker_image_name_tag || unit.docker_image_name_tag
-    assessment_resources_path = task_definition.task_assessment_resources
+    # assessment_resources_path = task_definition.task_assessment_resources
 
     return nil if docker_image_name_tag.nil? || docker_image_name_tag.strip.empty?
 
-    result = OverseerAssessment.create!(
+    OverseerAssessment.create!(
       task: task,
+      submission_history: submission_history,
       status: :pre_queued,
-      submission_timestamp: Time.now.utc.to_i
+      submission_timestamp: submission_history.submission_timestamp
     )
-
-    # Create the submission folder and give access
-    FileUtils.mkdir_p result.output_path
-    result.grant_access_to_submission
-
-    result.copy_latest_files_to_submission
-
-    result
   end
 
-  def has_submission_files?
-    File.exist? submission_zip_file_name
-  end
+  delegate :has_submission_files?,
+           :submission_zip_file_name,
+           :output_path,
+           to: :submission_history
 
-  def submission_zip_file_name
-    "#{output_path}/submission.zip"
-  end
-
-  def grant_access_to_submission
-    # TODO: Use FACL instead in future.
-    `chmod o+w #{output_path}`
-  end
-
-  def copy_latest_files_to_submission
-    zip_file_path = submission_zip_file_name
-
-    if task.has_new_files?
-      puts "Copying new files to submission at: #{zip_file_path}"
-      # Generate a zip file for this particular submission with timestamp value and put it here
-      task.compress_new_to_done zip_file_path: zip_file_path, rm_task_dir: false, rename_files: true
-    else
-      puts "Copying done file to submission at: #{zip_file_path}"
-      task.copy_done_to zip_file_path
-    end
-  end
-
-  # Path to where the submission and output are stored - includes the submission when it is to be processed
-  def output_path
-    FileHelper.task_submission_identifier_path_with_timestamp(:done, task, submission_timestamp)
+  def latest_assessment_comment
+    assessment_comments.order(created_at: :desc, id: :desc).first
   end
 
   def add_assessment_comment(text = 'Automated Assessment Started')
     text.strip!
-    return nil if text.nil? || text.empty?
+    return nil if text.blank?
 
     tutor = project.tutor_for(task.task_definition)
 
@@ -95,7 +129,7 @@ class OverseerAssessment < ApplicationRecord
     comment.user = tutor
     comment.comment = text
     comment.recipient = project.student
-    comment.overseer_assessment = self
+    comment.commentable = self
     comment.save!
 
     comment
@@ -103,7 +137,7 @@ class OverseerAssessment < ApplicationRecord
 
   def update_assessment_comment(text)
     text.strip!
-    return nil if text.nil? || text.empty?
+    return nil if text.blank?
 
     assessment_comment = assessment_comments.last
 
@@ -120,17 +154,11 @@ class OverseerAssessment < ApplicationRecord
     add_assessment_comment text
   end
 
-  def send_to_overseer()
+  def send_to_overseer(test_submission: false)
     return { error: "Your task is already queued for processing. Pleasse wait until you receive a response before queueing your task again." } if self.status == :queued
 
     # TODO: Check status and do not queue if already queued
     puts "********* Sending #{self.id} to overseer"
-
-    sm_instance = Doubtfire::Application.config.sm_instance
-    if sm_instance.nil?
-      puts "ERROR: Unable to get service manager to send message to overseer. Unable to send - OverseerAssessment #{id}"
-      return { error: "Automated feedback is not configured correctly. Please raise an issue with your administrator. ERR:O1" }
-    end
 
     unless has_submission_files?
       puts "ERROR: Attempting to send submission to Overseer without associated submission files - OverseerAssessment #{id}"
@@ -148,16 +176,16 @@ class OverseerAssessment < ApplicationRecord
 
     assessment_resources_path = task_definition.task_assessment_resources
 
-    unless  unit.assessment_enabled &&
-            task_definition.assessment_enabled &&
-            task_definition.has_task_assessment_resources? &&
-            (task.has_new_files? || task.has_done_file?)
+    unless unit.assessment_enabled &&
+           (task_definition.assessment_enabled || test_submission) &&
+           # task_definition.has_task_assessment_script? &&
+           (task.has_new_files? || task.has_done_file?)
 
       puts "ERROR: Assessment is no longer configured for overseer assessment. Unable to send - OverseerAssessment #{id}"
       return { error: "This assessment is no longer setup for automated feedback. Automated feedback is turned off at either the unit or task level, or the task does not have the scripts needed to automate assessment." }
     end
 
-    unless File.exist? submission_zip_file_name
+    unless has_submission_files?
       puts "ERROR: Student submission history zip file doesn't exist #{submission_zip_file_name}. Unable to send - OverseerAssessment #{id}"
       return { error: "We no longer have the files associated with this submission. Please test a later submission, or upload your work again." }
     end
@@ -183,57 +211,56 @@ class OverseerAssessment < ApplicationRecord
 
     puts message.inspect
 
-    begin
-      sm_instance.clients[:ontrack].publisher.connect_publisher
-      puts("Sending message to rabbitmq for Overseer Assessment #{id}")
-      sm_instance.clients[:ontrack].publisher.publish_message(message)
-      puts("Sent to rabbitmq for Overseer Assessment #{id}")
-      self.status = :queued
-    rescue RuntimeError => e
-      puts "ERROR: OverseerAssessment #{id} failed to send: #{e.inspect}"
-      self.status = :queue_failed
-      return { error: "We are unable to send your submission to the automated feedback service. Please try again later." }
-    ensure
-      puts "saving... #{self.status}"
-      save!
-      sm_instance.clients[:ontrack].publisher.disconnect_publisher
-    end
-
-    puts "********* - end perform assessment"
-    if assessment_comments.count == 0
-      result = add_assessment_comment()
-    else
-      result = assessment_comments.last
-      result.update created_at: Time.zone.now
-      result
-    end
-
-    {
-      comment: result,
-      error: nil
-    }
+    AcceptOverseerJob.perform_async(
+      task.id,
+      output_path,
+      docker_image_name_tag,
+      submission_zip_file_name,
+      assessment_resources_path,
+      submission_timestamp,
+      self.id
+    )
   end
 
-  def update_from_output()
+  def update_from_output(work_dir_path)
     # Update the overseer assessment status
     self.status = :done
 
-    yaml_path = "#{output_path}/output.yaml"
+    yaml_path = "#{work_dir_path}/output.yaml"
+
 
     if File.exist? yaml_path
       yaml_file = YAML.load_file(yaml_path).with_indifferent_access
 
       comment_txt = ''
       if !yaml_file['build_message'].nil? && !yaml_file['build_message'].strip.empty?
-        comment_txt += yaml_file['build_message']
+        comment_txt += "Build output:\n"
+        comment_txt += if base64?(yaml_file['run_message'])
+                         Base64.urlsafe_decode64(yaml_file['build_message'])
+                       else
+                         yaml_file['run_message']
+                       end
+        comment_txt += "\n"
       end
       if !yaml_file['run_message'].nil? && !yaml_file['run_message'].strip.empty?
-        comment_txt += "\n\n" unless comment_txt.empty?
-        comment_txt += yaml_file['run_message']
+        comment_txt += "\n" unless comment_txt.empty?
+        comment_txt += "Execution output:\n"
+        comment_txt += if base64?(yaml_file['run_message'])
+                         Base64.urlsafe_decode64(yaml_file['run_message'])
+                       else
+                         yaml_file['run_message']
+                       end
+        comment_txt += "\n"
+      end
+
+      if !yaml_file['message'].nil? && !yaml_file['message'].strip.empty?
+        comment_txt += "\n" unless comment_txt.empty?
+        comment_txt += "Message:\n"
+        comment_txt += yaml_file['message']
       end
 
       if comment_txt.present?
-        update_assessment_comment(comment_txt)
+        update_assessment_comment(comment_txt[0, 4000]) # Truncate to 4000 characters
       else
         puts 'YAML file doesn\'t contain field `build_message` or `run_message`'
       end
@@ -248,6 +275,7 @@ class OverseerAssessment < ApplicationRecord
       end
 
       if task.ready_for_feedback? && new_status.present?
+        task.add_status_comment(task.task_definition.unit.main_convenor.user, new_status)
         task.update task_status: new_status
       end
     else
@@ -260,7 +288,13 @@ class OverseerAssessment < ApplicationRecord
     self.save!
   end
 
-  def delete_associated_files
-    FileUtils.rm_rf output_path
+  def base64?(value)
+    value.is_a?(String) && Base64.strict_encode64(Base64.decode64(value)) == value
+  end
+
+
+  def passed_steps
+    overseer_step_results.select(&:pass).size
   end
 end
+# rubocop:enable Rails/Output

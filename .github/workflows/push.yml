@@ -1,13 +1,24 @@
 name: Unit Tests
 on:
   push:
+    branches:
+      - "*.x"
+      - development
+      - main
+      - master
+    tags:
+      - "v*"
     paths-ignore:
       - "*.md"
       - "docs/**"
-  pull_request:
-    paths-ignore:
-      - "*.md"
-      - "docs/**"
+  # This check is required by the repository ruleset, so it must report for
+  # every pull request, including documentation-only changes.
+  pull_request: {}
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   RAILS_ENV: "test"
@@ -22,15 +33,31 @@ env:
   DF_TEST_DB_DATABASE: "doubtfire-test"
   DF_TEST_DB_USERNAME: "dfire"
   DF_TEST_DB_PASSWORD: "pwd"
-  OVERSEER_ENABLED: "0"
+  OVERSEER_ENABLED: "true"
   DF_ENCRYPTION_PRIMARY_KEY: "AMLOMYA5GV8B4fTK3VKMhVGn8WdvUW8g"
   DF_ENCRYPTION_DETERMINISTIC_KEY: "anlmuJ6cB3bN3biXRbYvmPsC5ALPFqGG"
   DF_ENCRYPTION_KEY_DERIVATION_SALT: "hzPR8D4qpOnAg7VeAhkhWw6JmmzKJB10"
   DF_REDIS_SIDEKIQ_URL: "redis://redis:6379/0"
+  LATEX_CONTAINER_NAME: doubtfire-texlive
+  LATEX_BUILD_PATH: /texlive/shell/latex_build.sh
+  LTI_SHARED_API_SECRET: "abc123"
+  LTI_ENABLED: true
 
 jobs:
-  unit-tests:
+  unit_test_shards:
+    name: Unit Tests (shard ${{ matrix.shard }}/20)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    env:
+      TEST_SHARD_COUNT: "20"
+      TEST_SHARD_NUMBER: ${{ matrix.shard }}
+      TEST_SHARD_MANIFEST: /doubtfire/tmp/test-shard-manifests/shard-${{ matrix.shard }}.txt
+      TEST_SHARD_RUN_COUNT: /doubtfire/tmp/test-shard-run-counts/shard-${{ matrix.shard }}.txt
+      TEST_SHARD_EXECUTED_RUNNABLES: /doubtfire/tmp/test-shard-executed-runnables/shard-${{ matrix.shard }}.txt
+      TEST_RUNNABLE_INVENTORY: /doubtfire/tmp/test-runnable-inventory.txt
     services:
       mariadb:
         image: mariadb
@@ -46,24 +73,113 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Plan test shard
+        id: plan_shard
+        run: |
+          TEST_SHARD_MANIFEST=tmp/test-shard-manifests/shard-${{ matrix.shard }}.txt \
+            TEST_SHARD_GITHUB_OUTPUT="$GITHUB_OUTPUT" \
+            ruby script/test_shard.rb --dry-run
+          echo "seed_date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore populated test database
+        id: seeded_database_cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            tmp/ci-seeded-database.sql.gz
+            tmp/ci-seeded-student-work.tar.gz
+          key: seeded-test-database-v5-${{ runner.os }}-${{ steps.plan_shard.outputs.seed_date }}-${{ hashFiles('.github/workflows/push.yml', '.dockerignore', 'Dockerfile', 'Gemfile', 'Gemfile.lock', 'Rakefile', 'app/**/*', 'config/**/*', 'db/**/*', 'docker-entrypoint.sh', 'lib/**/*', 'script/prepare_test_database.sh', 'test/factories/**/*', 'test_files/**/*') }}
       - name: Set up docker buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build TexLive image
+        if: ${{ steps.plan_shard.outputs.needs_texlive == 'true' }}
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: texlive.Dockerfile
+          push: false
+          load: true
+          tags: doubtfire-texlive-development:local
+          cache-from: type=gha,scope=texlive
+          cache-to: ${{ steps.plan_shard.outputs.writes_texlive_cache == 'true' && 'type=gha,mode=max,scope=texlive' || '' }}
+      - name: Build JPlag image
+        if: ${{ steps.plan_shard.outputs.needs_jplag == 'true' }}
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: jplag.Dockerfile
+          push: false
+          load: true
+          tags: doubtfire-jplag-development:local
+          cache-from: type=gha,scope=jplag
+          cache-to: ${{ steps.plan_shard.outputs.writes_jplag_cache == 'true' && 'type=gha,mode=max,scope=jplag' || '' }}
       - name: Build base doubtfire-api development image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           push: false
           load: true
           tags: doubtfire-api-development:local
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Populate database
-        uses: addnab/docker-run-action@v3
+          cache-from: type=gha,scope=doubtfire-api
+          cache-to: ${{ matrix.shard == 1 && 'type=gha,mode=max,scope=doubtfire-api' || '' }}
+      - name: Start TexLive service
+        id: start_texlive
+        if: ${{ steps.plan_shard.outputs.needs_texlive == 'true' }}
+        uses: maus007/docker-run-action-fork@207a4e2a8ebf7e4b985656ba990b1e53715dce2a
+        with:
+          image: doubtfire-texlive-development:local
+          options: >
+            --name ${{ env.LATEX_CONTAINER_NAME }}
+            -v ${{ github.workspace }}/student-work:/student-work
+            -v ${{ github.workspace }}/public/assets/images:/doubtfire/public/assets/images
+            -v ${{ github.workspace }}/test_files:/doubtfire/test_files
+            -v ${{ github.workspace }}/tmp/rails-latex:/workdir/texlive-latex
+            --detach
+          run: sleep infinity
+      - name: Test TexLive container
+        if: ${{ steps.plan_shard.outputs.needs_texlive == 'true' }}
+        uses: maus007/docker-run-action-fork@207a4e2a8ebf7e4b985656ba990b1e53715dce2a
         with:
           image: doubtfire-api-development:local
           options: >
+            -t
             -v ${{ github.workspace }}:/doubtfire
+            -v /var/run/docker.sock:/var/run/docker.sock
+          run: docker exec -t ${{ env.LATEX_CONTAINER_NAME }} lualatex -v
+      - name: Start JPlag service
+        id: start_jplag
+        if: ${{ steps.plan_shard.outputs.needs_jplag == 'true' }}
+        uses: maus007/docker-run-action-fork@207a4e2a8ebf7e4b985656ba990b1e53715dce2a
+        with:
+          image: doubtfire-jplag-development:local
+          options: >
+            --name jplag
+            -v ${{ github.workspace }}/student-work:/student-work
+            -v ${{ github.workspace }}/tmp/jplag:/tmp/jplag
+            -v ${{ github.workspace }}/test_files/submissions/jplag:/test_files
+            --detach
+          run: sleep infinity
+      - name: Test JPlag service
+        if: ${{ steps.plan_shard.outputs.needs_jplag == 'true' }}
+        uses: maus007/docker-run-action-fork@207a4e2a8ebf7e4b985656ba990b1e53715dce2a
+        with:
+          image: doubtfire-api-development:local
+          options: >
+            -t
+            -v ${{ github.workspace }}:/doubtfire
+            -v /var/run/docker.sock:/var/run/docker.sock
+          run: docker exec -e TERM=xterm -i jplag java -jar /jplag/jplag-jar-with-dependencies.jar /test_files -l java --similarity-threshold=0.30 -M RUN -r test.jplag
+      - name: Prepare populated database
+        uses: maus007/docker-run-action-fork@207a4e2a8ebf7e4b985656ba990b1e53715dce2a
+        env:
+          SEEDED_DATABASE_CACHE_HIT: ${{ steps.seeded_database_cache.outputs.cache-hit }}
+        with:
+          image: doubtfire-api-development:local
+          shell: bash
+          options: >
+            -v ${{ github.workspace }}:/doubtfire
+            -v ${{ github.workspace }}/student-work:/student-work
+            -v /var/run/docker.sock:/var/run/docker.sock
             -e RAILS_ENV
             -e DF_STUDENT_WORK_DIR
             -e DF_INSTITUTION_HOST
@@ -81,13 +197,49 @@ jobs:
             -e DF_ENCRYPTION_DETERMINISTIC_KEY
             -e DF_ENCRYPTION_KEY_DERIVATION_SALT
             -e DF_REDIS_SIDEKIQ_URL
-          run: bundle exec rake db:populate
+            -e LATEX_CONTAINER_NAME
+            -e LATEX_BUILD_PATH
+            -e LTI_SHARED_API_SECRET
+            -e LTI_ENABLED
+            -e SEEDED_DATABASE_CACHE_HIT
+          run: script/prepare_test_database.sh
+      - name: Verify populated database schema
+        run: git diff --exit-code -- db/schema.rb
+      - name: Snapshot populated test database
+        if: ${{ steps.seeded_database_cache.outputs.cache-hit != 'true' && matrix.shard == 1 }}
+        run: |
+          set -euo pipefail
+          database_container_id="$(docker ps --filter ancestor=mariadb --format '{{.ID}}' | head -n 1)"
+          if [ -z "$database_container_id" ]; then
+            echo "Unable to find the MariaDB service container."
+            exit 1
+          fi
+          mkdir -p tmp
+          docker exec "$database_container_id" mariadb-dump \
+            --user="$DF_TEST_DB_USERNAME" \
+            --password="$DF_TEST_DB_PASSWORD" \
+            --single-transaction \
+            --skip-comments \
+            "$DF_TEST_DB_DATABASE" |
+            gzip -1 > tmp/ci-seeded-database.sql.gz
+          tar -C student-work -czf tmp/ci-seeded-student-work.tar.gz .
+      - name: Save populated test database
+        if: ${{ steps.seeded_database_cache.outputs.cache-hit != 'true' && matrix.shard == 1 }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            tmp/ci-seeded-database.sql.gz
+            tmp/ci-seeded-student-work.tar.gz
+          key: ${{ steps.seeded_database_cache.outputs.cache-primary-key }}
       - name: Run unit tests
-        uses: addnab/docker-run-action@v3
+        uses: maus007/docker-run-action-fork@207a4e2a8ebf7e4b985656ba990b1e53715dce2a
         with:
           image: doubtfire-api-development:local
           options: >
             -v ${{ github.workspace }}:/doubtfire
+            -v ${{ github.workspace }}/student-work:/student-work
+            -v /var/run/docker.sock:/var/run/docker.sock
+            -v ${{ github.workspace }}/tmp/jplag:/tmp/jplag
             -e RAILS_ENV
             -e DF_STUDENT_WORK_DIR
             -e DF_INSTITUTION_HOST
@@ -105,4 +257,128 @@ jobs:
             -e DF_ENCRYPTION_DETERMINISTIC_KEY
             -e DF_ENCRYPTION_KEY_DERIVATION_SALT
             -e DF_REDIS_SIDEKIQ_URL
-          run: TERM=xterm bundle exec rails test
+            -e LATEX_CONTAINER_NAME
+            -e LATEX_BUILD_PATH
+            -e LTI_SHARED_API_SECRET
+            -e LTI_ENABLED
+            -e TEST_SHARD_COUNT
+            -e TEST_SHARD_NUMBER
+            -e TEST_SHARD_MANIFEST
+            -e TEST_SHARD_RUN_COUNT
+            -e TEST_SHARD_EXECUTED_RUNNABLES
+            -e TEST_RUNNABLE_INVENTORY
+          run: TERM=xterm bundle exec ruby script/test_shard.rb
+      - name: Upload test shard evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-test-shard-manifest-${{ matrix.shard }}
+          path: |
+            tmp/test-shard-manifests/shard-${{ matrix.shard }}.txt
+            tmp/test-shard-run-counts/shard-${{ matrix.shard }}.txt
+            tmp/test-shard-executed-runnables/shard-${{ matrix.shard }}.txt
+            tmp/test-runnable-inventory.txt
+          if-no-files-found: error
+      - name: Stop TexLive service
+        if: ${{ always() && steps.start_texlive.outcome == 'success' }}
+        run: docker rm -f ${{ env.LATEX_CONTAINER_NAME }}
+      - name: Stop JPlag service
+        if: ${{ always() && steps.start_jplag.outcome == 'success' }}
+        run: docker rm -f jplag
+
+  unit-tests:
+    name: unit-tests
+    if: ${{ always() }}
+    needs: unit_test_shards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Download test shard manifests
+        id: download_manifests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: unit-test-shard-manifest-*
+          path: tmp/all-test-shard-manifests
+          merge-multiple: true
+      - name: Verify exact test shard union
+        id: verify_manifests
+        run: |
+          manifest_dir=tmp/all-test-shard-manifests/test-shard-manifests
+          run_count_dir=tmp/all-test-shard-manifests/test-shard-run-counts
+          executed_runnables_dir=tmp/all-test-shard-manifests/test-shard-executed-runnables
+          inventory_path=tmp/all-test-shard-manifests/test-runnable-inventory.txt
+
+          manifest_count=$(find "$manifest_dir" -type f -name 'shard-*.txt' | wc -l)
+          if [ "$manifest_count" -ne 20 ]; then
+            echo "::error::Expected 20 shard manifests, found $manifest_count."
+            exit 1
+          fi
+
+          ruby script/test_shard.rb --list-runnables | LC_ALL=C sort > expected-tests.txt
+          cat "$manifest_dir"/shard-*.txt | LC_ALL=C sort > assigned-tests.txt
+          LC_ALL=C uniq -d assigned-tests.txt > duplicate-tests.txt
+
+          if [ -s duplicate-tests.txt ]; then
+            echo "::error::One or more test runnables were assigned to multiple shards."
+            cat duplicate-tests.txt
+            exit 1
+          fi
+
+          LC_ALL=C uniq assigned-tests.txt > assigned-tests-unique.txt
+          diff -u expected-tests.txt assigned-tests-unique.txt
+
+          run_count_file_count=$(find "$run_count_dir" -type f -name 'shard-*.txt' | wc -l)
+          if [ "$run_count_file_count" -ne 20 ]; then
+            echo "::error::Expected 20 shard run-count files, found $run_count_file_count."
+            exit 1
+          fi
+          if [ ! -s "$inventory_path" ]; then
+            echo "::error::The canonical Minitest runnable inventory is missing."
+            exit 1
+          fi
+          for run_count_path in "$run_count_dir"/shard-*.txt; do
+            if ! grep -Eq '^[0-9]+$' "$run_count_path"; then
+              echo "::error::Invalid shard run count in $run_count_path."
+              exit 1
+            fi
+          done
+
+          expected_run_count=$(wc -l < "$inventory_path")
+          actual_run_count=$(awk '{ total += $1 } END { print total + 0 }' "$run_count_dir"/shard-*.txt)
+          if [ "$actual_run_count" -ne "$expected_run_count" ]; then
+            echo "::error::Shards executed $actual_run_count tests, expected $expected_run_count."
+            exit 1
+          fi
+
+          executed_runnables_file_count=$(find "$executed_runnables_dir" -type f -name 'shard-*.txt' | wc -l)
+          if [ "$executed_runnables_file_count" -ne 20 ]; then
+            echo "::error::Expected 20 executed-runnable files, found $executed_runnables_file_count."
+            exit 1
+          fi
+          cat "$executed_runnables_dir"/shard-*.txt | LC_ALL=C sort > actual-executed-runnables.txt
+          LC_ALL=C uniq -d actual-executed-runnables.txt > duplicate-executed-runnables.txt
+          if [ -s duplicate-executed-runnables.txt ]; then
+            echo "::error::One or more Minitest runnables executed more than once."
+            cat duplicate-executed-runnables.txt
+            exit 1
+          fi
+          LC_ALL=C sort "$inventory_path" > expected-executed-runnables.txt
+          diff -u expected-executed-runnables.txt actual-executed-runnables.txt
+          echo "Verified exact execution parity for $actual_run_count Minitest runnables."
+      - name: Confirm all unit test shards passed
+        if: ${{ always() }}
+        env:
+          SHARD_RESULT: ${{ needs.unit_test_shards.result }}
+          MANIFEST_DOWNLOAD_RESULT: ${{ steps.download_manifests.outcome }}
+          MANIFEST_VERIFY_RESULT: ${{ steps.verify_manifests.outcome }}
+        run: |
+          if [ "$MANIFEST_DOWNLOAD_RESULT" != "success" ] || [ "$MANIFEST_VERIFY_RESULT" != "success" ]; then
+            echo "::error::Test shard manifest verification did not succeed "\
+                 "(download: $MANIFEST_DOWNLOAD_RESULT, verify: $MANIFEST_VERIFY_RESULT)."
+            exit 1
+          fi
+          if [ "$SHARD_RESULT" != "success" ]; then
+            echo "::error::One or more unit test shards did not succeed (result: $SHARD_RESULT)."
+            exit 1
+          fi

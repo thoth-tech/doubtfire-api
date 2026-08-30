@@ -8,6 +8,33 @@ class TaskDefinitionTest < ActiveSupport::TestCase
     Rails.application
   end
 
+  def test_overseer_requires_a_submission_history_upload
+    task_definition = FactoryBot.build(
+      :task_definition,
+      assessment_enabled: true,
+      upload_requirements: [
+        { 'key' => 'file0', 'name' => 'main.rb', 'type' => 'code', 'submission_history' => false }
+      ]
+    )
+
+    assert_not task_definition.valid?
+    assert_includes task_definition.errors[:upload_requirements],
+                    'must include at least one file in submission history when Overseer is enabled'
+  end
+
+  def test_overseer_accepts_a_submission_history_upload
+    task_definition = FactoryBot.build(
+      :task_definition,
+      assessment_enabled: true,
+      upload_requirements: [
+        { 'key' => 'file0', 'name' => 'main.rb', 'type' => 'code', 'submission_history' => true }
+      ]
+    )
+
+    task_definition.validate
+    assert_empty task_definition.errors[:upload_requirements]
+  end
+
   def test_default_quality_points
     test_unit = Unit.first
     td = TaskDefinition.new({
@@ -113,6 +140,34 @@ class TaskDefinitionTest < ActiveSupport::TestCase
     td.destroy
   end
 
+  def test_upload_requirements_allow_zip
+    test_unit = Unit.first
+    td = TaskDefinition.new({
+      unit_id: test_unit.id,
+      tutorial_stream: test_unit.tutorial_streams.first,
+      name: 'Test zip requirement',
+      description: 'test def',
+      weighting: 4,
+      target_grade: 0,
+      start_date: test_unit.start_date + 1.week,
+      target_date: test_unit.start_date + 2.weeks,
+      abbreviation: 'TestZipReq',
+      restrict_status_updates: false,
+      upload_requirements: [
+        {
+          "key" => 'file0',
+          "name" => 'Source Zip',
+          "type" => 'zip'
+        }
+      ],
+      plagiarism_warn_pct: 0.8,
+      is_graded: false,
+      max_quality_pts: 5
+    })
+
+    assert td.valid?, td.errors.full_messages.join(', ')
+  end
+
   def test_group_tasks
     u = FactoryBot.create(:unit)
     activity_type = FactoryBot.create(:activity_type)
@@ -132,26 +187,60 @@ class TaskDefinitionTest < ActiveSupport::TestCase
     group_set.save!
 
     path = Rails.root.join('test_files', 'unit_csv_imports', 'import_group_tasks.csv')
-    u.import_tasks_from_csv File.new(path)
+    assert_difference(
+      -> { NewTaskAvailableNotificationJob.jobs.size },
+      1
+    ) do
+      u.import_tasks_from_csv File.new(path)
+    end
 
     assert_equal 1, group_set.task_definitions.count
     assert_equal initial_count + 1, u.task_definitions.count
+    assert_not_nil group_set.task_definitions.first.new_task_notifications_from
+
+    assert_no_difference -> { NewTaskAvailableNotificationJob.jobs.size } do
+      u.import_tasks_from_csv File.new(path)
+    end
   end
 
   def test_export_task_definitions_csv
     unit = FactoryBot.create(:unit, with_students: false)
     stream_1 = FactoryBot.create(:tutorial_stream, unit: unit)
+    task_def_with_steps = unit.task_definitions.first
+    task_def_with_steps.overseer_steps.create!(
+      name: 'compile',
+      description: 'Compile the submission',
+      display_name: 'Compile',
+      display_description: 'Compile step',
+      run_command: 'make test',
+      timeout: 45,
+      sort_order: 0,
+      step_type: 'run',
+      partial_output_diff: true,
+      stdin_input_file: 'stdin.txt',
+      expected_output_file: 'expected.txt',
+      feedback_message: 'Compilation failed',
+      status_on_success_id: TaskStatus.complete.id,
+      status_on_failure_id: TaskStatus.fix_and_resubmit.id,
+      halt_on_success: false,
+      halt_on_failure: true,
+      show_expected_output: true,
+      show_stdin: false,
+      show_stdout: true,
+      enabled: true
+    )
 
     task_defs_csv = CSV.parse unit.task_definitions_csv, headers: true
     task_defs_csv.each do |task_def_csv|
       task_def = unit.task_definitions.find_by(abbreviation: task_def_csv['abbreviation'])
-      keys_to_ignore = ['tutorial_stream', 'start_week', 'start_day', 'target_week', 'target_day', 'due_week', 'due_day']
+      keys_to_ignore = %w[tutorial_stream start_week start_day target_week target_day due_week due_day upload_requirements task_prerequisites discussion_prompts overseer_steps]
       task_def_csv.each do |key, value|
         unless keys_to_ignore.include?(key)
           assert_equal(task_def[key].to_s, value)
         end
       end
 
+      assert_equal task_def.upload_requirements.to_json, task_def_csv['upload_requirements']
       assert_equal task_def.start_week.to_s, task_def_csv['start_week']
       assert_equal task_def.start_day.to_s, task_def_csv['start_day']
       assert_equal task_def.target_week.to_s, task_def_csv['target_week']
@@ -159,7 +248,134 @@ class TaskDefinitionTest < ActiveSupport::TestCase
       assert_equal task_def.due_week.to_s, task_def_csv['due_week']
       assert_equal task_def.due_day.to_s, task_def_csv['due_day']
       assert_equal task_def.tutorial_stream.present? ? task_def.tutorial_stream.abbreviation : nil, task_def_csv['tutorial_stream']
+
+      prerequisites = task_def.task_prerequisites.map do |tp|
+        prereq = TaskDefinition.find(tp.prerequisite_id)
+        {
+          abbreviation: prereq.abbreviation,
+          task_status_id: tp.task_status_id
+        }
+      end.to_json
+
+      assert_equal prerequisites, task_def_csv['task_prerequisites']
+
+      overseer_steps = task_def.overseer_steps.map do |step|
+        {
+          'name' => step.name,
+          'description' => step.description,
+          'display_name' => step.display_name,
+          'display_description' => step.display_description,
+          'run_command' => step.run_command,
+          'timeout' => step.timeout,
+          'sort_order' => step.sort_order,
+          'step_type' => step.step_type,
+          'partial_output_diff' => step.partial_output_diff,
+          'stdin_input_file' => step.stdin_input_file,
+          'expected_output_file' => step.expected_output_file,
+          'feedback_message' => step.feedback_message,
+          'status_on_success' => TaskStatus.find_by(id: step.status_on_success_id)&.status_key&.to_s,
+          'status_on_failure' => TaskStatus.find_by(id: step.status_on_failure_id)&.status_key&.to_s,
+          'halt_on_success' => step.halt_on_success,
+          'halt_on_failure' => step.halt_on_failure,
+          'show_expected_output' => step.show_expected_output,
+          'show_stdin' => step.show_stdin,
+          'show_stdout' => step.show_stdout,
+          'enabled' => step.enabled
+        }
+      end
+
+      assert_equal overseer_steps, JSON.parse(task_def_csv['overseer_steps'])
     end
+  end
+
+  def test_import_overseer_steps_from_csv_fixture
+    target_unit = Unit.create!(
+      code: 'CSVSTEP1',
+      name: 'CSV Import With Overseer Steps',
+      description: 'Import target',
+      teaching_period: TeachingPeriod.find(3)
+    )
+
+    result = target_unit.import_tasks_from_csv(
+      File.open(Rails.root.join("test_files/COS10001-ImportTasksWithOverseerSteps.csv"))
+    )
+
+    assert_empty result[:errors], result
+
+    imported_task_def = target_unit.task_definitions.find_by(abbreviation: '1.1P')
+    assert_not_nil imported_task_def
+    assert_equal 1, imported_task_def.overseer_steps.count
+
+    imported_step = imported_task_def.overseer_steps.first
+    assert_equal 'Step 1', imported_step.name
+    assert_equal 'Step 1 student', imported_step.display_name
+    assert_equal 'b64:IyEvYmluL2Jhc2gKCmVjaG8gIkhlbGxvIHdvcmxkISI', imported_step.run_command
+    assert_equal 30, imported_step.timeout
+    assert_equal 'status_check', imported_step.step_type
+    assert_nil imported_step.status_on_success_id
+    assert_nil imported_step.status_on_failure_id
+    assert_nil imported_step.partial_output_diff
+    assert_nil imported_step.stdin_input_file
+    assert_nil imported_step.expected_output_file
+    assert_nil imported_step.feedback_message
+    assert_nil imported_step.halt_on_success
+    assert_nil imported_step.halt_on_failure
+    assert imported_step.show_expected_output
+    assert_nil imported_step.show_stdin
+    assert imported_step.show_stdout
+    assert imported_step.enabled
+  end
+
+  def test_import_does_not_skip_task_name_containing_name
+    target_unit = Unit.create!(
+      code: 'CSVNAME1',
+      name: 'CSV Import With Name Substring',
+      description: 'Import target',
+      teaching_period: TeachingPeriod.find(3)
+    )
+
+    csv = CSV.generate do |rows|
+      rows << TaskDefinition.required_csv_columns
+      rows << [
+        'Coin Clash (Tournament Mini-Project)',
+        'D4',
+        'Build an adversarial game agent.',
+        1,
+        0,
+        false,
+        0,
+        false,
+        90,
+        false,
+        false,
+        false,
+        false,
+        0,
+        nil,
+        [{ key: 'file0', name: 'coin_clash.rb', type: 'code' }].to_json,
+        1,
+        'Tue',
+        1,
+        'Tue',
+        1,
+        'Tue',
+        nil,
+        false,
+        [].to_json,
+        [].to_json
+      ]
+    end
+
+    file = Tempfile.new(['task-definitions', '.csv'])
+    file.write(csv)
+    file.close
+
+    result = target_unit.import_tasks_from_csv(file.path)
+
+    assert_empty result[:errors], result
+    assert target_unit.task_definitions.exists?(abbreviation: 'D4')
+  ensure
+    file&.unlink
   end
 
   def test_export_without_tutorial_stream
@@ -265,8 +481,271 @@ class TaskDefinitionTest < ActiveSupport::TestCase
     t1.reload
 
     assert_nil t1.group_submission
-
+  ensure
     unit.destroy
   end
 
+  def test_upload_req_format
+    u = FactoryBot.create :unit, task_count: 0, with_students: false
+    td = FactoryBot.create :task_definition, unit: u, upload_requirements: [], start_date: Time.zone.now + 1.day
+
+    td.upload_requirements =
+      [
+        {
+          "key" => 'file0',
+          "name" => 'Document 1',
+          "type" => 'document',
+          "tii_check" => true,
+          "tii_pct" => 5
+        }
+      ]
+    assert td.valid?
+
+    td.upload_requirements =
+      [
+        {
+          "key" => 'file0',
+          "name" => 'Document 1',
+          "type" => 'document'
+        }
+      ]
+    assert td.valid?, 'tii check and pct not required'
+
+    td.upload_requirements =
+      [
+        {
+          "name" => 'Document 1',
+          "type" => 'document',
+          "tii_check" => true,
+          "tii_pct" => 5
+        }
+      ]
+
+    assert_not td.valid?, 'missing key'
+
+    td.upload_requirements =
+      [
+        {
+          "key" => 'file0',
+          "type" => 'document',
+          "tii_check" => true,
+          "tii_pct" => 5
+        }
+      ]
+    assert_not td.valid?, 'missing name'
+
+    td.upload_requirements =
+      [
+        {
+          "key" => 'file0',
+          "name" => 'Document 1',
+          "tii_check" => true,
+          "tii_pct" => 5
+        }
+      ]
+    assert_not td.valid?, 'missing type'
+
+    td.upload_requirements =
+      [
+        {
+          "key" => 'file0',
+          "name" => 'Document 1',
+          "type" => 'document',
+          "other" => true,
+          "tii_pct" => 5
+        }
+      ]
+    assert_not td.valid?, 'unknown key'
+
+    td.upload_requirements =
+      [
+        {
+          "key" => 'file0',
+          "name" => 'Document 1',
+          "type" => 'other',
+          "tii_check" => true,
+          "tii_pct" => 5
+        }
+      ]
+    assert_not td.valid?, 'unknown type'
+
+    td.upload_requirements =
+      [
+        {
+          "key" => 'file0',
+          "name" => 'Document 1',
+          "type" => 'document',
+          "tii_check" => 'test',
+          "tii_pct" => 5
+        }
+      ]
+    assert_not td.valid?, 'tii_check not boolean'
+
+    td.upload_requirements =
+      [
+        {
+          "key" => 'file0',
+          "name" => 'Document 1',
+          "type" => 'document',
+          "tii_check" => true,
+          "tii_pct" => 'test'
+        }
+      ]
+    assert_not td.valid?, 'tii_pct not integer'
+
+    td.upload_requirements =
+      [
+        {
+          "key" => 'file0',
+          "name" => "\tnot a filename",
+          "type" => 'document',
+          "tii_check" => true,
+          "tii_pct" => 5
+        }
+      ]
+    assert_not td.valid?, 'name not valid filename'
+  ensure
+    u.destroy
+  end
+
+  def test_overdue_tasks_update_to_assess_in_portfolio
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 2)
+    unit.update(mark_late_submissions_as_assess_in_portfolio: false)
+
+    td1 = unit.task_definitions.first
+    td2 = unit.task_definitions.second
+
+    td1.update(assess_in_portfolio_only: false)
+    td2.update(assess_in_portfolio_only: false)
+
+    student = unit.projects.first
+
+    task1 = student.task_for_task_definition(td1)
+    task2 = student.task_for_task_definition(td2)
+
+    task1.comments.delete_all
+    task2.comments.delete_all
+
+    task1.update(task_status_id: TaskStatus.time_exceeded.id)
+
+    task2.update(task_status_id: TaskStatus.feedback_exceeded.id)
+
+    task1.reload
+    task2.reload
+
+    assert_equal TaskStatus.time_exceeded, task1.task_status
+    assert_equal TaskStatus.feedback_exceeded, task2.task_status
+
+    td1.update(assess_in_portfolio_only: true)
+
+    task1.reload
+    task2.reload
+
+    assert_equal TaskStatus.assess_in_portfolio, task1.task_status, "Time exceeded task should have moved to assess in portfolio"
+    assert_equal TaskStatus.feedback_exceeded, task2.task_status, "Feedback exceeded task should not have changes status"
+
+    missing_aip_status_error = "Assess in Portfolio status comment missing"
+
+    lc = task1.last_comment
+    assert_not lc.nil?, missing_aip_status_error
+    assert_equal TaskStatus.assess_in_portfolio.name, lc.comment, missing_aip_status_error
+    assert_equal TaskStatus.assess_in_portfolio, lc.task_status, missing_aip_status_error
+    lc.destroy!
+
+    assert_equal TaskStatus.feedback_exceeded, task2.task_status
+
+    td2.update(assess_in_portfolio_only: true)
+    task2.reload
+
+    assert_equal TaskStatus.feedback_exceeded, task2.task_status
+
+    lc = task2.last_comment
+    assert_nil lc, "Task 2 should not have been moved to assess in portfolio state"
+  end
+
+  def test_cant_disable_aip_only_while_aip_tasks_exist
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 2)
+
+    td1 = unit.task_definitions.first
+
+    td1.update(assess_in_portfolio_only: true)
+
+    student = unit.projects.first
+
+    task1 = student.task_for_task_definition(td1)
+
+    task1.update(task_status_id: TaskStatus.assess_in_portfolio.id)
+
+    # Ensure we can update a task definition that as AIP disabled, with AIP tasks
+    due_date = td1.due_date + 1.week
+    td1.update(due_date: due_date)
+    assert td1.valid?, "Task definition should be able to be updated"
+
+    # Enable assess in portfolio
+    td1.update(assess_in_portfolio_only: true)
+    assert td1.valid?
+
+    # Ensure we can't disable assess in portfolio once we have AIP tasks
+    td1.assess_in_portfolio_only = false
+    assert_not td1.valid?, '"Assess in Portfolio Only" cannot be disabled while tasks are in the Assess in Portfolio state'
+    assert_includes td1.errors[:assess_in_portfolio_only], 'cannot be disabled while tasks are in the Assess in Portfolio state'
+  end
+
+  def test_reset_overdue_tasks_on_due_date_change
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 3)
+
+    td1 = unit.task_definitions.first
+    td2 = unit.task_definitions.second
+    td3 = unit.task_definitions.third
+
+    td3.update!(assess_in_portfolio_only: true)
+
+    student = unit.projects.first
+
+    task1 = student.task_for_task_definition(td1)
+    task2 = student.task_for_task_definition(td2)
+    task3 = student.task_for_task_definition(td3)
+
+    task1.update!(task_status_id: TaskStatus.time_exceeded.id, submission_date: Time.zone.now)
+    task2.update!(task_status_id: TaskStatus.assess_in_portfolio.id, submission_date: Time.zone.now)
+    task3.update!(task_status_id: TaskStatus.assess_in_portfolio.id, submission_date: Time.zone.now)
+
+    # Setting the due date back one day shouldn't reset submissions
+    td1.update!(due_date: Time.zone.today - 1.day)
+    td2.update!(due_date: Time.zone.today - 1.day)
+    td3.update!(due_date: Time.zone.today - 1.day)
+
+    task1.reload
+    task2.reload
+    task3.reload
+
+    assert TaskStatus.time_exceeded, task1.task_status
+    assert TaskStatus.time_exceeded, task2.task_status
+    assert TaskStatus.assess_in_portfolio, task3.task_status
+
+    # Setting the due date after the task submission dates should reset task statuses
+    td1.update!(due_date: Time.zone.today + 2.days)
+    td2.update!(due_date: Time.zone.today + 2.days)
+    td3.update!(due_date: Time.zone.today + 2.days)
+
+    task1.reload
+    task2.reload
+    task3.reload
+
+    assert TaskStatus.ready_for_feedback, task1.task_status
+    assert TaskStatus.ready_for_feedback, task2.task_status
+
+    # Assess in portfolio only task should not be reset
+    assert TaskStatus.assess_in_portfolio, task3.task_status
+
+    # Ensure status comments were created
+    lc1 = task1.comments.last
+    lc2 = task2.comments.last
+
+    assert_not lc1.nil?
+    assert_not lc2.nil?
+
+    assert TaskStatus.ready_for_feedback.name, lc1.comment
+    assert TaskStatus.ready_for_feedback.name, lc2.comment
+  end
 end

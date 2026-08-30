@@ -2,9 +2,9 @@ module PdfGeneration
   module ProjectCompilePortfolioModule
     def projects_awaiting_auto_generation
       Project.joins(:unit)
-             .where(units: { active: true, end_date: Date.today..Float::INFINITY })
+             .where(units: { active: true, end_date: Time.zone.today..Float::INFINITY })
              .where(projects: { enrolled: true, portfolio_production_date: nil })
-             .where("units.portfolio_auto_generation_date < ?", Date.today)
+             .where("units.portfolio_auto_generation_date < ?", Time.zone.today)
              .where(compile_portfolio: false)
              .reject(&:portfolio_available)
     end
@@ -35,11 +35,16 @@ module PdfGeneration
 
     # This class scaffolds the creation of the portfolio - mapping the required data into the erb template
     class ProjectAppController < ApplicationController
+      include LatexHelper
+
       attr_accessor :student,
                     :project,
                     :base_path,
                     :image_path,
                     :learning_summary_report,
+                    :submission_date,
+                    :formatted_submission_date,
+                    :formatted_submission_time,
                     :ordered_tasks,
                     :portfolio_tasks,
                     :task_defs,
@@ -53,28 +58,64 @@ module PdfGeneration
         @student = project.student
         @project = project
         @learning_summary_report = project.learning_summary_report_path
+        @submission_date = project.portfolio_submission_date
+        @formatted_submission_date, @formatted_submission_time = format_submission_date(project)
         @files = project.portfolio_files(ensure_valid: true, force_ascii: is_retry)
         @base_path = project.portfolio_temp_path
-        @image_path = Rails.root.join('public', 'assets', 'images')
+        @image_path = Rails.root.join('public/assets/images')
         @ordered_tasks = project.tasks.joins(:task_definition).order('task_definitions.start_date, task_definitions.abbreviation').where("task_definitions.target_grade <= #{project.target_grade}")
         @portfolio_tasks = project.portfolio_tasks
         @task_defs = project.unit.task_definitions.order(:start_date)
-        @outcomes = project.unit.learning_outcomes.order(:ilo_number)
+        @outcomes = project.unit.learning_outcomes # .order(:ilo_number)
         @institution_name = Doubtfire::Application.config.institution[:name]
         @doubtfire_product_name = Doubtfire::Application.config.institution[:product_name]
         @is_retry = is_retry
+        @include_pax = !is_retry
+        @work_id = FileHelper.sanitized_path(
+          "portfolio-#{Time.current.strftime('%Y%m%d-%H%M')}-#{project.student.username}-#{project.id}-#{Process.pid}#{'-retry' if is_retry}"
+        )
       end
 
       def make_pdf
-        render_to_string(template: '/portfolio/portfolio_pdf', layout: true)
+        logger.debug 'Running make_pdf: (portfolio)'
+        generate_pdf(template: '/portfolio/portfolio_pdf')
+      end
+
+      private
+
+      def format_submission_date(project)
+        return [nil, nil] if @submission_date.blank?
+
+        campus_timezone = project.campus&.timezone.presence
+
+        submission_time =
+          if campus_timezone.present?
+            @submission_date.in_time_zone(campus_timezone)
+          else
+            @submission_date.to_time.getlocal
+          end
+
+        timezone_label = campus_timezone || ENV['TZ'].presence || submission_time.zone || Time.zone.name
+        [
+          submission_time.strftime('%d %b %Y'),
+          "#{submission_time.strftime('%I:%M %p')} #{timezone_label}"
+        ]
+      end
+    end
+
+    # A custom error to capture the log message from the latex error
+    class LatexError < StandardError
+      attr_reader :log_message
+
+      def initialize(log_message)
+        super
+        @log_message = log_message
       end
     end
 
     # Create the portfolio for this project
     def create_portfolio
-      self.compile_portfolio = false
-      save!
-
+      logger.info "Creating portfolio for #{user.username} in #{unit.code}"
       begin
         pac = ProjectAppController.new
         pac.init(self, false)
@@ -101,21 +142,34 @@ module PdfGeneration
         logger.info "Created portfolio at #{portfolio_path} - #{log_details}"
 
         self.portfolio_production_date = Time.zone.now
-        save
+        self.compile_portfolio = false
+        save!
+        true
       rescue StandardError => e
+        self.compile_portfolio = false
+        save!
+
         logger.error "Failed to convert portfolio to PDF - #{log_details} -\nError: #{e.message}"
 
         log_file = e.message.scan(%r{/.*\.log}).first
         if log_file && File.exist?(log_file)
+
           begin
+            log_message = File.read(log_file)
+
+            # rubocop:disable Rails/Output
             puts "--- Latex Log ---\n"
-            puts File.read(log_file)
+            puts log_message
             puts "---    End    ---\n\n"
+            # rubocop:enable Rails/Output
           rescue StandardError
+            # rubocop:disable Rails/Output
             puts "Failed to read log file: #{log_file}"
+            # rubocop:enable Rails/Output
           end
         end
-        false
+
+        raise LatexError.new(log_message), "Failed to convert portfolio to PDF - #{log_details}"
       end
     end
 
@@ -139,10 +193,29 @@ module PdfGeneration
     # Return the tasks to include in the student's portfolio
     def portfolio_tasks
       # Get assigned tasks that are included in the portfolio
-      tasks = self.tasks.joins(:task_definition).order('task_definitions.target_date, task_definitions.abbreviation').where('tasks.include_in_portfolio = TRUE')
+      tasks = self.tasks.joins(:task_definition).order('task_definitions.target_date, task_definitions.abbreviation')
 
-      # Now select the tasks that and have a PDF... cant include the others...
-      tasks.select(&:has_pdf)
+      # Select tasks that have a PDF, or unless the task has no upload requirements, and is in a submitted state
+      tasks.select do |task|
+        next if task.task_status_id == TaskStatus.not_started.id
+        task.has_pdf || (
+          task.task_definition.upload_requirements.blank? &&
+          ![TaskStatus.need_help.id, TaskStatus.working_on_it.id].include?(task.task_status_id)
+        )
+      end
+    end
+
+    # Return the tasks that are currently being processed
+    def tasks_processing_pdf
+      # Get assigned tasks that should be included in the portfolio
+      tasks = self.tasks.joins(:task_definition).order('task_definitions.target_date, task_definitions.abbreviation')
+
+      # Select tasks that should have a PDF submission, but is currently being processed
+      tasks.select do |task|
+        !task.has_pdf &&
+          task.processing_pdf? &&
+          task.task_definition.upload_requirements.present?
+      end
     end
 
     #
@@ -173,8 +246,8 @@ module PdfGeneration
     # Portfolio production code
     #
     def portfolio_temp_path
-      portfolio_dir = FileHelper.student_portfolio_dir(self.unit, self.student.username, false)
-      portfolio_tmp_dir = File.join(portfolio_dir, 'tmp')
+      portfolio_dir = FileHelper.student_portfolio_dir(self.unit, self.student.username, create: false)
+      File.join(portfolio_dir, 'tmp')
     end
 
     def portfolio_tmp_file_name(dict)
@@ -231,7 +304,7 @@ module PdfGeneration
       result = []
 
       Dir.chdir(portfolio_tmp_dir)
-      files = Dir.glob('*').select { |f| (f =~ /^\d{3}-(cover|document|code|image)/) == 0 }
+      files = Dir.glob('*').select { |f| (f =~ /^\d{3}-(cover|document|code|image|zip|archive)/) == 0 }
       files.each do |file|
         parts = file.split('-')
         idx = parts[0].to_i
@@ -266,7 +339,7 @@ module PdfGeneration
     end
 
     def portfolio_path
-      FileHelper.student_portfolio_path(self.unit, self.student.username, true)
+      FileHelper.student_portfolio_path(self.unit, self.student.username, create: true)
     end
 
     def portfolio_exists?

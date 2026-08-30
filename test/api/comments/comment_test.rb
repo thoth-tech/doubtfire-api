@@ -2,6 +2,7 @@ require 'test_helper'
 
 class CommentTest < ActiveSupport::TestCase
   include Rack::Test::Methods
+  include ActiveSupport::Testing::TimeHelpers
   include TestHelpers::AuthHelper
   include TestHelpers::JsonHelper
   include TestHelpers::TestFileHelper
@@ -219,6 +220,100 @@ class CommentTest < ActiveSupport::TestCase
 
     post_json "/api/projects/#{project_1.id}/task_def_id/#{task_definition_2.id}/comments", comment: 'Hello World', reply_to_id: id
     assert_equal 404, last_response.status
+  end
+
+  def test_student_can_edit_own_comment_within_10_minutes
+    project = Project.first
+    user = project.student
+    task_definition = project.unit.task_definitions.first
+
+    add_auth_header_for(user: user)
+    post_json "/api/projects/#{project.id}/task_def_id/#{task_definition.id}/comments", comment: 'Original comment'
+    assert_equal 201, last_response.status
+
+    comment_id = last_response_body['id']
+
+    travel_to 9.minutes.from_now do
+      put_json "/api/projects/#{project.id}/task_def_id/#{task_definition.id}/comments/#{comment_id}", comment: 'Edited comment'
+      assert_equal 200, last_response.status, last_response.body
+    end
+
+    assert_equal 'Edited comment', TaskComment.find(comment_id).read_attribute(:comment)
+    assert_equal 'Edited comment', last_response_body['comment']
+  end
+
+  def test_student_cannot_edit_own_comment_after_10_minutes
+    project = Project.first
+    user = project.student
+    task_definition = project.unit.task_definitions.first
+
+    add_auth_header_for(user: user)
+    post_json "/api/projects/#{project.id}/task_def_id/#{task_definition.id}/comments", comment: 'Original comment'
+    assert_equal 201, last_response.status
+
+    comment_id = last_response_body['id']
+
+    travel_to 11.minutes.from_now do
+      put_json "/api/projects/#{project.id}/task_def_id/#{task_definition.id}/comments/#{comment_id}", comment: 'Too late'
+      assert_equal 403, last_response.status, last_response.body
+    end
+
+    assert_equal 'Original comment', TaskComment.find(comment_id).read_attribute(:comment)
+  end
+
+  def test_student_cannot_edit_other_users_comment
+    project = Project.first
+    task_definition = project.unit.task_definitions.first
+    tutor = project.tutor_for(task_definition)
+    user = project.student
+    task = project.task_for_task_definition(task_definition)
+    comment = task.add_text_comment(tutor, 'Tutor comment')
+
+    add_auth_header_for(user: user)
+    put_json "/api/projects/#{project.id}/task_def_id/#{task_definition.id}/comments/#{comment.id}", comment: 'Edited by student'
+
+    assert_equal 403, last_response.status, last_response.body
+    assert_equal 'Tutor comment', comment.reload.read_attribute(:comment)
+  end
+
+  def test_special_task_comments_cannot_be_deleted
+    project = FactoryBot.create(:project)
+    task_definition = project.unit.task_definitions.first
+    task = project.task_for_task_definition(task_definition)
+    tutor = project.tutor_for(task_definition)
+    student = project.student
+
+    submission_history = FactoryBot.create(:submission_history, task: task)
+    overseer_assessment = FactoryBot.create(
+      :overseer_assessment,
+      task: task,
+      submission_history: submission_history,
+      submission_timestamp: submission_history.submission_timestamp,
+      status: :failed
+    )
+
+    protected_comments = [
+      task.add_status_comment(student, TaskStatus.ready_for_feedback),
+      task.add_discussed_comment(tutor),
+      task.add_feedback_review_request_comment(student),
+      AssessmentComment.create!(
+        task: task,
+        user: tutor,
+        recipient: student,
+        comment: 'Automated tests failed',
+        commentable: overseer_assessment
+      )
+    ]
+
+    protected_comments.each do |comment|
+      add_auth_header_for(user: comment.user)
+      delete_json "/api/projects/#{project.id}/task_def_id/#{task_definition.id}/comments/#{comment.id}"
+      assert_equal 403, last_response.status, "Expected #{comment.class.name} delete to be rejected"
+    end
+
+    deleted_comment_types = protected_comments.reject { |comment| TaskComment.exists?(comment.id) }.map(&:content_type)
+
+    assert_empty deleted_comment_types, "Expected protected comment types to remain after delete attempt: #{deleted_comment_types.join(', ')}"
   end
 
   def test_student_reply_to_other_student_in_same_group
@@ -513,6 +608,99 @@ class CommentTest < ActiveSupport::TestCase
 
     refute task.comments.last.new_for?(user)
     refute task.comments.last.new_for?(project.tutor_for(td))
+
+    td.destroy!
+  end
+
+  def test_project_plan_task_comments_dont_show_in_inbox
+    project = Project.first
+    user = project.student
+    unit = project.unit
+    unit.update(allow_flexible_dates: true)
+
+    td = TaskDefinition.new(unit_id: unit.id,
+                            tutorial_stream: unit.tutorial_streams.first,
+                            name: 'test_project_plan_task_comments_dont_show_in_inbox',
+                            description: 'test_project_plan_task_comments_dont_show_in_inbox',
+                            weighting: 4,
+                            target_grade: 0,
+                            start_date: Time.zone.now - 2.weeks,
+                            target_date: Time.zone.now + 1.week,
+                            due_date: Time.zone.now + 2.weeks,
+                            abbreviation: 'test_project_plan_task_comments_dont_show_in_inbox',
+                            restrict_status_updates: false,
+                            upload_requirements: [],
+                            plagiarism_warn_pct: 0.8,
+                            is_graded: false,
+                            max_quality_pts: 0)
+    td.save!
+
+    task_new = Task.create!(
+      project_id: project.id,
+      task_definition_id: td.id,
+      task_status: TaskStatus.not_started
+    )
+
+    data_to_post = {
+      extensions: 0
+    }
+
+    add_auth_header_for(user: project.student)
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}/plan", data_to_post
+    assert_equal 200, last_response.status
+
+    task_new.reload
+
+    inbox = unit.tasks_for_task_inbox(unit.tutors.first)
+    assert_not_includes inbox.map(&:id), task_new.id, "Task should not be in tutors inbox"
+    assert_not task_new.comments.last.new_for?(user), "Comment should be marked read by student"
+    assert_not task_new.comments.last.new_for?(project.tutor_for(td)), "Comment should be read by tutor"
+
+    td.destroy!
+    unit.update(allow_flexible_dates: false)
+  end
+
+  def test_discussed_in_class_task_comments_dont_show_in_inbox
+    project = Project.first
+    user = project.student
+    unit = project.unit
+
+    td = TaskDefinition.new(unit_id: unit.id,
+                            tutorial_stream: unit.tutorial_streams.first,
+                            name: 'test_discussed_in_class_task_comments_dont_show_in_inbox',
+                            description: 'test_discussed_in_class_task_comments_dont_show_in_inbox',
+                            weighting: 4,
+                            target_grade: 0,
+                            start_date: Time.zone.now - 2.weeks,
+                            target_date: Time.zone.now + 1.week,
+                            due_date: Time.zone.now + 2.weeks,
+                            abbreviation: 'test_discussed_in_class_task_comments_dont_show_in_inbox',
+                            restrict_status_updates: false,
+                            upload_requirements: [],
+                            plagiarism_warn_pct: 0.8,
+                            is_graded: false,
+                            max_quality_pts: 0)
+    td.save!
+
+    task_new = Task.create!(
+      project_id: project.id,
+      task_definition_id: td.id,
+      task_status: TaskStatus.not_started
+    )
+
+    task_new.add_discussed_comment(unit.tutors.first)
+    task_new.reload
+
+    inbox = unit.tasks_for_task_inbox(unit.tutors.first)
+    assert_not_includes inbox.map(&:id), task_new.id, "Task should not be in tutors inbox"
+    assert_not task_new.comments.last.new_for?(user), "Comment should be marked read by student"
+    assert_not task_new.comments.last.new_for?(project.tutor_for(td)), "Comment should be read by tutor"
+
+    task_new.add_text_comment(user, "test comment")
+
+    inbox = unit.tasks_for_task_inbox(unit.tutors.first)
+    assert_includes inbox.map(&:id), task_new.id, "Task should not be in tutors inbox"
+    assert task_new.comments.last.new_for?(project.tutor_for(td)), "Comment should not be read by tutor"
 
     td.destroy!
   end

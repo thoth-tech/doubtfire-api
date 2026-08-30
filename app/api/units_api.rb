@@ -7,6 +7,8 @@ class UnitsApi < Grape::API
   helpers AuthorisationHelpers
   helpers MimeCheckHelpers
   helpers CsvHelper
+  helpers SidekiqHelper
+  helpers FileHelper
 
   before do
     authenticated?
@@ -47,7 +49,6 @@ class UnitsApi < Grape::API
       { tutorial_streams: :activity_type },
       { tutorials: [:tutor, :tutorial_stream] },
       :tutorial_enrolments,
-      { staff: [:role, :user] },
       :group_sets,
       :groups,
       :group_memberships
@@ -61,7 +62,7 @@ class UnitsApi < Grape::API
     # Unit uses user from thread to limit exposure
     #
     my_role = unit.role_for(current_user)
-    present unit, with: Entities::UnitEntity, my_role: my_role, in_unit: true
+    present unit, with: Entities::UnitEntity, user: current_user, my_role: my_role, in_unit: true
   end
 
   desc 'Update unit'
@@ -72,21 +73,33 @@ class UnitsApi < Grape::API
       optional :code, type: String
       optional :description, type: String
       optional :active, type: Boolean
+      optional :peer_progress_enabled, type: Boolean, desc: 'Enable anonymous peer progress for students in this unit'
       optional :teaching_period_id, type: Integer
       optional :start_date, type: Date
       optional :end_date, type: Date
       optional :main_convenor_id, type: Integer
       optional :auto_apply_extension_before_deadline, type: Boolean, desc: 'Indicates if extensions before the deadline should be automatically applied'
+      optional :mark_late_submissions_as_assess_in_portfolio, type: Boolean, desc: 'Indicates if late submissions should be set Time Exceeded or Assess in Portfolio'
       optional :send_notifications, type: Boolean, desc: 'Indicates if emails should be sent on updates each week'
       optional :enable_sync_timetable, type: Boolean, desc: 'Sync to timetable automatically if supported by deployment'
       optional :enable_sync_enrolments, type: Boolean, desc: 'Sync student enrolments automatically if supported by deployment'
       optional :draft_task_definition_id, type: Integer, desc: 'Indicates the ID of the task definition used as the "draft learning summary task"'
       optional :portfolio_auto_generation_date, type: Date, desc: 'Indicates a date where student portfolio will automatically compile'
+      optional :allow_flexible_dates, type: Boolean, desc: 'Can turn on/off flexible dates for tasks in this unit'
       optional :allow_student_extension_requests, type: Boolean, desc: 'Can turn on/off student extension requests'
       optional :allow_student_change_tutorial, type: Boolean, desc: 'Can turn on/off student ability to change tutorials'
       optional :extension_weeks_on_resubmit_request, type: Integer, desc: 'Determines the number of weeks extension on a resubmit request'
       optional :overseer_image_id, type: Integer, desc: 'The id of the docker image used with '
       optional :assessment_enabled, type: Boolean
+      optional :feedback_warning_threshold_days, type: Integer, desc: 'Number of days since a submission without feedback before its highlighted in the tutors inbox'
+      optional :feedback_overflow_threshold_days, type: Integer, desc: 'Number of days since a submission without feedback before its added to overflow marking'
+      optional :enforce_feedback_before_discussed_in_class, type: Boolean, desc: 'Require feedback to be completed before tasks can be marked discussed in class'
+      optional :grade_definitions, type: Array do
+        requires :id, type: String
+        requires :value, type: Integer
+        requires :label, type: String
+        requires :abbreviation, type: String
+      end
 
       mutually_exclusive :teaching_period_id, :start_date
       mutually_exclusive :teaching_period_id, :end_date
@@ -104,20 +117,28 @@ class UnitsApi < Grape::API
                                                           :description,
                                                           :start_date,
                                                           :end_date,
+                                                          :peer_progress_enabled,
                                                           :teaching_period_id,
                                                           :active,
                                                           :main_convenor_id,
                                                           :auto_apply_extension_before_deadline,
+                                                          :mark_late_submissions_as_assess_in_portfolio,
                                                           :send_notifications,
                                                           :enable_sync_timetable,
                                                           :enable_sync_enrolments,
                                                           :draft_task_definition_id,
                                                           :portfolio_auto_generation_date,
+                                                          :allow_flexible_dates,
                                                           :allow_student_extension_requests,
                                                           :extension_weeks_on_resubmit_request,
                                                           :allow_student_change_tutorial,
                                                           :overseer_image_id,
-                                                          :assessment_enabled)
+                                                          :assessment_enabled,
+                                                          :feedback_warning_threshold_days,
+                                                          :feedback_overflow_threshold_days,
+                                                          :enforce_feedback_before_discussed_in_class,
+                                                          grade_definitions: [:id, :value, :label, :abbreviation]
+                                                          )
 
     if unit.teaching_period_id.present? && (unit_parameters.key?(:start_date) || unit_parameters['teaching_period_id'] == -1)
       unit.teaching_period = nil
@@ -153,13 +174,24 @@ class UnitsApi < Grape::API
       optional :end_date, type: Date
       optional :main_convenor_user_id, type: Integer
       optional :auto_apply_extension_before_deadline, type: Boolean, desc: 'Indicates if extensions before the deadline should be automatically applied', default: true
+      optional :mark_late_submissions_as_assess_in_portfolio, type: Boolean, desc: 'Indicates if late submissions should be set to Time Exceeded or Assess in Portfolio', default: true
       optional :send_notifications, type: Boolean, desc: 'Indicates if emails should be sent on updates each week', default: true
       optional :enable_sync_timetable, type: Boolean, desc: 'Sync to timetable automatically if supported by deployment', default: true
       optional :enable_sync_enrolments, type: Boolean, desc: 'Sync student enrolments automatically if supported by deployment', default: true
+      optional :allow_flexible_dates, type: Boolean, desc: 'Can turn on/off flexible dates for tasks in this unit', default: true
       optional :allow_student_extension_requests, type: Boolean, desc: 'Can turn on/off student extension requests', default: true
       optional :extension_weeks_on_resubmit_request, type: Integer, desc: 'Determines the number of weeks extension on a resubmit request', default: 1
       optional :portfolio_auto_generation_date, type: Date, desc: 'Indicates a date where student portfolio will automatically compile'
       optional :allow_student_change_tutorial, type: Boolean, desc: 'Can turn on/off student ability to change tutorials', default: true
+      optional :feedback_warning_threshold_days, type: Integer, desc: 'Number of days since a submission without feedback before its highlighted in the tutors inbox'
+      optional :feedback_overflow_threshold_days, type: Integer, desc: 'Number of days since a submission without feedback before its added to overflow marking'
+      optional :enforce_feedback_before_discussed_in_class, type: Boolean, desc: 'Require feedback to be completed before tasks can be marked discussed in class', default: false
+      optional :grade_definitions, type: Array do
+        requires :id, type: String
+        requires :value, type: Integer
+        requires :label, type: String
+        requires :abbreviation, type: String
+      end
 
       mutually_exclusive :teaching_period_id, :start_date
       mutually_exclusive :teaching_period_id, :end_date
@@ -181,19 +213,30 @@ class UnitsApi < Grape::API
                                                     :start_date,
                                                     :end_date,
                                                     :auto_apply_extension_before_deadline,
+                                                    :mark_late_submissions_as_assess_in_portfolio,
                                                     :send_notifications,
                                                     :enable_sync_timetable,
                                                     :enable_sync_enrolments,
+                                                    :allow_flexible_dates,
                                                     :allow_student_extension_requests,
                                                     :extension_weeks_on_resubmit_request,
                                                     :portfolio_auto_generation_date,
                                                     :allow_student_change_tutorial,
+                                                    :feedback_warning_threshold_days,
+                                                    :feedback_overflow_threshold_days,
+                                                    :enforce_feedback_before_discussed_in_class,
+                                                    grade_definitions: [:id, :value, :label, :abbreviation]
                                                   )
 
-    # Identify main convenor - ensure they have the correct role
-    main_convenor_user = unit_parameters[:main_convenor_user_id].present? ? User.find(unit_parameters[:main_convenor_user_id]) : current_user
+    # Ensure the user is authorised to convene units
+    unless authorise? current_user, User, :convene_units
+      error!({ error: 'You are not authorised to manage units' }, 403)
+    end
 
-    unless main_convenor_user.present?
+    # Identify main convenor - ensure they have the correct role
+    main_convenor_user = params[:unit][:main_convenor_user_id].present? ? User.find(params[:unit][:main_convenor_user_id]) : current_user
+
+    if main_convenor_user.blank?
       error!({ error: 'Main convenor user not found' }, 403)
     end
 
@@ -209,7 +252,7 @@ class UnitsApi < Grape::API
     if teaching_period_id.blank?
       if unit_parameters[:start_date].nil?
         start_date = Date.parse('Monday')
-        delta = start_date > Date.today ? 0 : 7
+        delta = start_date > Time.zone.today ? 0 : 7
         unit_parameters[:start_date] = start_date + delta
       end
 
@@ -231,9 +274,10 @@ class UnitsApi < Grape::API
 
   desc 'Rollover unit'
   params do
-    optional :teaching_period_id
-    optional :start_date
-    optional :end_date
+    optional :teaching_period_id, type: Integer, desc: 'The teaching period to rollover to'
+    optional :start_date, type: Date, desc: 'The start date of the new unit'
+    optional :end_date, type: Date, desc: 'The end date of the new unit'
+    optional :new_unit_code, type: String, desc: 'The unit code for the new unit'
 
     exactly_one_of :teaching_period_id, :start_date
     all_or_none_of :start_date, :end_date
@@ -249,9 +293,9 @@ class UnitsApi < Grape::API
 
     if teaching_period_id.present?
       tp = TeachingPeriod.find(teaching_period_id)
-      result = unit.rollover(tp, nil, nil)
+      result = unit.rollover(tp, nil, nil, params[:new_unit_code])
     else
-      result = unit.rollover(nil, params[:start_date], params[:end_date])
+      result = unit.rollover(nil, params[:start_date], params[:end_date], params[:new_unit_code])
     end
 
     my_role = result.role_for(current_user)
@@ -272,6 +316,9 @@ class UnitsApi < Grape::API
   end
 
   desc 'Download the tasks that should be listed under the task inbox'
+  params do
+    optional :my_students_only, type: Boolean, desc: 'Show tasks from all tutorials or just the ones you teach'
+  end
   get '/units/:id/tasks/inbox' do
     unit = Unit.find(params[:id])
 
@@ -279,7 +326,66 @@ class UnitsApi < Grape::API
       error!({ error: 'Not authorised to provide feedback for this unit' }, 403)
     end
 
-    tasks = unit.tasks_for_task_inbox(current_user)
+    my_students_only = params[:my_students_only] || false
+
+    tasks = unit.tasks_for_task_inbox(current_user, my_students_only)
+    present unit.tasks_as_hash(tasks), with: Grape::Presenters::Presenter
+  end
+
+  desc 'Get tasks ready for moderation'
+  get '/units/:id/tasks/moderation' do
+    unit = Unit.find(params[:id])
+
+    unless authorise? current_user, unit, :get_students
+      error!({ error: 'Not authorised to provide feedback for this unit' }, 403)
+    end
+
+    unless authorise? current_user, unit, :provide_feedback
+      error!({ error: 'Not authorised to provide feedback for this unit' }, 403)
+    end
+
+    tasks = unit.tasks_for_moderation(current_user)
+    data = tasks.map do |t|
+      {
+        id: t.task_id,
+        project_id: t.project_id,
+        task_definition_id: t.task_definition_id,
+        # tutorial_id: t.tutorial_id,
+        status: TaskStatus.id_to_key(t.status_id),
+        completion_date: t.completion_date,
+        submission_date: t.submission_date,
+        # times_assessed: t.times_assessed,
+        # grade: t.grade,
+        # quality_pts: t.quality_pts,
+        # num_new_comments: t.number_unread,
+        # similarity_flag: t.similar_to_count > 0,
+        # pinned: t.pinned,
+        # has_extensions: t.has_extensions,
+        moderation_type: t.moderated_task&.moderation_type
+      }
+    end
+    # present unit.tasks_as_hash(tasks), with: Grape::Presenters::Presenter
+    present data, with: Grape::Presenters::Presenter
+  end
+
+  desc 'Get tasks ready for overflow marking'
+  get '/units/:id/tasks/overflow' do
+    unit = Unit.find(params[:id])
+
+    unless authorise? current_user, unit, :get_students
+      error!({ error: 'Not authorised to provide feedback for this unit' }, 403)
+    end
+
+    unless authorise? current_user, unit, :provide_feedback
+      error!({ error: 'Not authorised to provide feedback for this unit' }, 403)
+    end
+
+    unit_role = unit.unit_role_for(current_user)
+    unless unit_role&.can_mark_overflow_tasks?
+      error!({ error: 'Not authorised to access overflow queue' }, 403)
+    end
+
+    tasks = unit.tasks_for_overflow_marking(current_user)
     present unit.tasks_as_hash(tasks), with: Grape::Presenters::Presenter
   end
 
@@ -291,7 +397,7 @@ class UnitsApi < Grape::API
     end
 
     content_type 'application/octet-stream'
-    header['Content-Disposition'] = "attachment; filename=#{unit.code}-Students.csv"
+    header['Content-Disposition'] = "attachment; filename=#{unit.code}-Grades.csv"
     header['Access-Control-Expose-Headers'] = 'Content-Disposition'
     env['api.format'] = :binary
 
@@ -308,14 +414,26 @@ class UnitsApi < Grape::API
       error!({ error: "Not authorised to upload CSV of students to #{unit.code}" }, 403)
     end
 
-    unless params[:file].present?
+    if params[:file].blank?
       error!({ error: "No file uploaded" }, 403)
     end
 
     ensure_csv!(params[:file][:tempfile])
 
-    # Actually import...
-    unit.import_users_from_csv(params[:file][:tempfile])
+    import_csv_dir = Rails.root.join(FileHelper.tmp_file_dir, 'csv')
+
+    file_name = File.join(import_csv_dir, "import-student-csv-#{unit.id}-#{Process.pid}-#{Thread.current.object_id}.csv")
+    FileUtils.mkdir_p(import_csv_dir)
+
+    csv = CSV.read(params[:file][:tempfile], headers: true)
+    CSV.open(file_name, "w", write_headers: true, headers: csv.headers) do |out|
+      csv.each { |row| out << row }
+    end
+
+    # Queue student import onto sidekiq
+    job_id = ImportStudentsCsvJob.perform_async(unit.id, file_name)
+    job = setup_job(job_id)
+    present job, with: Entities::SidekiqJobEntity
   end
 
   desc 'Upload CSV with the students to un-enrol from the unit'
@@ -328,7 +446,7 @@ class UnitsApi < Grape::API
       error!({ error: "Not authorised to upload CSV of students to #{unit.code}" }, 403)
     end
 
-    unless params[:file].present?
+    if params[:file].blank?
       error!({ error: "No file uploaded" }, 403)
     end
 
@@ -355,6 +473,97 @@ class UnitsApi < Grape::API
     unit.export_users_to_csv
   end
 
+  desc 'Download CSV of tutor times summary'
+  params do
+    optional :start_date, type: Date, desc: 'Filter sessions starting from this date'
+    optional :end_date, type: Date, desc: 'Filter sessions up to this date'
+    optional :timezone, type: String, desc: 'Requested timezone to search sessions for'
+    optional :ignore_sessions_during_tutorials, type: Boolean, desc: 'Filter out sessions that occured during tutorials'
+  end
+  get '/csv/units/:id/tutor_times_summary' do
+    unit = Unit.find(params[:id])
+    unless authorise? current_user, unit, :get_tutor_times_summary
+      error!({ error: "Not authorised to download CSV of marking session summary in #{unit.code}" }, 403)
+    end
+
+    ignore_sessions_during_tutorials = params[:ignore_sessions_during_tutorials] || false
+
+    job_id = DownloadUnitTutorTimesSummaryJob.perform_async(
+      unit.id,
+      params[:start_date]&.to_s,
+      params[:end_date]&.to_s,
+      params[:timezone]&.to_s,
+      ignore_sessions_during_tutorials
+    )
+
+    job = setup_job(job_id)
+    present job, with: Entities::SidekiqJobEntity
+  end
+
+  desc 'Download CSV of marking sessions for current unit role'
+  params do
+    optional :start_date, type: Date, desc: 'Filter sessions starting from this date'
+    optional :end_date, type: Date, desc: 'Filter sessions up to this date'
+    optional :timezone, type: String, desc: 'Requested timezone to search sessions for'
+  end
+  get '/csv/units/:id/my_marking_sessions' do
+    unit = Unit.find(params[:id])
+    unless authorise? current_user, unit, :get_marking_sessions
+      error!({ error: "Not authorised to download CSV of marking sessions for #{unit.code}" }, 403)
+    end
+
+    unit_role = unit.unit_role_for(current_user)
+    unless unit_role
+      error!({ error: "Not authorised to download CSV of marking sessions for #{unit.code}" }, 403)
+    end
+
+    job_id = DownloadMarkingSessionsJob.perform_async(
+      unit_role.id,
+      params[:start_date]&.to_s,
+      params[:end_date]&.to_s,
+      params[:timezone]&.to_s,
+    )
+
+    job = setup_job(job_id)
+    present job, with: Entities::SidekiqJobEntity
+  end
+
+  desc 'Download CSV of how many times each task changed status'
+  get '/csv/units/:id/task_assessment_counts' do
+    unit = Unit.find(params[:id])
+    unless authorise? current_user, unit, :download_unit_csv
+      error!({ error: "Not authorised to download CSV of student tasks in #{unit.code}" }, 403)
+    end
+
+    job_id = DownloadTaskAssessmentCountsCsvJob.perform_async(unit.id)
+    job = setup_job(job_id)
+    present job, with: Entities::SidekiqJobEntity
+  end
+
+  desc 'Download CSV of all student tasks awaiting feedback in this unit'
+  get '/csv/units/:id/tasks_awaiting_feedback' do
+    unit = Unit.find(params[:id])
+    unless authorise? current_user, unit, :download_unit_csv
+      error!({ error: "Not authorised to download CSV of student tasks in #{unit.code}" }, 403)
+    end
+
+    job_id = DownloadTasksAwaitingFeedbackCsvJob.perform_async(unit.id)
+    job = setup_job(job_id)
+    present job, with: Entities::SidekiqJobEntity
+  end
+
+  desc 'Download CSV of overflow task claims in this unit'
+  get '/csv/units/:id/overflow_task_claims' do
+    unit = Unit.find(params[:id])
+    unless authorise? current_user, unit, :download_overflow_stats
+      error!({ error: "Not authorised to download overflow task claim stats for #{unit.code}" }, 403)
+    end
+
+    job_id = DownloadOverflowTaskClaimsCsvJob.perform_async(unit.id)
+    job = setup_job(job_id)
+    present job, with: Entities::SidekiqJobEntity
+  end
+
   desc 'Download CSV of all student tasks in this unit'
   get '/csv/units/:id/task_completion' do
     unit = Unit.find(params[:id])
@@ -362,11 +571,9 @@ class UnitsApi < Grape::API
       error!({ error: "Not authorised to download CSV of student tasks in #{unit.code}" }, 403)
     end
 
-    content_type 'application/octet-stream'
-    header['Content-Disposition'] = "attachment; filename=#{unit.code}-TaskCompletion.csv"
-    header['Access-Control-Expose-Headers'] = 'Content-Disposition'
-    env['api.format'] = :binary
-    unit.task_completion_csv
+    job_id = DownloadTaskCompletionCsvJob.perform_async(unit.id)
+    job = setup_job(job_id)
+    present job, with: Entities::SidekiqJobEntity
   end
 
   desc 'Download the stats related to the number of students aiming for each grade'
@@ -399,6 +606,61 @@ class UnitsApi < Grape::API
     present unit.student_task_completion_stats, with: Grape::Presenters::Presenter
   end
 
+  desc 'Get historical task completion snapshots'
+  params do
+    optional :start_date, type: Date, desc: 'Include snapshots captured on or after this date'
+    optional :end_date, type: Date, desc: 'Include snapshots captured on or before this date'
+    optional :limit, type: Integer, desc: 'Maximum number of snapshots to return', default: 365
+  end
+  get '/units/:id/stats/task_completion_snapshots' do
+    unit = Unit.find(params[:id])
+    unless authorise? current_user, unit, :download_stats
+      error!({ error: "Not authorised to download stats of student tasks in #{unit.code}" }, 403)
+    end
+
+    snapshots = unit.task_completion_snapshots.order(snapshot_timestamp: :desc)
+    if params[:start_date].present?
+      start_timestamp = params[:start_date].in_time_zone.beginning_of_day.to_i
+      snapshots = snapshots.where('CAST(snapshot_timestamp AS UNSIGNED) >= ?', start_timestamp)
+    end
+    if params[:end_date].present?
+      end_timestamp = params[:end_date].in_time_zone.end_of_day.to_i
+      snapshots = snapshots.where('CAST(snapshot_timestamp AS UNSIGNED) <= ?', end_timestamp)
+    end
+    snapshots = snapshots.limit([params[:limit].to_i, 365].min)
+
+    present snapshots.map { |snapshot|
+      stats = snapshot.load_stats
+
+      {
+        snapshot_date: snapshot.snapshot_date,
+        snapshot_timestamp: snapshot.snapshot_timestamp,
+        stats: stats
+      }
+    }, with: Grape::Presenters::Presenter
+  end
+
+  desc 'Capture task completion snapshot immediately for this unit'
+  post '/units/:id/stats/task_completion_snapshots/capture' do
+    unit = Unit.find(params[:id])
+    unless authorise? current_user, unit, :capture_task_completion_snapshot
+      error!({ error: "Not authorised to capture stats of student tasks in #{unit.code}" }, 403)
+    end
+
+    # Check if a snapshot was captured within the past 30 minutes
+    recent_snapshot = unit.task_completion_snapshots.where('CAST(snapshot_timestamp AS UNSIGNED) > ?', 30.minutes.ago.to_i).order(snapshot_timestamp: :desc).first
+    if recent_snapshot.present?
+      recent_snapshot_time = recent_snapshot.snapshot_time
+      remaining_seconds = [(recent_snapshot_time + 30.minutes - Time.zone.now).ceil, 0].max
+      remaining_minutes = [(remaining_seconds / 60.0).ceil, 1].max
+      error!({ error: "A snapshot was captured at #{recent_snapshot_time.strftime('%H:%M')}. Please wait #{remaining_minutes} more minute(s) before capturing another snapshot." }, 429)
+    end
+
+    job_id = AggregateTaskCompletionStatsJob.perform_async(unit.id)
+    job = setup_job(job_id)
+    present job, with: Entities::SidekiqJobEntity
+  end
+
   desc 'Download stats related to the number of tasks assessed by each tutor'
   get '/csv/units/:id/tutor_assessments' do
     unit = Unit.find(params[:id])
@@ -406,11 +668,69 @@ class UnitsApi < Grape::API
       error!({ error: "Not authorised to download stats of statistics for #{unit.code}" }, 403)
     end
 
+    job_id = DownloadTutorAssessmentStatsJob.perform_async(unit.id)
+    job = setup_job(job_id)
+    present job, with: Entities::SidekiqJobEntity
+  end
+
+  desc 'Compress portfolios into zip file'
+  get '/submission/units/:id/portfolio/zip' do
+    unit = Unit.find(params[:id])
+    unless authorise? current_user, unit, :get_students
+      error!({ error: "Not authorised to download portfolios for unit '#{unit.code}'" }, 403)
+    end
+
+    # Queue portfolio downloads to sidekiq
+    job_id = DownloadPortfoliosJob.perform_async(current_user.id, unit.id)
+    job = setup_job(job_id)
+
+    present job, with: Entities::SidekiqJobEntity
+  end
+
+  desc 'Upload CSV of all the projects grades in the unit'
+  params do
+    requires :file, type: File, desc: 'CSV upload file.'
+  end
+  post '/units/:id/grades/csv' do
+    unit = Unit.find(params[:id])
+
+    unless authorise? current_user, unit, :upload_grades_csv
+      error!({ error: "Not authorised to upload CSV of grades to #{unit.code}" }, 403)
+    end
+
+    if params[:file].blank?
+      error!({ error: "No file uploaded" }, 403)
+    end
+
+    ensure_csv!(params[:file][:tempfile])
+
+    import_csv_dir = Rails.root.join(FileHelper.tmp_file_dir, 'csv')
+
+    file_name = File.join(import_csv_dir, "import-grades-csv-#{unit.id}-#{Process.pid}-#{Thread.current.object_id}-#{current_user.id}.csv")
+    FileUtils.mkdir_p(import_csv_dir)
+
+    csv = CSV.read(params[:file][:tempfile], headers: true)
+    CSV.open(file_name, "w", write_headers: true, headers: csv.headers) do |out|
+      csv.each { |row| out << row }
+    end
+
+    job_id = ImportGradesCsvJob.perform_async(unit.id, current_user.id, file_name)
+    job = setup_job(job_id)
+    present job, with: Entities::SidekiqJobEntity
+  end
+
+  desc 'Download CSV of staff notes'
+  get '/csv/units/:id/staff_notes' do
+    unit = Unit.find(params[:id])
+    unless authorise? current_user, unit, :get_staff_notes
+      error!({ error: "Not authorised to download CSV of marking session summary in #{unit.code}" }, 403)
+    end
+
     content_type 'application/octet-stream'
-    header['Content-Disposition'] = "attachment; filename=#{unit.code}-TutorAssessments.csv"
+    header['Content-Disposition'] = "attachment; filename=#{unit.code}-#{unit.id}-StaffNotes.csv"
     header['Access-Control-Expose-Headers'] = 'Content-Disposition'
     env['api.format'] = :binary
 
-    unit.tutor_assessment_csv
+    unit.staff_notes_csv
   end
 end

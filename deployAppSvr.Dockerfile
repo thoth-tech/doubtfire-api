@@ -1,63 +1,47 @@
-#
-# deployAppSrc.Dockerfile - the container used for back end processing
-#
-FROM ruby:3.1-bullseye
+# Docker CLI only: workers use a constrained remote Docker API for TexLive and
+# JPlag. Never ship a daemon or containerd in this application image.
+FROM docker:28.5.2-cli@sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d AS docker_cli
 
-# Setup dependencies
+# Build the app-worker from the same exact Ruby base and API source as the API.
+FROM ruby:3.4.10-bookworm@sha256:56e0c9fdbf64d090e45072d32f0d3be7f2e392e733444f7d176a50881e6c325a
+
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-  && apt-get install -y apt-transport-https ca-certificates curl gnupg2 software-properties-common \
-  && curl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add - \
-  && add-apt-repository "deb [arch=amd64,arm64] https://download.docker.com/linux/debian $(lsb_release -cs) stable" \
-  && curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg \
-  && echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
-
-RUN apt-get update \
-  && apt-get install -y \
+  && apt-get install -y --no-install-recommends \
     bc \
+    bsd-mailx \
+    ca-certificates \
+    cron \
     ffmpeg \
-    ghostscript qpdf \
+    ghostscript \
     imagemagick \
     libmagic-dev \
     libmagickwand-dev \
     libmariadb-dev \
+    msmtp-mta \
     python3-pygments \
+    qpdf \
     tzdata \
-    cron \
-    msmtp-mta bsd-mailx \
-    redis \
-    librsvg2-bin \
-    docker-ce \
-    docker-ce-cli \
-    containerd.io \
-  && apt-get clean
+  && rm -rf /var/lib/apt/lists/*
 
-# Setup the folder where we will deploy the code
+COPY --from=docker_cli /usr/local/bin/docker /usr/local/bin/docker
+
 WORKDIR /doubtfire
 
-# Install LaTex
-COPY ./.ci-setup /doubtfire/.ci-setup
-RUN /doubtfire/.ci-setup/texlive-install.sh
+ENV RAILS_ENV=production \
+    BUNDLE_WITHOUT=development:test:staging
 
-# Install bundler
-RUN gem install bundler -v '2.4.5'
-RUN bundle config set --global without development test staging
+RUN gem install bundler -v 2.6.6 --no-document
 
-# Install the Gems
-COPY ./Gemfile ./Gemfile.lock /doubtfire/
-RUN bundle install
+COPY Gemfile Gemfile.lock ./
+RUN bundle config set deployment true \
+  && bundle install --jobs 4 --retry 3
 
-# Setup path
-ENV PATH /tmp/texlive/bin/x86_64-linux:/tmp/texlive/bin/aarch64-linux:$PATH
+COPY . ./
+COPY .ci-setup/crontab /etc/cron.d/container_cronjob
 
-# Copy doubtfire-api source
-COPY . /doubtfire/
+RUN touch /var/log/cron.log \
+  && chmod 0644 /etc/cron.d/container_cronjob
 
-# Crontab file copied to cron.d directory.
-COPY ./.ci-setup/pdfGen/entry_point.sh /doubtfire/
-COPY ./.ci-setup/pdfGen/crontab /etc/cron.d/container_cronjob
-
-RUN touch /var/log/cron.log
-
-CMD /doubtfire/entry_point.sh
+CMD ["/doubtfire/lib/shell/pdfgen_entry_point.sh"]

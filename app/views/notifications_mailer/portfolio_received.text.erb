@@ -1,0 +1,14 @@
+Hi <%= @user.first_name %>,
+
+<%= @notification.message %>
+
+Open <%= @doubtfire_product_name %> to view its current status.
+<% if @notification.link.present? -%>
+
+View the current status: <%= @doubtfire_host %><%= @notification.link %>
+<% end -%>
+
+This receipt confirms when the submission was received. It does not confirm an assessment outcome.
+
+You can manage your notification preferences here:
+<%= @unsubscribe_url %>

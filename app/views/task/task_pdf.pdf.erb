@@ -62,17 +62,19 @@ No Tutor % Supervisor's Name
 \end{tabular}\\[1cm]
 <%  end %>
 
-<% if @task.learning_outcome_task_links.count > 0 %>
-\begin{tabular}{p{8cm}|l}
-\textbf{Outcome} & \textbf{Weight}\\
+<% if @task.task_definition.learning_outcomes.count > 0 %>
+\begin{tabular}{lp{7cm}|P{5cm}}
+\multicolumn{2}{l|}{\textbf{Task Outcomes}} & \textbf{Supports}\\
 \hline
-<% @task.learning_outcome_task_links.each do | link | %>
-    <%= lesc link.learning_outcome.name %> &
-    $<%= '\blacklozenge' * link.rating %><%= '\lozenge' * (5 - link.rating) %>$ \\
-<%    end %>
+<% @task.task_definition.learning_outcomes.each do | outcome | %>
+    <%= lesc outcome.abbreviation %> &
+    <%= lesc outcome.full_outcome_description %> &
+<%  outcome.linked_outcomes.each do |linked_outcome| %>
+    <%= lesc linked_outcome.abbreviation%> <%= lesc linked_outcome.short_description%> \newline
+<%  end %>
+    \\
+<% end %>
 \end{tabular}\\[0.5cm]
-
-<%= lesc @task.learning_outcome_task_links.last.description.present? && @task.learning_outcome_task_links.last.description.strip.length > 0 ? @task.learning_outcome_task_links.last.description : "(none)" %> \\[2cm]
 
 <% end %>
 %----------------------------------------------------------------------------------------
@@ -134,6 +136,45 @@ No Tutor % Supervisor's Name
 \includepdf[pages={<%= page_idx %>-<%= page_idx %>},fitpaper]{<%= file[:path] %>}
     <% end # end for  %>
   <% end # end if  %>
+  <% if %w[zip archive].include?(file[:type]) %>
+<% archive_tree = FileHelper.zip_file_tree(file[:path], File.basename(file[:path])) %>
+\begin{tcolorbox}[enhanced,breakable,colback=orange!8!white,colframe=orange!80!black,boxrule=0.9pt,left=4mm,right=4mm,top=3mm,bottom=3mm]
+\begin{minipage}{0.12\textwidth}
+\centering
+{\Huge \faFileArchiveO}
+\end{minipage}
+\hfill
+\begin{minipage}{0.82\textwidth}
+\textbf{Zip submission file}\\[0.35em]
+This zip file was uploaded with the submission. Zip contents are not expanded into this PDF.\\[0.65em]
+\href{<%= @submitted_files_url %>}{\faDownload\ Download submitted files} {\footnotesize (Must be already authenticated in <%= lesc @doubtfire_product_name %>)}
+\end{minipage}
+
+\tcblower
+\textbf{Zip contents}\\[0.35em]
+<% if archive_tree[:error] %>
+The zip file tree could not be read while generating this PDF. Download the submitted files to inspect the contents.
+<% elsif archive_tree[:lines].empty? %>
+No readable file entries were found in this zip.
+<% else %>
+{\footnotesize\ttfamily
+\begin{tabular}{@{}p{0.96\textwidth}@{}}
+<% archive_tree[:lines].each do |line| %>
+<%
+  indent = line[/\A */].length
+  content = line.lstrip
+  indent_width = indent * 0.45
+%>
+\hspace*{<%= indent_width %>em}<%= raw lesc(content).to_s.gsub('↳', '\ensuremath{\hookrightarrow}') %>\\
+<% end %>
+\end{tabular}
+}
+<% if archive_tree[:truncated] %>
+\\[0.35em]\emph{Showing the first <%= archive_tree[:lines].length %> of <%= archive_tree[:tree_lines] %> tree lines. Download the submitted files to inspect everything.}
+<% end %>
+<% end %>
+\end{tcolorbox}
+  <% end %>
 <% end # list of documents %>
 
 <%

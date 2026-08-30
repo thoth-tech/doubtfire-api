@@ -34,7 +34,13 @@ module Entities
       expose :portfolio_auto_generation_date, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }, expose_nil: false
     end
 
+    expose :current_unit_week do |unit|
+      unit.week_number(Time.current)
+    end
+
     expose :active
+    expose :grade_values
+    expose :grade_definitions
 
     expose :overseer_image_id, unless: :summary_only, if: lambda { |unit, options| can_read_unit_config?(options[:my_role]) }
     expose :assessment_enabled, unless: :summary_only
@@ -47,6 +53,13 @@ module Entities
     expose :allow_student_extension_requests, unless: :summary_only
     expose :extension_weeks_on_resubmit_request, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
     expose :allow_student_change_tutorial, unless: :summary_only
+    expose :allow_flexible_dates, unless: :summary_only
+    expose :mark_late_submissions_as_assess_in_portfolio, unless: :summary_only
+    expose :peer_progress_enabled,
+           unless: :summary_only,
+           if: lambda { |_unit, options|
+             can_read_unit_config?(options[:my_role])
+           }
 
     expose :learning_outcomes, using: LearningOutcomeEntity, as: :ilos, unless: :summary_only
     expose :tutorial_streams, using: TutorialStreamEntity, unless: :summary_only
@@ -56,12 +69,16 @@ module Entities
     expose :tutorials, using: TutorialEntity, unless: :summary_only
     # expose :tutorial_enrolments, using: TutorialEnrolmentEntity, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
 
-    expose :task_definitions, using: TaskDefinitionEntity, unless: :summary_only
-    expose :task_outcome_alignments, using: TaskOutcomeAlignmentEntity, unless: :summary_only
+    expose :ordered_task_definitions, as: :task_definitions, using: TaskDefinitionEntity, unless: :summary_only
     expose :group_sets, using: GroupSetEntity, unless: :summary_only
     expose :groups, using: GroupEntity, unless: :summary_only
     # expose :group_memberships, using: GroupMembershipEntity, unless: :summary_only do |unit, options|
     #   unit.group_memberships.where(active: true)
     # end
+
+    expose :feedback_warning_threshold_days, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
+    expose :feedback_overflow_threshold_days, unless: :summary_only, if: lambda { |unit, options| is_staff?(options[:my_role]) }
+
+    expose :enforce_feedback_before_discussed_in_class, if: lambda { |unit, options| is_staff?(options[:my_role]) }
   end
 end

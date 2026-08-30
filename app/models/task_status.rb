@@ -5,7 +5,7 @@ class TaskStatus < ApplicationRecord
   # TODO: Consider refactoring this class. Is there any point to having this in the database? Could this become an enum?
 
   # Model associations
-  has_many :tasks
+  has_many :tasks, dependent: :restrict_with_exception
 
   #
   # Override find to ensure that task status objects are cached - these do not change
@@ -64,6 +64,18 @@ class TaskStatus < ApplicationRecord
     TaskStatus.find(12)
   end
 
+  def self.assess_in_portfolio
+    TaskStatus.find(13)
+  end
+
+  def self.attention_required
+    TaskStatus.find(14)
+  end
+
+  def self.rediscuss
+    TaskStatus.find(15)
+  end
+
   class << self
     # Provide access to the count from the database via a new db_count method
     alias_method :db_count, :count
@@ -76,7 +88,7 @@ class TaskStatus < ApplicationRecord
   # Keep this hard coded! Saves cache load time.
   # Important: count must equal the largest id in the database
   def self.count
-    12
+    15
   end
 
   def self.status_for_name(name)
@@ -95,6 +107,8 @@ class TaskStatus < ApplicationRecord
       TaskStatus.working_on_it
     when 'discuss', 'd'
       TaskStatus.discuss
+    when 'rediscuss', 're-discuss', 're discuss'
+      TaskStatus.rediscuss
     when 'demonstrate', 'demo'
       TaskStatus.demonstrate
     when 'ready for feedback', 'ready_for_feedback', 'ready to mark', 'ready_to_mark', 'rtm', 'rff'
@@ -105,6 +119,10 @@ class TaskStatus < ApplicationRecord
       TaskStatus.not_started
     when 'time exceeded', 'time_exceeded'
       TaskStatus.time_exceeded
+    when 'assess in portfolio', 'assess_in_portfolio', 'aip'
+      TaskStatus.assess_in_portfolio
+    when 'attention required', 'attention_required', 'ar'
+      TaskStatus.attention_required
     else
       nil
     end
@@ -128,6 +146,9 @@ class TaskStatus < ApplicationRecord
     when 10 then :demonstrate
     when 11 then :fail
     when 12 then :time_exceeded
+    when 13 then :assess_in_portfolio
+    when 14 then :attention_required
+    when 15 then :rediscuss
     else :not_started
     end
   end
@@ -145,6 +166,9 @@ class TaskStatus < ApplicationRecord
     return :fail if self == TaskStatus.fail
     return :feedback_exceeded if self == TaskStatus.feedback_exceeded
     return :time_exceeded if self == TaskStatus.time_exceeded
+    return :assess_in_portfolio if self == TaskStatus.assess_in_portfolio
+    return :attention_required if self == TaskStatus.attention_required
+    return :rediscuss if self == TaskStatus.rediscuss
 
     return :not_started
   end

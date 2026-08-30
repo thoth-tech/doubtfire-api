@@ -59,6 +59,7 @@ class UsersApi < Grape::API
       optional :receive_task_notifications, type: Boolean, desc: 'Allow user to be sent task notifications'
       optional :receive_portfolio_notifications, type: Boolean, desc: 'Allow user to be sent portfolio notifications'
       optional :receive_feedback_notifications, type: Boolean, desc: 'Allow user to be sent feedback notifications'
+      optional :display_peer_progress, type: Boolean, desc: 'Display anonymous peer progress information'
       optional :opt_in_to_research, type: Boolean, desc: 'Allow user to opt in to research conducted by Doubtfire'
       optional :has_run_first_time_setup, type: Boolean, desc: 'Whether or not user has run first-time setup'
     end
@@ -66,9 +67,16 @@ class UsersApi < Grape::API
   put '/users/:id' do
     change_self = (params[:id] == current_user.id)
 
-    params[:receive_portfolio_notifications] = true if params.key?(:receive_portfolio_notifications) && params[:receive_portfolio_notifications].nil?
-    params[:receive_portfolio_notifications] = true if params.key?(:receive_feedback_notifications) && params[:receive_feedback_notifications].nil?
-    params[:receive_portfolio_notifications] = true if params.key?(:receive_task_notifications) && params[:receive_task_notifications].nil?
+    # Default notification preferences to true when explicitly sent as null.
+    # (Previously this wrote the portfolio key three times and read the
+    # top-level params instead of the nested :user hash, so it never applied.)
+    %i[receive_task_notifications receive_portfolio_notifications receive_feedback_notifications].each do |pref|
+      params[:user][pref] = true if params[:user].key?(pref) && params[:user][pref].nil?
+    end
+    if params[:user].key?(:display_peer_progress) &&
+       params[:user][:display_peer_progress].nil?
+      params[:user][:display_peer_progress] = true
+    end
 
     # can only modify if current_user.id is same as :id provided
     # (i.e., user wants to update their own data) or if update_user token
@@ -87,6 +95,7 @@ class UsersApi < Grape::API
                                                       :receive_task_notifications,
                                                       :receive_portfolio_notifications,
                                                       :receive_feedback_notifications,
+                                                      :display_peer_progress,
                                                       :opt_in_to_research,
                                                       :has_run_first_time_setup
                                                     )
@@ -206,7 +215,7 @@ class UsersApi < Grape::API
       error!({ error: 'Not authorised to upload CSV of users' }, 403)
     end
 
-    unless params[:file].present?
+    if params[:file].blank?
       error!({ error: "No file uploaded" }, 403)
     end
 

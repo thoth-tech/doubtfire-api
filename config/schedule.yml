@@ -7,3 +7,57 @@ register_webhooks:
 progress_turn_it_in_jobs:
   cron: "every 30 minutes"
   class: "TiiCheckProgressJob"
+
+clean_up_auth_tokens:
+  cron: "every 30 minutes"
+  class: "ClearAccessTokensJob"
+
+refresh_moderation_feedback_timestamps:
+  cron: "every 60 minutes"
+  class: "RefreshModerationFeedbackTimestampsJob"
+
+aggregate_peer_progress:
+  cron: "every day at 11:45pm"
+  class: "AggregatePeerProgressJob"
+
+aggregate_task_completion_stats:
+  cron: "every day at 11:55pm"
+  class: "AggregateTaskCompletionStatsJob"
+
+poll_communication_set_schedules:
+  cron: "every 5 minutes"
+  class: "PollCommunicationSetSchedulesJob"
+
+# Recheck effective task start dates once a day. Directly created, copied and
+# imported tasks are queued immediately; this sweep handles students whose
+# flexible or future-dated start arrives later, with a bounded catch-up window
+# for short worker outages and late enrolment.
+send_new_task_available_notifications:
+  cron: "every day at 8:10am"
+  class: "SendNewTaskAvailableNotificationsJob"
+
+# Once a day, in the morning.
+#
+# A deadline moves once a day, so nothing is gained by sweeping for one every
+# half hour, and every notification this job raises sends an email. Pinning it
+# to a time also pins when the emails arrive: on a shorter interval a student
+# gets theirs at whatever hour the task happened to cross into the window,
+# which is 3am about as often as any other hour.
+#
+# Missing a run costs nothing. The job only asks whether a task is due within
+# the next three days, so the following morning still catches everything the
+# skipped run would have.
+#
+# 8am is 8am wherever the Sidekiq process thinks it is. There is no timezone in
+# this file and no config.time_zone in the app, so the hour comes from TZ in the
+# process environment. development/api.env sets TZ=Australia/Melbourne, which is
+# what makes this a morning; a deployment that leaves TZ unset gets the image
+# default of UTC and sends these in the evening. The entry above it, at 11:55pm,
+# depends on the same thing.
+send_due_soon_reminders:
+  cron: "every day at 8am"
+  class: "SendDueSoonRemindersJob"
+
+# archive_old_units:
+#   cron: "every 6 months"
+#   class: "ArchiveOldUnitsJob"

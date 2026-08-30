@@ -14,11 +14,11 @@ module Submission::GenerateHelpers
     #
     upload_reqs.each do |detail|
       key = detail['key']
-      next unless files.key? key
+      next unless files.key?(key) && files[key].is_a?(Hash)
 
       files[key][:id]   = files[key]['name']
       files[key][:name] = detail['name']
-      files[key][:type] = detail['type']
+      files[key][:type] = detail['type'] == 'archive' ? 'zip' : detail['type']
     end
 
     # File didn't get assigned an id above, then reject it since there was a mismatch

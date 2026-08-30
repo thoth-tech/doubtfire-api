@@ -33,8 +33,13 @@ class ApiRoot < Grape::API
     when ActionController::ParameterMissing
       message = "Missing value for #{e.param}"
       status = 400
+    when ActiveRecord::ConnectionTimeoutError
+      message = 'There is currently high load on the system. Please wait a moment and try again.'
+      status = 503
     else
+      # rubocop:disable Rails/Output
       puts e.inspect unless Rails.env.production?
+      # rubocop:enable Rails/Output
 
       logger.error "Unhandled exception: #{e.class}"
       logger.error e.inspect
@@ -42,6 +47,7 @@ class ApiRoot < Grape::API
       message = "Sorry... something went wrong with your request."
       status = 500
     end
+    Sentry.capture_exception(e)
     Rack::Response.new({ error: message }.to_json, status, { 'Content-type' => 'text/error' })
   end
 
@@ -54,11 +60,14 @@ class ApiRoot < Grape::API
   mount AuthenticationApi
   mount BreaksApi
   mount DiscussionCommentApi
+  mount EngagementsApi
   mount ExtensionCommentsApi
+  mount ScormExtensionCommentsApi
   mount GroupSetsApi
   mount LearningOutcomesApi
-  mount LearningAlignmentApi
   mount ProjectsApi
+  mount SettingsPublicApi
+  mount PeerProgressApi
   mount SettingsApi
   mount StudentsApi
   mount Submission::PortfolioApi
@@ -70,12 +79,19 @@ class ApiRoot < Grape::API
   mount Similarity::TaskSimilarityApi
   mount TeachingPeriodsPublicApi
   mount TeachingPeriodsAuthenticatedApi
+  mount StaffNotesApi
+  mount SidekiqApi
+  mount LtiApi if Doubtfire::Application.config.lti_enabled
+  mount TaskPrerequisitesApi
+  mount CommunicationRulesApi
 
   mount Tii::TurnItInApi
   mount Tii::TurnItInHooksApi
   mount Tii::TiiGroupAttachmentApi
   mount Tii::TiiActionApi
 
+  mount ScormApi
+  mount TestAttemptsApi
   mount CampusesPublicApi
   mount CampusesAuthenticatedApi
   mount TutorialsApi
@@ -83,9 +99,24 @@ class ApiRoot < Grape::API
   mount TutorialEnrolmentsApi
   mount UnitRolesApi
   mount UnitsApi
+  mount TutorNotesApi
+
+  mount D2lIntegrationApi::D2lApi
+  mount D2lIntegrationApi::OauthPublicApi
+
   mount UsersApi
   mount WebcalApi
   mount WebcalPublicApi
+  mount MarkingSessionsApi
+  mount DiscussionPromptsApi
+  mount OverseerStepsApi
+  mount TaskPrioritizationApi
+
+  mount Feedback::FeedbackChipApi
+
+  # Notifications feature
+  mount NotificationsApi
+  mount PushSubscriptionsApi
 
   #
   # Add auth details to all end points
@@ -95,11 +126,14 @@ class ApiRoot < Grape::API
   AuthenticationHelpers.add_auth_to ActivityTypesAuthenticatedApi
   AuthenticationHelpers.add_auth_to BreaksApi
   AuthenticationHelpers.add_auth_to DiscussionCommentApi
+  AuthenticationHelpers.add_auth_to EngagementsApi
   AuthenticationHelpers.add_auth_to ExtensionCommentsApi
+  AuthenticationHelpers.add_auth_to ScormExtensionCommentsApi
   AuthenticationHelpers.add_auth_to GroupSetsApi
   AuthenticationHelpers.add_auth_to LearningOutcomesApi
-  AuthenticationHelpers.add_auth_to LearningAlignmentApi
   AuthenticationHelpers.add_auth_to ProjectsApi
+  AuthenticationHelpers.add_auth_to SettingsApi
+  AuthenticationHelpers.add_auth_to PeerProgressApi
   AuthenticationHelpers.add_auth_to StudentsApi
   AuthenticationHelpers.add_auth_to Submission::PortfolioApi
   AuthenticationHelpers.add_auth_to Submission::PortfolioEvidenceApi
@@ -109,6 +143,11 @@ class ApiRoot < Grape::API
   AuthenticationHelpers.add_auth_to TaskCommentsApi
   AuthenticationHelpers.add_auth_to TaskDefinitionsApi
   AuthenticationHelpers.add_auth_to TeachingPeriodsAuthenticatedApi
+  AuthenticationHelpers.add_auth_to StaffNotesApi
+  AuthenticationHelpers.add_auth_to SidekiqApi
+  AuthenticationHelpers.add_auth_to LtiApi if Doubtfire::Application.config.lti_enabled
+  AuthenticationHelpers.add_auth_to TaskPrerequisitesApi
+  AuthenticationHelpers.add_auth_to CommunicationRulesApi
 
   AuthenticationHelpers.add_auth_to Tii::TurnItInApi
   AuthenticationHelpers.add_auth_to Tii::TiiGroupAttachmentApi
@@ -122,13 +161,27 @@ class ApiRoot < Grape::API
   AuthenticationHelpers.add_auth_to UnitRolesApi
   AuthenticationHelpers.add_auth_to UnitsApi
   AuthenticationHelpers.add_auth_to WebcalApi
+  AuthenticationHelpers.add_auth_to ScormApi
+  AuthenticationHelpers.add_auth_to TestAttemptsApi
+
+  AuthenticationHelpers.add_auth_to D2lIntegrationApi::D2lApi
+  AuthenticationHelpers.add_auth_to Feedback::FeedbackChipApi
+  AuthenticationHelpers.add_auth_to MarkingSessionsApi
+  AuthenticationHelpers.add_auth_to DiscussionPromptsApi
+  AuthenticationHelpers.add_auth_to OverseerStepsApi
+  AuthenticationHelpers.add_auth_to TaskPrioritizationApi
+  AuthenticationHelpers.add_auth_to TutorNotesApi
+
+  # Notifications feature
+  AuthenticationHelpers.add_auth_to NotificationsApi
+  AuthenticationHelpers.add_auth_to PushSubscriptionsApi
 
   add_swagger_documentation \
     base_path: nil,
-    api_version: 'v1',
+    doc_version: 'v11.0.0',
     hide_documentation_path: true,
     info: {
-      title: 'Doubtfire API Documentaion',
+      title: 'Doubtfire API Documentation',
       description: 'Doubtfire is a modern, lightweight learning management system.',
       license: 'AGPL v3.0',
       license_url: 'https://github.com/doubtfire-lms/doubtfire-api/blob/master/LICENSE'

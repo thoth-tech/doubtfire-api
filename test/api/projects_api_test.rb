@@ -51,8 +51,8 @@ class ProjectsApiTest < ActiveSupport::TestCase
     # Add username and auth_token to Header
     add_auth_header_for(user: user)
 
-    keys = %w(id unit campus_id user_id target_grade portfolio_available)
-    key_test = %w(campus_id target_grade)
+    keys = %w[id unit campus_id user_id target_grade portfolio_available spec_con_days escalation_attempts_remaining]
+    key_test = %w[campus_id target_grade spec_con_days]
 
     get '/api/projects'
     assert_equal 2, last_response_body.count, last_response_body
@@ -62,11 +62,152 @@ class ProjectsApiTest < ActiveSupport::TestCase
 
       assert_json_limit_keys_to_exactly keys, data
 
-      assert_json_matches_model(project, data, %w(campus_id target_grade campus_id))
-      assert_json_matches_model(project.unit, data['unit'], %w(id code name active))
+      assert_json_matches_model(project, data, %w[campus_id target_grade campus_id])
+      assert_json_matches_model(project.unit, data['unit'], %w[id code name active])
 
       assert_json_matches_model project, data, key_test
     end
+  end
+
+  def test_projects_with_task_definitions_uses_student_safe_serialization
+    unit = FactoryBot.create(
+      :unit,
+      with_students: false,
+      task_count: 0,
+      allow_flexible_dates: true
+    )
+    common_start_date = unit.start_date + 1.week
+    later_task = FactoryBot.create(
+      :task_definition,
+      unit: unit,
+      abbreviation: 'CROSS-Z',
+      start_date: common_start_date,
+      plagiarism_report_url: 'https://staff.invalid/report',
+      plagiarism_warn_pct: 99,
+      tii_group_id: 'staff-only-group',
+      similarity_language: 'staff-only-language',
+      use_resources_for_jplag_base_code: true,
+      lock_assessments_to_tutorial_stream: true,
+      upload_requirements: [
+        {
+          'key' => 'file0',
+          'name' => 'Student report',
+          'type' => 'document',
+          'tii_check' => true,
+          'tii_pct' => 35
+        }
+      ]
+    )
+    earlier_task = FactoryBot.create(
+      :task_definition,
+      unit: unit,
+      abbreviation: 'CROSS-A',
+      start_date: common_start_date
+    )
+    grade_due_date = FactoryBot.create(
+      :task_definition_grade_due_date,
+      task_definition: later_task,
+      target_grade: 1,
+      target_due_date: later_task.target_date + 2.days,
+      start_date: later_task.start_date + 1.day
+    )
+    student = FactoryBot.create(:user, :student)
+    unit.enrol_student(student, unit.tutorials.first.campus)
+
+    add_auth_header_for(user: student)
+
+    get '/api/projects'
+    assert_equal 200, last_response.status, last_response_body
+    assert_not last_response_body.first.key?('tasks')
+    assert_not last_response_body.first.fetch('unit').key?('task_definitions')
+
+    get '/api/projects?include_task_definitions=true'
+    assert_equal 200, last_response.status, last_response_body
+
+    project_data = last_response_body.first
+    assert project_data.key?('tasks')
+    unit_data = project_data.fetch('unit')
+    assert_equal true, unit_data.fetch('allow_flexible_dates')
+
+    task_definitions = unit_data.fetch('task_definitions')
+    assert_equal [earlier_task.id, later_task.id], task_definitions.pluck('id')
+
+    task_definitions.each do |task_definition|
+      %w[id abbreviation name description weighting target_grade upload_requirements].each do |key|
+        assert task_definition.key?(key), "Expected student-safe task definition to include #{key}"
+      end
+
+      %w[
+        plagiarism_report_url plagiarism_warn_pct tii_group_id similarity_language
+        overseer_image_id use_resources_for_jplag_base_code
+        lock_assessments_to_tutorial_stream restrict_status_updates created_at updated_at
+      ].each do |key|
+        assert_not task_definition.key?(key), "Student response exposed staff-only field #{key}"
+      end
+    end
+
+    student_requirements = task_definitions.find do |task_definition|
+      task_definition['id'] == later_task.id
+    end.fetch('upload_requirements')
+    assert_equal(
+      [{ 'key' => 'file0', 'name' => 'Student report', 'type' => 'document' }],
+      student_requirements
+    )
+
+    student_later_task = task_definitions.find do |task_definition|
+      task_definition['id'] == later_task.id
+    end
+    grade_due_dates = student_later_task.fetch('grade_due_dates')
+    assert_equal 1, grade_due_dates.length
+    assert_equal grade_due_date.target_grade, grade_due_dates.first.fetch('target_grade')
+    assert_equal grade_due_date.target_due_date.to_date,
+                 Date.parse(grade_due_dates.first.fetch('target_due_date'))
+    assert_equal grade_due_date.start_date.to_date,
+                 Date.parse(grade_due_dates.first.fetch('start_date'))
+  end
+
+  def test_projects_with_inactive_task_definitions_avoids_per_record_queries
+    student = FactoryBot.create(:user, :student)
+    units = 2.times.map do
+      unit = FactoryBot.create(
+        :unit,
+        with_students: false,
+        task_count: 4,
+        tutorials: 1,
+        outcome_count: 0,
+        active: true
+      )
+      project = unit.enrol_student(student, unit.tutorials.first.campus)
+      unit.task_definitions.each do |task_definition|
+        project.task_for_task_definition(task_definition)
+      end
+      unit
+    end
+    units.last.update!(active: false)
+    add_auth_header_for(user: student)
+
+    query_count = 0
+    count_query = lambda do |_name, _started, _finished, _unique_id, payload|
+      next if payload[:cached] || %w[SCHEMA TRANSACTION].include?(payload[:name])
+
+      query_count += 1
+    end
+
+    ActiveSupport::Notifications.subscribed(count_query, 'sql.active_record') do
+      get '/api/projects?include_inactive=true&include_task_definitions=true'
+    end
+
+    assert_equal 200, last_response.status, last_response_body
+    assert_equal 2, last_response_body.length
+    active_states = last_response_body.pluck('unit').pluck('active')
+    assert_equal [false, true], (active_states.sort_by { |active| active ? 1 : 0 })
+    assert_equal 8, (last_response_body.sum { |project| project.fetch('tasks').length })
+    task_definition_count = last_response_body.sum do |project|
+      project.fetch('unit').fetch('task_definitions').length
+    end
+    assert_equal 8, task_definition_count
+    assert_operator query_count, :<=, 45,
+                    "Expected a bounded project query graph, got #{query_count} SQL queries"
   end
 
   def test_get_project_response_is_correct
@@ -76,8 +217,8 @@ class ProjectsApiTest < ActiveSupport::TestCase
     # Add username and auth_token to Header
     add_auth_header_for(user: user)
 
-    keys = %w(id unit unit_id user_id campus_id target_grade submitted_grade portfolio_files compile_portfolio portfolio_available uses_draft_learning_summary tasks tutorial_enrolments groups task_outcome_alignments)
-    key_test = keys - %w(unit user_id portfolio_available tasks tutorial_enrolments groups task_outcome_alignments)
+    keys = %w[id unit unit_id user_id campus_id target_grade submitted_grade portfolio_files compile_portfolio portfolio_available uses_draft_learning_summary tasks tutorial_enrolments groups spec_con_days escalation_attempts_remaining]
+    key_test = keys - %w[unit user_id portfolio_available tasks tutorial_enrolments groups]
 
     get "/api/projects/#{project.id}"
     assert_equal 200, last_response.status, last_response_body
@@ -107,8 +248,8 @@ class ProjectsApiTest < ActiveSupport::TestCase
       project = user.projects.find(data['id'])
       assert project.present?, data.inspect
 
-      assert_json_matches_model(project, data, %w(campus_id target_grade campus_id))
-      assert_json_matches_model(project.unit, data['unit'], %w(code id name active))
+      assert_json_matches_model(project, data, %w[campus_id target_grade campus_id])
+      assert_json_matches_model(project.unit, data['unit'], %w[code id name active])
     end
   end
 
@@ -129,7 +270,7 @@ class ProjectsApiTest < ActiveSupport::TestCase
     assert_equal 200, last_response.status, last_response_body
     assert_equal user.projects.find(project.id).submitted_grade, 2
 
-    keys = %w(campus_id target_grade submitted_grade compile_portfolio portfolio_available uses_draft_learning_summary)
+    keys = %w[campus_id target_grade submitted_grade compile_portfolio portfolio_available uses_draft_learning_summary]
 
     assert_json_limit_keys_to_exactly keys, last_response_body
     assert_json_matches_model project, last_response_body, keys
@@ -165,7 +306,7 @@ class ProjectsApiTest < ActiveSupport::TestCase
     get "/api/submission/project/#{project.id}/portfolio", data_to_put
     assert_equal 200, last_response.status
     assert last_response.headers['Content-Disposition'].starts_with?('attachment; filename=')
-    assert last_response.headers['Access-Control-Expose-Headers'] == 'Content-Disposition'
+    assert_equal 'Content-Disposition', last_response.headers['Access-Control-Expose-Headers']
     assert last_response.headers['Content-Type'] == 'application/pdf'
     assert 10_485_760, last_response.length
 
@@ -185,7 +326,7 @@ class ProjectsApiTest < ActiveSupport::TestCase
     assert 500, last_response.length
     assert_equal 206, last_response.status
     assert_nil last_response.headers['Content-Disposition']
-    assert_nil last_response.headers['Access-Control-Expose-Headers']
+    assert_equal 'Content-Range,Accept-Ranges', last_response.headers['Access-Control-Expose-Headers']
     assert last_response.headers['Content-Type'] == 'application/pdf'
 
     unit.destroy!
