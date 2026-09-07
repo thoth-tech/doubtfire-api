@@ -1,14 +1,14 @@
 # Unified Notifications - Status
 
 > Historical implementation record. The unified in-app, email and Web Push
-> paths described as future stages below are now implemented on the integration
+> paths described as future stages below are now implemented on the 11.0.x branch.
 > branch. Use `NOTIFICATIONS.md`, `docs/notifications/push-setup.md`, and the
 > review evidence under `docs/notifications/reviews/` for current operation and
 > release status.
 
 Feature: unified notifications (in-app, email, push) for OnTrack.
 Base: `11.0.x`. Branch: `feature/notifications` (api and web), off `origin/11.0.x`.
-Merge and demo target: `integration`.
+Merge and demo target: `11.0.x`.
 
 The lead runs all commits, merges, and pushes. This file records what is staged
 in the working tree and the exact commands to run.

@@ -71,18 +71,33 @@ per-channel switches later if we want.
 
 - app/models/notification.rb: the notification record. Has the type, message,
   link, and whether it has been read.
+
 - app/services/notification_service.rb: the one entry point. Checks the setting,
   saves the record, and queues the email and push channel jobs.
+
 - app/sidekiq/notification_email_job.rb: reloads a notification by id and sends
   its email on the `mailers` queue.
+
 - app/sidekiq/push_notification_delivery_job.rb: reloads a notification by id
   and hands it to the Web Push delivery channel on the `notifications` queue.
+
 - app/services/push_notification_service.rb: the Web Push delivery channel. It
   remains a safe no-op until both VAPID keys are configured.
+
+- app/models/push_subscription.rb: stores each user's Web Push subscription details.
+
+- app/api/push_subscriptions_api.rb: provides the API endpoints for listing,
+  registering, updating, and removing browser push subscriptions.
+
 - app/mailers/notifications_mailer.rb: the email. New method single_notification
   with templates in app/views/notifications_mailer.
+
 - app/api/notifications_api.rb: the endpoints the web app calls.
+
 - app/api/entities/notification_entity.rb: the shape of the data sent back.
+
+For VAPID key configuration and Web Push setup, see
+`docs/notifications/push-setup.md`.
 
 ## The endpoints
 
