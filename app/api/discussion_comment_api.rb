@@ -30,8 +30,8 @@ class DiscussionCommentApi < Grape::API
 
     for attached_file in attached_files do
       if attached_file.present?
-        error!(error: 'Attachment is empty.') if File.size?(attached_file["tempfile"].path).blank?
-        error!(error: 'Attachment exceeds the maximum attachment size of 30MB.') unless File.size?(attached_file["tempfile"].path) < 30_000_000
+        error!({ error: 'Attachment is empty.' }, 400) if File.size?(attached_file["tempfile"].path).blank?
+        error!({ error: 'Attachment exceeds the maximum attachment size of 30MB.' }, 413) unless File.size?(attached_file["tempfile"].path) < 30_000_000
       end
     end
 
@@ -136,8 +136,8 @@ class DiscussionCommentApi < Grape::API
     attached_file = params[:attachment]
 
     if attached_file.present?
-      error!(error: 'Attachment is empty.') if File.size?(attached_file["tempfile"].path).blank?
-      error!(error: 'Attachment exceeds the maximum attachment size of 30MB.') unless File.size?(attached_file["tempfile"].path) < 30_000_000
+      error!({ error: 'Attachment is empty.' }, 400) if File.size?(attached_file["tempfile"].path).blank?
+      error!({ error: 'Attachment exceeds the maximum attachment size of 30MB.' }, 413) unless File.size?(attached_file["tempfile"].path) < 30_000_000
     end
 
     logger.info("#{current_user.username} - added a reply to the discussion comment #{params[:task_comment_id]} for task #{task.id} (#{task_definition.abbreviation})")

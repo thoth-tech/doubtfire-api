@@ -1,4 +1,5 @@
 require 'test_helper'
+require 'minitest/mock'
 
 class TaskDefinitionsTest < ActiveSupport::TestCase
   include Rack::Test::Methods
@@ -35,21 +36,21 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
 
     data_to_post = {
       task_def: {
-        tutorial_stream_abbr:     unit.tutorial_streams.first.abbreviation,
-        name:                     'New Task Def',
-        description:              'First task def',
-        weighting:                4,
-        target_grade:             1,
-        group_set_id:             unit.group_sets.first.id,
-        start_date:               unit.start_date,
-        target_date:              unit.start_date + 7.days,
-        due_date:                 unit.start_date + 21.days,
-        abbreviation:             'P1.1',
-        restrict_status_updates:  false,
-        upload_requirements:      '[ { "key": "file0", "name": "Shape Class", "type": "document" } ]',
-        plagiarism_warn_pct:      80,
-        is_graded:                false,
-        max_quality_pts:          0
+        tutorial_stream_abbr: unit.tutorial_streams.first.abbreviation,
+        name: 'New Task Def',
+        description: 'First task def',
+        weighting: 4,
+        target_grade: 1,
+        group_set_id: unit.group_sets.first.id,
+        start_date: unit.start_date,
+        target_date: unit.start_date + 7.days,
+        due_date: unit.start_date + 21.days,
+        abbreviation: 'P1.1',
+        restrict_status_updates: false,
+        upload_requirements: '[ { "key": "file0", "name": "Shape Class", "type": "document" } ]',
+        plagiarism_warn_pct: 80,
+        is_graded: false,
+        max_quality_pts: 0
       }
     }
 
@@ -69,21 +70,21 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
 
     data_to_put = {
       task_def: {
-        tutorial_stream_abbr:     unit.tutorial_streams.last.abbreviation,
-        name:                     'New Task Def 1',
-        description:              'First task def 1',
-        weighting:                2,
-        target_grade:             2,
-        group_set_id:             nil,
-        start_date:               unit.start_date + 2.days,
-        target_date:              unit.start_date + 9.days,
-        due_date:                 unit.start_date + 23.days,
-        abbreviation:             'P1.2',
-        restrict_status_updates:  true,
-        upload_requirements:      [ { "key": "file0", "name": "Other Class", "type": "document" } ].to_json,
-        plagiarism_warn_pct:      80,
-        is_graded:                false,
-        max_quality_pts:          0
+        tutorial_stream_abbr: unit.tutorial_streams.last.abbreviation,
+        name: 'New Task Def 1',
+        description: 'First task def 1',
+        weighting: 2,
+        target_grade: 2,
+        group_set_id: nil,
+        start_date: unit.start_date + 2.days,
+        target_date: unit.start_date + 9.days,
+        due_date: unit.start_date + 23.days,
+        abbreviation: 'P1.2',
+        restrict_status_updates: true,
+        upload_requirements: [{ "key": "file0", "name": "Other Class", "type": "document" }].to_json,
+        plagiarism_warn_pct: 80,
+        is_graded: false,
+        max_quality_pts: 0
       }
     }
 
@@ -99,6 +100,83 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     assert_equal unit.tutorial_streams.last.id, td.tutorial_stream_id
     assert_equal [{ "key" => "file0", "name" => "Other Class", "type" => "document" }], td.upload_requirements
     assert_equal 2, td.weighting
+  end
+
+  def new_task_definition_payload(unit)
+    {
+      task_def: {
+        name: 'Notification Queue Test',
+        description: 'Task used to test notification queue behaviour',
+        weighting: 1,
+        target_grade: 1,
+        start_date: unit.start_date,
+        target_date: unit.start_date + 7.days,
+        due_date: unit.start_date + 14.days,
+        abbreviation: "QUEUE#{SecureRandom.hex(3)}",
+        restrict_status_updates: false,
+        plagiarism_warn_pct: 80,
+        is_graded: false,
+        max_quality_pts: 0
+      }
+    }
+  end
+
+  def test_task_definition_creation_enqueues_new_task_notification
+    unit = FactoryBot.create(:unit, task_count: 0)
+    enqueued_task_definition_id = nil
+
+    enqueue = lambda do |task_definition_id|
+      enqueued_task_definition_id = task_definition_id
+    end
+
+    NewTaskAvailableNotificationJob.stub(:perform_async, enqueue) do
+      add_auth_header_for(user: unit.main_convenor_user)
+
+      post_json(
+        "/api/units/#{unit.id}/task_definitions",
+        new_task_definition_payload(unit)
+      )
+    end
+
+    assert_equal 201, last_response.status, last_response_body
+
+    created_task_definition = unit.task_definitions.order(:id).last
+
+    assert_equal(
+      created_task_definition.id,
+      enqueued_task_definition_id
+    )
+    assert_not_nil created_task_definition.reload.new_task_notifications_from
+  end
+
+  def test_task_definition_creation_succeeds_when_enqueue_fails
+    unit = FactoryBot.create(:unit, task_count: 0)
+
+    enqueue_failure = lambda do |_task_definition_id|
+      raise StandardError, 'Redis unavailable'
+    end
+
+    NewTaskAvailableNotificationJob.stub(
+      :perform_async,
+      enqueue_failure
+    ) do
+      add_auth_header_for(user: unit.main_convenor_user)
+
+      assert_difference('TaskDefinition.count', 1) do
+        post_json(
+          "/api/units/#{unit.id}/task_definitions",
+          new_task_definition_payload(unit)
+        )
+      end
+    end
+
+    assert_equal 201, last_response.status, last_response_body
+    created_task_definition = unit.task_definitions.order(:id).last
+    assert_equal(
+      'Notification Queue Test',
+      created_task_definition.name
+    )
+    assert_not_nil created_task_definition.new_task_notifications_from
   end
 
   def test_post_invalid_file_tasksheet
@@ -181,30 +259,30 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     ]
 
     # Save will trigger TII integration
-    create_tii_group_stub = stub_request(:put, %r[https://localhost/api/v1/groups/.*]).
-      with(tii_headers).
-      with(body: %r[.*id.*.*name.*type.*ASSIGNMENT.*group_context.*id.*name.*due_date.*report_generation.*IMMEDIATELY_AND_DUE_DATE.*]).
-      to_return(status: 200, body: "", headers: {})
+    create_tii_group_stub = stub_request(:put, %r[https://localhost/api/v1/groups/.*])
+                            .with(tii_headers)
+                            .with(body: %r[.*id.*.*name.*type.*ASSIGNMENT.*group_context.*id.*name.*due_date.*report_generation.*IMMEDIATELY_AND_DUE_DATE.*])
+                            .to_return(status: 200, body: "", headers: {})
 
-    post_attachment_stub = stub_request(:post, %r[https://localhost/api/v1/groups/.*/attachments]).
-      with(tii_headers).
-      with(body: "{\"title\":\"TestWordDoc.docx\",\"template\":false}").
-      to_return(
-        status: 200,
-        body: TCAClient::AddGroupAttachmentResponse.new(
-          id: SecureRandom.uuid
-        ).to_json,
-        headers: {}
-      )
+    post_attachment_stub = stub_request(:post, %r[https://localhost/api/v1/groups/.*/attachments])
+                           .with(tii_headers)
+                           .with(body: "{\"title\":\"TestWordDoc.docx\",\"template\":false}")
+                           .to_return(
+                             status: 200,
+                             body: TCAClient::AddGroupAttachmentResponse.new(
+                               id: SecureRandom.uuid
+                             ).to_json,
+                             headers: {}
+                           )
 
-    upload_stub = stub_request(:put, %r[https://localhost/api/v1/groups/.*/attachments/.*/original]).
-      with(tii_headers).
-      with(headers: {'Content-Type'=>'binary/octet-stream'}).
-      to_return(status: 200, body: '{ "message": "Successfully uploaded file for attachment ..." }', headers: {})
+    upload_stub = stub_request(:put, %r[https://localhost/api/v1/groups/.*/attachments/.*/original])
+                  .with(tii_headers)
+                  .with(headers: { 'Content-Type' => 'binary/octet-stream' })
+                  .to_return(status: 200, body: '{ "message": "Successfully uploaded file for attachment ..." }', headers: {})
 
-    delete_stub = stub_request(:delete, %r[https://localhost/api/v1/groups/.*/attachments/.*]).
-      with(tii_headers).
-      to_return(status: 200, body: "", headers: {})
+    delete_stub = stub_request(:delete, %r[https://localhost/api/v1/groups/.*/attachments/.*])
+                  .with(tii_headers)
+                  .to_return(status: 200, body: "", headers: {})
 
     td.save!
 
@@ -241,21 +319,21 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
   def test_submission_creates_folders
     unit = Unit.first
     td = TaskDefinition.new({
-        unit_id: unit.id,
-        tutorial_stream: unit.tutorial_streams.first,
-        name: 'test_submission_creates_folders',
-        description: 'test def',
-        weighting: 4,
-        target_grade: 0,
-        start_date: unit.start_date + 1.week,
-        target_date: unit.start_date + 2.weeks,
-        abbreviation: 'test_submission_creates_folders',
-        restrict_status_updates: false,
-        upload_requirements: [ { "key" => "file0", "name" => "Shape Class", "type" => "document" } ],
-        plagiarism_warn_pct: 0.8,
-        is_graded: false,
-        max_quality_pts: 0
-      })
+                              unit_id: unit.id,
+                              tutorial_stream: unit.tutorial_streams.first,
+                              name: 'test_submission_creates_folders',
+                              description: 'test def',
+                              weighting: 4,
+                              target_grade: 0,
+                              start_date: unit.start_date + 1.week,
+                              target_date: unit.start_date + 2.weeks,
+                              abbreviation: 'test_submission_creates_folders',
+                              restrict_status_updates: false,
+                              upload_requirements: [{ "key" => "file0", "name" => "Shape Class", "type" => "document" }],
+                              plagiarism_warn_pct: 0.8,
+                              is_graded: false,
+                              max_quality_pts: 0
+                            })
     td.save!
 
     data_to_post = {
@@ -295,21 +373,21 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
   def test_change_to_group_after_submissions
     unit = Unit.first
     td = TaskDefinition.new({
-        unit_id: unit.id,
-        tutorial_stream: unit.tutorial_streams.first,
-        name: 'Task to switch from ind to group after submission',
-        description: 'test def',
-        weighting: 4,
-        target_grade: 0,
-        start_date: unit.start_date + 1.week,
-        target_date: unit.start_date + 2.weeks,
-        abbreviation: 'TaskSwitchIndGrp',
-        restrict_status_updates: false,
-        upload_requirements: [ { "key" => 'file0', "name" => 'Shape Class', "type" => 'document' } ],
-        plagiarism_warn_pct: 0.8,
-        is_graded: false,
-        max_quality_pts: 0
-      })
+                              unit_id: unit.id,
+                              tutorial_stream: unit.tutorial_streams.first,
+                              name: 'Task to switch from ind to group after submission',
+                              description: 'test def',
+                              weighting: 4,
+                              target_grade: 0,
+                              start_date: unit.start_date + 1.week,
+                              target_date: unit.start_date + 2.weeks,
+                              abbreviation: 'TaskSwitchIndGrp',
+                              restrict_status_updates: false,
+                              upload_requirements: [{ "key" => 'file0', "name" => 'Shape Class', "type" => 'document' }],
+                              plagiarism_warn_pct: 0.8,
+                              is_graded: false,
+                              max_quality_pts: 0
+                            })
     td.save!
 
     data_to_post = {
@@ -335,7 +413,7 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
 
     # Change it to a group task
 
-    group_set = GroupSet.create!({name: 'test group set', unit: unit})
+    group_set = GroupSet.create!({ name: 'test group set', unit: unit })
     group_set.save!
 
     td.group_set = group_set
@@ -836,8 +914,8 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
   end
 
   def test_change_draft_learning_summary_upload_requirements
-    unit = FactoryBot.create :unit, student_count:1, task_count:0
-    upload_reqs = [{'key' => 'file0','name' => 'Draft learning summary','type' => 'document'}]
+    unit = FactoryBot.create :unit, student_count: 1, task_count: 0
+    upload_reqs = [{ 'key' => 'file0', 'name' => 'Draft learning summary', 'type' => 'document' }]
     task_def = FactoryBot.create(:task_definition, unit: unit, upload_requirements: upload_reqs)
 
     # Set draft learning summary task defintion
@@ -857,7 +935,7 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
     # Test change upload requirements to a non-document upload
     data_to_put = {
       task_def: {
-        upload_requirements: [{"key": "file0","name": "Code file","type": "code"}].to_json
+        upload_requirements: [{ "key": "file0", "name": "Code file", "type": "code" }].to_json
       }
     }
 
@@ -983,5 +1061,93 @@ class TaskDefinitionsTest < ActiveSupport::TestCase
         assert_equal 403, last_response.status, "#{user.role.name} should not have permission to download student pdfs"
       end
     end
+  end
+
+  def test_due_date_update_enqueues_notification_job
+    unit = FactoryBot.create(:unit, task_count: 1)
+    task_def = unit.task_definitions.first
+
+    previous_due_date = task_def[:due_date]&.to_date&.iso8601
+    new_due_date = (task_def.due_date + 1.week).to_date
+
+    data_to_put = {
+      task_def: {
+        due_date: new_due_date
+      }
+    }
+
+    add_auth_header_for(user: unit.main_convenor_user)
+
+    assert_difference(
+      -> { TaskDueDateChangedNotificationJob.jobs.size },
+      1
+    ) do
+      put_json(
+        "/api/units/#{unit.id}/task_definitions/#{task_def.id}",
+        data_to_put
+      )
+    end
+
+    assert_equal 200, last_response.status, last_response_body
+
+    assert_equal(
+      [
+        task_def.id,
+        previous_due_date,
+        new_due_date.iso8601
+      ],
+      TaskDueDateChangedNotificationJob.jobs.last['args']
+    )
+  end
+
+  def test_unrelated_update_does_not_enqueue_due_date_notification_job
+    unit = FactoryBot.create(:unit, task_count: 1)
+    task_def = unit.task_definitions.first
+
+    data_to_put = {
+      task_def: {
+        description: 'Updated without moving the due date.'
+      }
+    }
+
+    add_auth_header_for(user: unit.main_convenor_user)
+
+    assert_no_difference(
+      -> { TaskDueDateChangedNotificationJob.jobs.size }
+    ) do
+      put_json(
+        "/api/units/#{unit.id}/task_definitions/#{task_def.id}",
+        data_to_put
+      )
+    end
+
+    assert_equal 200, last_response.status, last_response_body
+  end
+
+  def test_due_date_update_succeeds_when_enqueue_fails
+    unit = FactoryBot.create(:unit, task_count: 1)
+    task_def = unit.task_definitions.first
+    new_due_date = (task_def.due_date + 1.week).to_date
+
+    data_to_put = {
+      task_def: {
+        due_date: new_due_date
+      }
+    }
+
+    add_auth_header_for(user: unit.main_convenor_user)
+
+    TaskDueDateChangedNotificationJob.stub(
+      :perform_async,
+      ->(*) { raise StandardError, 'Redis unavailable' }
+    ) do
+      put_json(
+        "/api/units/#{unit.id}/task_definitions/#{task_def.id}",
+        data_to_put
+      )
+    end
+
+    assert_equal 200, last_response.status, last_response_body
+    assert_equal new_due_date, task_def.reload[:due_date].to_date
   end
 end

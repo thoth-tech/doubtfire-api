@@ -24,6 +24,14 @@ class DeakinConfigTest < ActiveSupport::TestCase
     Doubtfire::Application.config.institution_settings = @@backup
   end
 
+  def test_value_before_delimiter_uses_a_bounded_string_search
+    settings = Doubtfire::Application.config.institution_settings
+
+    assert_equal 'student', settings.value_before_delimiter('student@example.edu.au', '@')
+    assert_equal 'SIT999', settings.value_before_delimiter('SIT999_CLASS', '_')
+    assert_nil settings.value_before_delimiter('a' * 100_000, '_')
+  end
+
   def test_sync_deakin_unit
     WebMock.reset_executed_requests!
 

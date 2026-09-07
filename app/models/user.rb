@@ -19,6 +19,7 @@ class User < ApplicationRecord
 
   include UserTiiModule
 
+  before_save :stamp_theme_preference_updated_at, if: :will_save_change_to_theme_preference?
   after_update :move_files_on_username_change, if: :saved_change_to_username?
 
   ###
@@ -157,12 +158,17 @@ class User < ApplicationRecord
   has_many    :engagements, dependent: :restrict_with_exception, inverse_of: :user
   has_many    :engagement_comments, dependent: :restrict_with_exception, inverse_of: :user
   has_many    :auth_tokens, dependent: :destroy, inverse_of: :user
+  has_many    :consumed_lti_tokens, dependent: :destroy, inverse_of: :user
   has_many    :user_oauth_tokens, dependent: :destroy, inverse_of: :user
   has_many    :user_oauth_states, dependent: :destroy, inverse_of: :user
   has_one     :webcal, dependent: :destroy, inverse_of: :user
   has_many    :chip_usage, dependent: :destroy, inverse_of: :tutor, class_name: 'Feedback::ChipUsage'
 
   has_many    :marking_sessions, dependent: :destroy
+
+  # Notifications feature
+  has_many    :notifications, dependent: :destroy, inverse_of: :user
+  has_many    :push_subscriptions, dependent: :destroy, inverse_of: :user
 
   # Model validations/constraints
   validates :first_name,  presence: true
@@ -171,6 +177,7 @@ class User < ApplicationRecord
   validates :username,    presence: true, uniqueness: { case_sensitive: false }
   validates :email,       presence: true, uniqueness: { case_sensitive: false }, format: { with: /\A([^@\s]+)@((?:[-a-z0-9]+\.)+[a-z]{2,})\z/i }
   validates :student_id,  uniqueness: true, allow_nil: true
+  validates :theme_preference, inclusion: { in: %w[light dark system] }, allow_nil: true
   validate :can_change_to_role?, if: :will_save_change_to_role_id?
 
   # Queries
@@ -606,5 +613,11 @@ class User < ApplicationRecord
     unless unit_role.nil?
       unit_role.get_marking_sessions(start_date: start_date, end_date: end_date, timezone: timezone)
     end
+  end
+
+  private
+
+  def stamp_theme_preference_updated_at
+    self.theme_preference_updated_at = theme_preference.nil? ? nil : Time.current
   end
 end

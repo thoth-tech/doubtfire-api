@@ -66,7 +66,7 @@ module Doubtfire
     # Date range for auditors to view
     config.auditor_unit_access_years = ENV.fetch('DF_AUDITOR_UNIT_ACCESS_YEARS', 2).to_f * 1.year
 
-    config.student_import_weeks_before = ENV.fetch('DF_IMPORT_STUDENTS_WEEKS_BEFPRE', 1).to_f * 1.week
+    config.student_import_weeks_before = ENV.fetch('DF_IMPORT_STUDENTS_WEEKS_BEFORE') { ENV.fetch('DF_IMPORT_STUDENTS_WEEKS_BEFPRE', 1) }.to_f * 1.week
 
     def self.fetch_boolean_env(name)
       %w'true 1'.include?(ENV.fetch(name, 'false').downcase)
@@ -140,6 +140,7 @@ module Doubtfire
     config.institution = YAML.load_file(Rails.root.join('config/institution.yml').to_s).with_indifferent_access
     config.institution[:name] = ENV['DF_INSTITUTION_NAME'] if ENV['DF_INSTITUTION_NAME']
     config.institution[:email_domain] = ENV['DF_INSTITUTION_EMAIL_DOMAIN'] if ENV['DF_INSTITUTION_EMAIL_DOMAIN']
+    config.institution[:email_sender] = ENV['DF_INSTITUTION_EMAIL_SENDER'] if ENV['DF_INSTITUTION_EMAIL_SENDER']
     config.institution[:host] = ENV['DF_INSTITUTION_HOST'] if ENV['DF_INSTITUTION_HOST']
     config.institution[:cookie_domain] = ENV.fetch('DF_COOKIE_DOMAIN', URI.parse(Doubtfire::Application.config.institution[:host]).host)
     config.institution[:product_name] = ENV['DF_INSTITUTION_PRODUCT_NAME'] if ENV['DF_INSTITUTION_PRODUCT_NAME']
@@ -255,9 +256,15 @@ module Doubtfire
     config.i18n.enforce_available_locales = true
     # Ensure that auth tokens do not appear in log files
     config.filter_parameters += %i(
+      authToken
       auth_token
+      ltiToken
+      lti_token
+      ltik
       password
       password_confirmation
+      refresh_token
+      SAMLResponse
     )
     # Grape Serialization
 

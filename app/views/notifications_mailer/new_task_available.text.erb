@@ -1,0 +1,12 @@
+Hi <%= @user.name %>,
+
+<%= @notification.message %>
+
+A new task is now available in <%= @doubtfire_product_name %>.
+Open the task to review its details.
+
+<% if @notification.link.present? -%>
+Open the task: <%= @doubtfire_host %><%= @notification.link %>
+<% end -%>
+
+You can turn these emails off at <%= @unsubscribe_url %>.

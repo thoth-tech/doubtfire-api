@@ -57,6 +57,11 @@ class TaskDefinition < ApplicationRecord
 
   before_destroy :delete_associated_files
 
+  # The database default protects rows written by an older application process
+  # during a rolling deployment. Current code explicitly keeps new definitions
+  # untracked until a supported creation workflow has fully configured them.
+  before_create :defer_new_task_notifications
+
   after_update :move_files_on_abbreviation_change, if: :saved_change_to_abbreviation?
   after_update :remove_old_group_submissions, if: :has_removed_group?
   after_update :check_and_update_tii_status, if: :saved_change_to_upload_requirements?
@@ -70,7 +75,8 @@ class TaskDefinition < ApplicationRecord
   belongs_to :tutorial_stream, optional: true
   belongs_to :overseer_image, optional: true
 
-  has_many :tasks, dependent:  :destroy # Destroying a task definition will also nuke any instances
+  has_many :tasks, dependent: :destroy # Destroying a task definition will also nuke any instances
+  has_many :peer_progress_snapshots, dependent: :destroy, inverse_of: :task_definition
   has_many :group_submissions, dependent: :destroy # Destroying a task definition will also nuke any group submissions
   has_many :learning_outcomes, as: :context, dependent: :destroy
   has_many :overseer_steps, -> { order(:sort_order) }, inverse_of: :task_definition, dependent: :destroy
@@ -133,6 +139,24 @@ class TaskDefinition < ApplicationRecord
     grade_due_dates.find { |g| g.target_grade == target_grade.to_i }&.start_date
   end
 
+  # Opt this fully configured definition into immediate and scheduled
+  # availability notifications. Existing definitions are backfilled from the
+  # rollout time by the migration; new supported workflows use the unit start
+  # so already-available copied/imported tasks can still be announced.
+  def enable_new_task_notifications!
+    notification_start = [unit.start_date, start_date].compact.min || Time.current
+    # Legacy definitions may fail unrelated validations; this internal marker
+    # must still be repairable by a retrying notification job.
+    # rubocop:disable Rails/SkipsModelValidations
+    update_column(:new_task_notifications_from, notification_start)
+    # rubocop:enable Rails/SkipsModelValidations
+  end
+
+  def defer_new_task_notifications
+    self.new_task_notifications_from = nil
+    new_task_notifications_from_will_change!
+  end
+
   def unit_must_be_same
     if unit.present? and tutorial_stream.present? and not unit.eql? tutorial_stream.unit
       errors.add(:unit, "should be same as the unit in the associated tutorial stream")
@@ -174,6 +198,7 @@ class TaskDefinition < ApplicationRecord
   # Copy this task into the other unit
   def copy_to(other_unit)
     new_td = self.dup
+    new_td.new_task_notifications_from = nil
 
     # change the unit...
     new_td.unit_id = other_unit.id          # for database

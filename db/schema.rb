@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_07_09_014859) do
+ActiveRecord::Schema[8.0].define(version: 2026_08_30_063140) do
   create_table "activity_types", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
     t.string "name", null: false
     t.string "abbreviation", null: false
@@ -157,6 +157,17 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_09_014859) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["unit_id"], name: "index_communication_sets_on_unit_id"
+  end
+
+  create_table "consumed_lti_tokens", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
+    t.string "jti", null: false
+    t.bigint "user_id", null: false
+    t.datetime "expires_at", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["expires_at"], name: "index_consumed_lti_tokens_on_expires_at"
+    t.index ["jti"], name: "index_consumed_lti_tokens_on_jti", unique: true
+    t.index ["user_id"], name: "index_consumed_lti_tokens_on_user_id"
   end
 
   create_table "d2l_assessment_mappings", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
@@ -340,6 +351,23 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_09_014859) do
     t.index ["task_id"], name: "index_moderated_tasks_on_task_id"
   end
 
+  create_table "notifications", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.string "notification_type", null: false
+    t.text "message", null: false
+    t.string "link"
+    t.datetime "read_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.string "event", null: false
+    t.string "dedupe_key", limit: 191
+    t.datetime "delivered_at"
+    t.index ["user_id", "dedupe_key"], name: "index_notifications_on_user_and_dedupe_key", unique: true
+    t.index ["user_id", "event"], name: "index_notifications_on_user_id_and_event"
+    t.index ["user_id", "read_at"], name: "index_notifications_on_user_id_and_read_at"
+    t.index ["user_id"], name: "index_notifications_on_user_id"
+  end
+
   create_table "overflow_task_claim_logs", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
     t.bigint "unit_id", null: false
     t.bigint "task_id", null: false
@@ -443,6 +471,23 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_09_014859) do
     t.index ["task_definition_id"], name: "index_overseer_steps_on_task_definition_id"
   end
 
+  create_table "peer_progress_snapshots", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
+    t.bigint "unit_id", null: false
+    t.bigint "task_definition_id", null: false
+    t.integer "target_grade", null: false
+    t.decimal "submitted_percentage", precision: 5, scale: 2
+    t.integer "cohort_size", null: false
+    t.datetime "calculated_at", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.integer "submitted_count"
+    t.text "status_counts", size: :long, collation: "utf8mb4_bin"
+    t.index ["task_definition_id"], name: "index_peer_progress_snapshots_on_task_definition_id"
+    t.index ["unit_id", "task_definition_id", "target_grade"], name: "idx_peer_progress_unit_task_grade", unique: true
+    t.index ["unit_id"], name: "index_peer_progress_snapshots_on_unit_id"
+    t.check_constraint "json_valid(`status_counts`)", name: "status_counts"
+  end
+
   create_table "projects", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
     t.bigint "unit_id"
     t.string "project_role"
@@ -467,12 +512,24 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_09_014859) do
     t.integer "spec_con_days", default: 0, null: false
     t.bigint "assessor_id"
     t.datetime "portfolio_submission_date"
+    t.datetime "target_grade_changed_at", default: -> { "current_timestamp(6)" }, null: false
     t.index ["assessor_id"], name: "index_projects_on_assessor_id"
     t.index ["campus_id"], name: "index_projects_on_campus_id"
     t.index ["enrolled"], name: "index_projects_on_enrolled"
     t.index ["unit_id", "user_id"], name: "index_projects_on_unit_id_and_user_id", unique: true
     t.index ["unit_id"], name: "index_projects_on_unit_id"
     t.index ["user_id"], name: "index_projects_on_user_id"
+  end
+
+  create_table "push_subscriptions", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.string "endpoint", limit: 500, null: false
+    t.string "p256dh", null: false
+    t.string "auth", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["endpoint"], name: "index_push_subscriptions_on_endpoint", unique: true
+    t.index ["user_id"], name: "index_push_subscriptions_on_user_id"
   end
 
   create_table "roles", charset: "utf8mb4", collation: "utf8mb4_general_ci", force: :cascade do |t|
@@ -606,9 +663,11 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_09_014859) do
     t.boolean "use_resources_for_jplag_base_code", default: false, null: false
     t.boolean "lock_assessments_to_tutorial_stream", default: false, null: false
     t.boolean "requires_discussion", default: false, null: false
+    t.datetime "new_task_notifications_from", default: -> { "utc_timestamp()" }
     t.index ["abbreviation", "unit_id"], name: "index_task_definitions_on_abbreviation_and_unit_id", unique: true
     t.index ["group_set_id"], name: "index_task_definitions_on_group_set_id"
     t.index ["name", "unit_id"], name: "index_task_definitions_on_name_and_unit_id", unique: true
+    t.index ["new_task_notifications_from"], name: "index_task_definitions_on_new_task_notifications_from"
     t.index ["overseer_image_id"], name: "index_task_definitions_on_overseer_image_id"
     t.index ["tutorial_stream_id"], name: "index_task_definitions_on_tutorial_stream_id"
     t.index ["unit_id"], name: "index_task_definitions_on_unit_id"
@@ -901,6 +960,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_09_014859) do
     t.integer "feedback_overflow_threshold_days", default: 7
     t.boolean "enforce_feedback_before_discussed_in_class", default: false, null: false
     t.text "grade_values", size: :long, collation: "utf8mb4_bin"
+    t.boolean "peer_progress_enabled", default: false, null: false
     t.index ["draft_task_definition_id"], name: "index_units_on_draft_task_definition_id"
     t.index ["main_convenor_id"], name: "index_units_on_main_convenor_id"
     t.index ["overseer_image_id"], name: "index_units_on_overseer_image_id"
@@ -956,6 +1016,9 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_09_014859) do
     t.string "tii_eula_version"
     t.datetime "tii_eula_date"
     t.boolean "tii_eula_version_confirmed", default: false, null: false
+    t.boolean "display_peer_progress", default: true, null: false
+    t.string "theme_preference"
+    t.datetime "theme_preference_updated_at"
     t.index ["email"], name: "index_users_on_email", unique: true
     t.index ["login_id"], name: "index_users_on_login_id", unique: true
     t.index ["role_id"], name: "index_users_on_role_id"
@@ -987,10 +1050,13 @@ ActiveRecord::Schema[8.0].define(version: 2026_07_09_014859) do
 
   add_foreign_key "chip_usages", "feedback_chips"
   add_foreign_key "chip_usages", "users", column: "tutor_id"
+  add_foreign_key "consumed_lti_tokens", "users"
   add_foreign_key "feedback_chips", "feedback_chips", column: "parent_chip_id"
   add_foreign_key "feedback_chips", "learning_outcomes"
   add_foreign_key "learning_outcome_links", "learning_outcomes", column: "source_id"
   add_foreign_key "learning_outcome_links", "learning_outcomes", column: "target_id"
+  add_foreign_key "notifications", "users"
+  add_foreign_key "push_subscriptions", "users"
   add_foreign_key "user_oauth_states", "users"
   add_foreign_key "user_oauth_tokens", "users"
 end

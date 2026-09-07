@@ -108,8 +108,11 @@ class TaskDefinitionsApi < Grape::API
     end
 
     task_def.save!
+    NewTaskAvailableNotificationJob.track_and_enqueue(task_def)
 
-    present task_def, with: Entities::TaskDefinitionEntity, my_role: unit.role_for(current_user)
+    present task_def,
+            with: Entities::TaskDefinitionEntity,
+            my_role: unit.role_for(current_user)
   end
 
   desc 'Edits the given task definition'
@@ -213,6 +216,7 @@ class TaskDefinitionsApi < Grape::API
 
     # Bulk update task definition with permitted parameters
     task_def.update!(task_params)
+    due_date_change = task_def.saved_change_to_due_date
 
     # Set the tutorial stream
     tutorial_stream_abbr = params[:task_def][:tutorial_stream_abbr]
@@ -263,6 +267,25 @@ class TaskDefinitionsApi < Grape::API
         else
           row.update!(target_due_date: target_due_date, start_date: start_date)
         end
+      end
+    end
+
+    if due_date_change
+      previous_due_date, new_due_date = due_date_change.map do |value|
+        value&.to_date&.iso8601
+      end
+
+      begin
+        TaskDueDateChangedNotificationJob.perform_async(
+          task_def.id,
+          previous_due_date,
+          new_due_date
+        )
+      rescue StandardError => e
+        Rails.logger.error(
+          "Failed to enqueue due-date notification for TaskDefinition " \
+          "#{task_def.id}: #{e.class} - #{e.message}"
+        )
       end
     end
 

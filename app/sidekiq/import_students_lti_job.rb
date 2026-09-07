@@ -9,6 +9,7 @@ class ImportStudentsLtiJob
   include MimeCheckHelpers
   include CsvHelper
   include LtiHelper
+  include FederatedIdentityHelper
 
   sidekiq_options lock: :until_executed,
                   lock_args_method: ->(args) { [args.first] },
@@ -43,9 +44,10 @@ class ImportStudentsLtiJob
         username: member["email"][/(.*)@/, 1]
       }
 
-      user = User.find_by(login_id: user_id_data[:login_id]) ||
-             User.find_by(username: user_id_data[:username]) ||
-             User.find_by(email: user_id_data[:email]) ||
+      user = user_for_asserted_identity(login_id: user_id_data[:login_id],
+                                        email: user_id_data[:email],
+                                        derived_username: user_id_data[:username],
+                                        source: "Lti import of unit #{unit.id}") ||
              User.create! do |new_user|
                # Update new user with details from the SAML response
                Doubtfire::Application.config.institution_settings.update_user_from_lti_response(

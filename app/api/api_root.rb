@@ -66,6 +66,8 @@ class ApiRoot < Grape::API
   mount GroupSetsApi
   mount LearningOutcomesApi
   mount ProjectsApi
+  mount SettingsPublicApi
+  mount PeerProgressApi
   mount SettingsApi
   mount StudentsApi
   mount Submission::PortfolioApi
@@ -108,8 +110,13 @@ class ApiRoot < Grape::API
   mount MarkingSessionsApi
   mount DiscussionPromptsApi
   mount OverseerStepsApi
+  mount TaskPrioritizationApi
 
   mount Feedback::FeedbackChipApi
+
+  # Notifications feature
+  mount NotificationsApi
+  mount PushSubscriptionsApi
 
   #
   # Add auth details to all end points
@@ -125,6 +132,8 @@ class ApiRoot < Grape::API
   AuthenticationHelpers.add_auth_to GroupSetsApi
   AuthenticationHelpers.add_auth_to LearningOutcomesApi
   AuthenticationHelpers.add_auth_to ProjectsApi
+  AuthenticationHelpers.add_auth_to SettingsApi
+  AuthenticationHelpers.add_auth_to PeerProgressApi
   AuthenticationHelpers.add_auth_to StudentsApi
   AuthenticationHelpers.add_auth_to Submission::PortfolioApi
   AuthenticationHelpers.add_auth_to Submission::PortfolioEvidenceApi
@@ -160,7 +169,12 @@ class ApiRoot < Grape::API
   AuthenticationHelpers.add_auth_to MarkingSessionsApi
   AuthenticationHelpers.add_auth_to DiscussionPromptsApi
   AuthenticationHelpers.add_auth_to OverseerStepsApi
+  AuthenticationHelpers.add_auth_to TaskPrioritizationApi
   AuthenticationHelpers.add_auth_to TutorNotesApi
+
+  # Notifications feature
+  AuthenticationHelpers.add_auth_to NotificationsApi
+  AuthenticationHelpers.add_auth_to PushSubscriptionsApi
 
   add_swagger_documentation \
     base_path: nil,

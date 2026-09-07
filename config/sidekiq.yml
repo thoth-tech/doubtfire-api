@@ -1,1 +1,26 @@
-:concurrency: 1
+# Keep the historical single-worker default for small installations. Production
+# deployments can raise this after sizing the database pool and worker memory.
+<% sidekiq_concurrency = Integer(ENV.fetch('DF_SIDEKIQ_CONCURRENCY', '1'), 10) %>
+<% raise ArgumentError, 'DF_SIDEKIQ_CONCURRENCY must be positive' unless sidekiq_concurrency.positive? %>
+:concurrency: <%= sidekiq_concurrency %>
+
+# Strict priority, highest first. User-facing notification email and Web Push
+# use `mailers` and `notifications` respectively. Each job performs one channel
+# delivery, so neither must wait behind AcceptSubmissionJob or a CSV export on
+# `default` at concurrency 1.
+#
+# This list is what makes both notification channel jobs run in production.
+# That worker is started by lib/shell/sidekiq_entry_point.sh, a bare
+# `bundle exec sidekiq` with no -q, so with no :queues: here Sidekiq would listen
+# on `default` alone and notification channel jobs would sit in Redis unread.
+# perform_async succeeds, nothing raises and nothing logs, so the failure is
+# silent.
+#
+# The development worker passes `-q mailers -q notifications` on the command
+# line, which replaces this list, so it stays narrow and keeps ignoring
+# `default`. See the comment on the doubtfire-sidekiq service in doubtfire-deploy
+# development/docker-compose.yml.
+:queues:
+  - mailers
+  - notifications
+  - default

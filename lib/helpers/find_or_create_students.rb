@@ -13,11 +13,9 @@ def find_or_create_student(username)
       email: "#{username}@doubtfire.com",
       username: username
     }
-    unless AuthenticationHelpers.aaf_auth?
-      profile[:password] = 'password'
-      profile[:password_confirmation] = 'password'
-    end
-    user_created = User.create!(profile)
+    user_created = User.new(profile)
+    user_created.password = 'password' unless AuthenticationHelpers.aaf_auth?
+    user_created.save!
     @user_cache[username] = user_created if using_cache
   else
     user_created = User.find_by(username: username)

@@ -168,10 +168,34 @@ class TasksApi < Grape::API
 
     # check the user can put this task
     if authorise? current_user, project, :make_submission
+      # Only staff who can assess this task may write its grade. This is checked
+      # before anything below writes, so a refused request leaves the task alone.
+      if !grade.nil? && !authorise?(current_user, project, :assess)
+        error!({ error: 'You are not permitted to assess this task' }, 403)
+      end
+
       task = project.task_for_task_definition(task_definition)
 
+      # A tutor can both mark and unmark a task as discussed in class. Sending
+      # discussed:false used to still add a "Discussed in class" comment, the
+      # opposite of what it asks, and that comment type cannot be removed through
+      # the UI. So false now removes all discussed markers instead.
+      # The mark is added here so a same-request complete trigger below can see it;
+      # a removal is deferred to the end so a later refused trigger or grade does
+      # not leave the comment destroyed and the request still failing.
+      remove_discussed = false
       if !params[:discussed].nil? && authorise?(current_user, project, :assess)
-        task.add_discussed_comment(current_user)
+        if params[:discussed]
+          task.add_discussed_comment(current_user)
+        elsif task.task_definition.requires_discussion &&
+              (task.task_status == TaskStatus.complete || params[:trigger] == 'complete')
+          # Removing the mark would leave a discussion-required task complete
+          # without the evidence the model demands. Refuse before deleting
+          # anything.
+          error!({ error: 'Cannot remove the discussed mark from a task that requires discussion while it is complete. Change its status first.' }, 403)
+        else
+          remove_discussed = true
+        end
       end
 
       # if trigger supplied...
@@ -211,11 +235,18 @@ class TasksApi < Grape::API
           recursive_fix: params[:trigger_recursive_fix],
           check_feedback: true
         )
-        if result.nil? && task.errors.any?
-          error!({ error: task.errors.full_messages.to_sentence }, 403)
-        end
-        if result.nil? && task.task_definition.restrict_status_updates
-          error!({ error: 'This task can only be updated by your tutor.' }, 403)
+        # trigger_transition returns nil for every refusal, and most of its early
+        # returns leave errors empty. Both guards below used to need something
+        # extra on top of that, so a refused change fell through to the 200 at the
+        # end of the handler and the client showed it as accepted.
+        if result.nil?
+          if task.errors.any?
+            error!({ error: task.errors.full_messages.to_sentence }, 403)
+          elsif task.task_definition.restrict_status_updates
+            error!({ error: 'This task can only be updated by your tutor.' }, 403)
+          else
+            error!({ error: 'This status change is not allowed for this task.' }, 403)
+          end
         end
         SessionTracker.record_assessment_activity(
           action: "assessing",
@@ -237,6 +268,10 @@ class TasksApi < Grape::API
         task.include_in_portfolio = params[:include_in_portfolio]
         task.save
       end
+
+      # The status change and grade have been applied without error, so it is now
+      # safe to remove the discussed mark that was requested with discussed:false.
+      task.remove_discussed_comment if remove_discussed
 
       present task, with: Entities::TaskEntity, include_other_projects: true, update_only: true
     else
@@ -269,7 +304,7 @@ class TasksApi < Grape::API
     task_definition = project.unit.task_definitions.find(params[:task_definition_id])
 
     # check the user can put this task
-    error!(error: 'You do not have permission to read submissions for this project.') unless authorise? current_user, project, :get_submission
+    error!({ error: 'You do not have permission to read submissions for this project.' }, 403) unless authorise? current_user, project, :get_submission
 
     # ensure there can be a pdf...
     needs_upload_docs = !task_definition.upload_requirements.empty?
@@ -324,7 +359,7 @@ class TasksApi < Grape::API
     task_definition = project.unit.task_definitions.find(params[:task_definition_id])
 
     # check the user can put this task
-    error!(error: 'You do not have permission to read submissions for this project.') unless authorise? current_user, project, :get_submission
+    error!({ error: 'You do not have permission to read submissions for this project.' }, 403) unless authorise? current_user, project, :get_submission
 
     # Get the actual task...
     task = project.task_for_task_definition(task_definition)

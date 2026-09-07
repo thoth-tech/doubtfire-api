@@ -1,23 +1,14 @@
-#
-# deployApi.Dockerfile - the container used to host the API only
-#
-FROM ruby:3.4-bookworm
+# Production API image. Refresh the exact base digest only through a reviewed
+# dependency update and rebuild both API/app-worker images from the same commit.
+FROM ruby:3.4.10-bookworm@sha256:56e0c9fdbf64d090e45072d32f0d3be7f2e392e733444f7d176a50881e6c325a
 
-# Setup dependencies
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-  && apt-get install -y apt-transport-https ca-certificates curl gnupg2 software-properties-common \
-  && install -m 0755 -d /etc/apt/keyrings \
-  && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
-  && chmod a+r /etc/apt/keyrings/docker.asc \
-  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list \
-  && curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg \
-  && echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
-
-RUN apt-get update \
-  && apt-get install -y \
+  && apt-get install -y --no-install-recommends \
     bc \
+    ca-certificates \
+    curl \
     ffmpeg \
     ghostscript \
     imagemagick \
@@ -25,29 +16,24 @@ RUN apt-get update \
     libmagickwand-dev \
     libmariadb-dev \
     tzdata \
-    redis \
-    docker-ce \
-    docker-ce-cli \
-    containerd.io \
-  && apt-get clean
+  && rm -rf /var/lib/apt/lists/*
 
-# Setup the folder where we will deploy the code
 WORKDIR /doubtfire
 
-# Copy doubtfire-api source
-COPY . /doubtfire/
+ENV RAILS_ENV=production \
+    BUNDLE_WITHOUT=development:test:staging
 
-# Install bundler
-RUN gem install bundler -v '2.6.6'
-RUN bundle config set --global without development test staging
+RUN gem install bundler -v 2.6.6 --no-document
 
-# Install the Gems
-RUN bundle install
+# Keep dependency installation cacheable and require the committed lockfile.
+COPY Gemfile Gemfile.lock ./
+RUN bundle config set deployment true \
+  && bundle install --jobs 4 --retry 3
+
+COPY . ./
 
 EXPOSE 3000
 
-# Set default to production
-ENV RAILS_ENV production
-
-# Run migrate and server on launch
-CMD bundle exec rake db:migrate && bundle exec rails s -b 0.0.0.0
+# Migrations are a separate one-shot deployment service. API startup must never
+# race or silently repeat them.
+CMD ["bundle", "exec", "rails", "server", "-b", "0.0.0.0"]

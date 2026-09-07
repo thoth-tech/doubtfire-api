@@ -79,6 +79,7 @@ class Unit < ApplicationRecord
       :upload_grades_csv,
       :get_staff_notes,
       :capture_task_completion_snapshot,
+      :run_similarity_scan,
       :mannage_communications,
       :delete_engagement
     ]
@@ -108,6 +109,7 @@ class Unit < ApplicationRecord
       :get_marking_sessions,
       :get_staff_notes,
       :get_tutor_times,
+      :run_similarity_scan,
       :mannage_communications,
     ]
 
@@ -174,6 +176,7 @@ class Unit < ApplicationRecord
   has_many :learning_outcomes, as: :context, dependent: :destroy # inverse_of: :unit
   has_many :marking_sessions, dependent: :destroy
   has_many :task_completion_snapshots, dependent: :destroy, inverse_of: :unit
+  has_many :peer_progress_snapshots, dependent: :destroy, inverse_of: :unit
   has_many :communication_sets, class_name: 'CommunicationSet', dependent: :destroy
   has_many :communication_rules, through: :communication_sets, class_name: 'CommunicationRule'
   has_many :communication_set_schedules, through: :communication_sets, class_name: 'CommunicationSetSchedule'
@@ -269,7 +272,15 @@ class Unit < ApplicationRecord
   end
 
   def ordered_task_definitions
-    task_definitions.order('start_date ASC, abbreviation ASC')
+    return task_definitions.order('start_date ASC, abbreviation ASC') unless task_definitions.loaded?
+
+    task_definitions.sort_by do |task_definition|
+      [
+        task_definition.start_date.nil? ? 0 : 1,
+        task_definition.start_date,
+        task_definition.abbreviation.to_s
+      ]
+    end
   end
 
   def convenors
@@ -489,6 +500,7 @@ class Unit < ApplicationRecord
 
   def rollover(teaching_period, start_date, end_date, new_code)
     new_unit = self.dup
+    copied_task_definitions = []
 
     new_unit.code = new_code if new_code.present?
 
@@ -541,6 +553,7 @@ class Unit < ApplicationRecord
     # Duplicate task definitions
     task_definitions.each do |td|
       new_td = td.copy_to(new_unit)
+      copied_task_definitions << new_td
 
       td.learning_outcomes.each do |learning_outcome| # for each old task definition, duplicate the learning outcomes associated with it aswell
         new_outcome = learning_outcome.dup
@@ -610,6 +623,8 @@ class Unit < ApplicationRecord
         child_chip.update(parent_chip_id: parent_chip.id)
       end
     end
+
+    NewTaskAvailableNotificationJob.track_and_enqueue_all(copied_task_definitions)
 
     new_unit
   end
@@ -1633,7 +1648,9 @@ class Unit < ApplicationRecord
           project.enrol_in(grp.tutorial)
         end
 
-        grp.add_member(project)
+        # Bulk imports can add many students in one request. Do not send a
+        # separate notification for every CSV row.
+        grp.add_member(project, notify: false)
 
         success << { row: row, message: "Added #{username} to #{grp.name}." }
       rescue Exception => e
@@ -1705,8 +1722,10 @@ class Unit < ApplicationRecord
       return nil if day_num.nil?
 
       start_day_num = start_date.wday
+      day_offset = day_num - start_day_num
+      day_offset += 7 if day_offset.negative?
 
-      start_date + (week - 1).weeks + (day_num - start_day_num).days
+      start_date + (week - 1).weeks + day_offset.days
     end
   end
 
@@ -1722,10 +1741,11 @@ class Unit < ApplicationRecord
     end
   end
 
-  def import_tasks_from_csv(file)
+  def import_tasks_from_csv(file, notify: true)
     success = []
     errors = []
     ignored = []
+    imported_task_definitions = []
 
     data = read_file_to_str(file)
 
@@ -1756,6 +1776,7 @@ class Unit < ApplicationRecord
         end
 
         prerequisites_by_task[task_definition.abbreviation] = JSON.parse(row[:task_prerequisites]) unless row[:task_prerequisites].nil?
+        imported_task_definitions << task_definition if new_task
 
         success << { row: row, message: message }
       rescue Exception => e
@@ -1795,6 +1816,10 @@ class Unit < ApplicationRecord
       rescue Exception => e
         errors << { row: "TaskDef '#{task_abbreviation}' prerequisites: #{prerequisites_list}", message: e.message }
       end
+    end
+
+    if notify
+      NewTaskAvailableNotificationJob.track_and_enqueue_all(imported_task_definitions)
     end
 
     {

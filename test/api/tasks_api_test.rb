@@ -832,20 +832,239 @@ class TasksApiTest < ActiveSupport::TestCase
     assert_equal TaskStatus.complete, task.task_status
   end
 
+  # discussed:true marks a task as discussed in class; discussed:false must unmark
+  # it by removing every marker, including legacy duplicates separated by an
+  # ordinary feedback comment (DOM-07).
+  def test_discussed_false_removes_all_discussed_comments
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
+    td = TaskDefinition.create!({
+                                  unit_id: unit.id,
+                                  tutorial_stream: unit.tutorial_streams.first,
+                                  name: 'Discussed toggle task',
+                                  description: 'Task used to toggle the discussed mark',
+                                  weighting: 4,
+                                  target_grade: 0,
+                                  start_date: Time.zone.now - 2.weeks,
+                                  target_date: Time.zone.now + 1.week,
+                                  abbreviation: 'DiscussToggleTask',
+                                  restrict_status_updates: false,
+                                  requires_discussion: true,
+                                  upload_requirements: [],
+                                  plagiarism_warn_pct: 0.8,
+                                  is_graded: false,
+                                  max_quality_pts: 0
+                                })
+
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+    tutor = unit.tutors.first
+
+    add_auth_header_for(user: tutor)
+
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { discussed: true }
+    assert_equal 200, last_response.status
+    task.reload
+    assert task.has_discussed_in_class_comment?, 'discussed:true should mark the task as discussed'
+    assert_equal 1, task.comments.where(content_type: 'discussed_in_class').count
+
+    task.add_text_comment(tutor, 'Feedback between legacy discussed markers')
+
+    # add_discussed_comment now treats the marker as a boolean and will not
+    # create another one just because feedback was added after it.
+    task.add_discussed_comment(tutor)
+    assert_equal 1, task.comments.where(content_type: 'discussed_in_class').count
+
+    # Reproduce legacy data written before duplicate prevention was added.
+    duplicate = TaskDiscussedComment.create!(
+      task: task,
+      user: tutor,
+      recipient: project.student,
+      comment: 'Discussed in class'
+    )
+    duplicate_receipt_ids = duplicate.comments_read_receipts.ids
+    assert_equal 2, task.comments.where(content_type: 'discussed_in_class').count
+    assert_not_empty duplicate_receipt_ids
+
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { discussed: false }
+    assert_equal 200, last_response.status
+    task.reload
+    assert_not task.has_discussed_in_class_comment?, 'discussed:false should unmark the task, not add another comment'
+    assert_equal 0, task.comments.where(content_type: 'discussed_in_class').count
+    assert_empty CommentsReadReceipts.where(id: duplicate_receipt_ids), 'destroy callbacks must remove marker read receipts'
+
+    unit.destroy
+  end
+
+  # A completed task in a unit that requires discussion cannot have its discussed
+  # mark removed, since that would leave it complete without the evidence the
+  # model requires (DOM-07).
+  def test_discussed_false_rejected_when_the_task_is_complete
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
+    td = TaskDefinition.create!({
+                                  unit_id: unit.id,
+                                  tutorial_stream: unit.tutorial_streams.first,
+                                  name: 'Discussed complete guard task',
+                                  description: 'Task used to guard unmarking after complete',
+                                  weighting: 4,
+                                  target_grade: 0,
+                                  start_date: Time.zone.now - 2.weeks,
+                                  target_date: Time.zone.now + 1.week,
+                                  abbreviation: 'DiscussGuardTask',
+                                  restrict_status_updates: false,
+                                  requires_discussion: true,
+                                  upload_requirements: [],
+                                  plagiarism_warn_pct: 0.8,
+                                  is_graded: false,
+                                  max_quality_pts: 0
+                                })
+
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+    tutor = unit.tutors.first
+
+    add_auth_header_for(user: tutor)
+
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { discussed: true }
+    assert_equal 200, last_response.status
+    task.add_text_comment(tutor, 'Manual tutor feedback')
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { trigger: 'complete' }
+    assert_equal 200, last_response.status
+    task.reload
+    assert_equal TaskStatus.complete, task.task_status
+
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { discussed: false }
+    assert_equal 403, last_response.status
+    task.reload
+    assert task.has_discussed_in_class_comment?, 'the discussed comment must survive a refused unmark'
+    assert_equal TaskStatus.complete, task.task_status
+
+    unit.destroy
+  end
+
+  # A helper for the refused-transition tests below. An ordinary task definition,
+  # nothing about it restricted, so the only reason a transition can be refused is
+  # the one the test is asking about.
+  def ordinary_task_definition_for(unit, restrict: false)
+    TaskDefinition.create!({
+                             unit_id: unit.id,
+                             tutorial_stream: unit.tutorial_streams.first,
+                             name: "Refusal reporting task #{restrict}",
+                             description: 'Task used to check refused transitions are reported',
+                             weighting: 4,
+                             target_grade: 0,
+                             start_date: Time.zone.now - 2.weeks,
+                             target_date: Time.zone.now + 1.week,
+                             abbreviation: "RefuseTask#{restrict ? 'R' : 'O'}",
+                             restrict_status_updates: restrict,
+                             requires_discussion: false,
+                             upload_requirements: [],
+                             plagiarism_warn_pct: 0.8,
+                             is_graded: false,
+                             max_quality_pts: 0
+                           })
+  end
+
+  # A student asking for a staff status is refused inside trigger_transition, which
+  # returns nil and adds no error. That used to reach the 200 at the end of the
+  # handler, so the client showed the change as accepted.
+  def test_refused_transition_to_a_staff_status_returns_forbidden
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
+    td = ordinary_task_definition_for(unit)
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+    status_before = task.task_status
+
+    add_auth_header_for(user: project.student)
+
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { trigger: 'complete' }
+
+    assert_equal 403, last_response.status, last_response.body
+    assert_equal 'This status change is not allowed for this task.', last_response_body['error']
+
+    task.reload
+    assert_equal status_before, task.task_status
+  end
+
+  # An unrecognised trigger string falls through the case statement and is refused
+  # the same silent way, whoever sends it.
+  def test_unrecognised_trigger_returns_forbidden
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
+    td = ordinary_task_definition_for(unit)
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+    status_before = task.task_status
+
+    add_auth_header_for(user: unit.tutors.first)
+
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { trigger: 'competed' }
+
+    assert_equal 403, last_response.status, last_response.body
+    assert_equal 'This status change is not allowed for this task.', last_response_body['error']
+
+    task.reload
+    assert_equal status_before, task.task_status
+  end
+
+  # The regression check. This change makes a permissive endpoint strict, so the
+  # failure mode is that ordinary marking stops working.
+  def test_allowed_transitions_still_return_success
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
+    td = ordinary_task_definition_for(unit)
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+
+    add_auth_header_for(user: project.student)
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { trigger: 'working_on_it' }
+    assert_equal 200, last_response.status, last_response.body
+    task.reload
+    assert_equal TaskStatus.working_on_it, task.task_status
+
+    add_auth_header_for(user: unit.tutors.first)
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { trigger: 'discuss' }
+    assert_equal 200, last_response.status, last_response.body
+    task.reload
+    assert_equal TaskStatus.discuss, task.task_status
+  end
+
+  # The restricted message is the one sentence in this endpoint that tells a
+  # student something they can act on, so it has to survive ahead of the generic
+  # one. Nothing in the test tree protected it before.
+  def test_restricted_task_keeps_its_own_refusal_message
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
+    td = ordinary_task_definition_for(unit, restrict: true)
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+
+    # Put the task at a staff assigned status first, which is the condition the
+    # restricted guard actually tests.
+    add_auth_header_for(user: unit.tutors.first)
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { trigger: 'discuss' }
+    assert_equal 200, last_response.status, last_response.body
+
+    add_auth_header_for(user: project.student)
+    put "/api/projects/#{project.id}/task_def_id/#{td.id}", { trigger: 'working_on_it' }
+
+    assert_equal 403, last_response.status, last_response.body
+    assert_equal 'This task can only be updated by your tutor.', last_response_body['error']
+
+    task.reload
+    assert_equal TaskStatus.discuss, task.task_status
+  end
+
   def test_require_comment_for_feedback_submission_assess_in_portfolio
     unit = FactoryBot.create(:unit, student_count: 1, task_count: 2)
     td1 = unit.task_definitions.first
     project = unit.active_projects.first
 
-    task = project.task_for_task_definition(td1)
-
-    td1.update(
+    td1.update!(
       upload_requirements: [{ "key" => 'file0', "name" => 'Shape Class', "type" => 'code' }],
       target_grade: 0, # Pass
       start_date: Time.zone.now - 2.weeks,
       target_date: Time.zone.now + 1.week,
       assess_in_portfolio_only: false
     )
+
+    task = project.task_for_task_definition(td1)
 
     add_auth_header_for(user: project.user)
 
@@ -887,6 +1106,100 @@ class TasksApiTest < ActiveSupport::TestCase
 
     assert_equal TaskStatus.ready_for_feedback.name, status_comment.comment
     assert_equal comment, text_comment.comment
+  end
+
+  # A task definition with one upload requirement, used by the finalised-task
+  # upload tests below.
+  def uploadable_task_definition_for(unit)
+    td = unit.task_definitions.first
+    td.update!(
+      upload_requirements: [{ "key" => 'file0', "name" => 'Shape Class', "type" => 'code' }],
+      target_grade: 0,
+      start_date: Time.zone.now - 2.weeks,
+      target_date: Time.zone.now + 1.week,
+      assess_in_portfolio_only: false,
+      restrict_status_updates: false
+    )
+    td
+  end
+
+  # A signed off task used to keep accepting uploads. The upload rewrote
+  # submission_date and file_uploaded_at and deleted the assessed pdf, and only
+  # the status transition was skipped, so the damage was silent.
+  def test_student_cannot_upload_to_a_complete_task
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 2)
+    td = uploadable_task_definition_for(unit)
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+
+    task.update!(task_status: TaskStatus.complete, submission_date: Time.zone.now - 1.day)
+    submission_date_before = task.reload.submission_date
+
+    add_auth_header_for(user: project.user)
+    post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission",
+         with_file('test_files/submissions/program.cs', 'application/json', { trigger: 'ready_for_feedback' })
+
+    assert_equal 403, last_response.status, last_response.body
+    assert_equal 'This task is closed for new submissions.', last_response_body['error']
+
+    task.reload
+    assert_equal TaskStatus.complete, task.task_status
+    assert_equal submission_date_before.to_i, task.submission_date.to_i
+  end
+
+  # feedback_exceeded is the state students are otherwise barred from leaving, so
+  # it is the one where a silent upload is most misleading.
+  def test_student_cannot_upload_to_a_feedback_exceeded_task
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 2)
+    td = uploadable_task_definition_for(unit)
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+
+    task.update!(task_status: TaskStatus.feedback_exceeded, submission_date: Time.zone.now - 1.day)
+    submission_date_before = task.reload.submission_date
+
+    add_auth_header_for(user: project.user)
+    post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission",
+         with_file('test_files/submissions/program.cs', 'application/json', { trigger: 'ready_for_feedback' })
+
+    assert_equal 403, last_response.status, last_response.body
+
+    task.reload
+    assert_equal TaskStatus.feedback_exceeded, task.task_status
+    assert_equal submission_date_before.to_i, task.submission_date.to_i
+  end
+
+  # Staff go through on purpose. A tutor uploads on a student's behalf when a file
+  # is corrupt or was submitted against the wrong task.
+  def test_staff_can_still_upload_to_a_complete_task
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 2)
+    td = uploadable_task_definition_for(unit)
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+
+    task.update!(task_status: TaskStatus.complete)
+
+    add_auth_header_for(user: unit.main_convenor_user)
+    post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission",
+         with_file('test_files/submissions/program.cs', 'application/json', { trigger: 'ready_for_feedback' })
+
+    assert_equal 201, last_response.status, last_response.body
+  end
+
+  # The regression check. Ordinary resubmission is untouched.
+  def test_student_can_still_upload_to_an_open_task
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 2)
+    td = uploadable_task_definition_for(unit)
+    project = unit.active_projects.first
+    task = project.task_for_task_definition(td)
+
+    task.update!(task_status: TaskStatus.ready_for_feedback)
+
+    add_auth_header_for(user: project.user)
+    post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission",
+         with_file('test_files/submissions/program.cs', 'application/json', { trigger: 'ready_for_feedback' })
+
+    assert_equal 201, last_response.status, last_response.body
   end
 
   def test_resubmission_doesnt_change_submission_date

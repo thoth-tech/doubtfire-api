@@ -11,4 +11,5 @@ Doubtfire::Application.routes.draw do
   mount Sidekiq::Web => "/sidekiq" # mount Sidekiq::Web in your Rails app
 
   get "health" => "rails/health#show", as: :rails_health_check
+  get "readiness" => "readiness#show", as: :readiness_check
 end

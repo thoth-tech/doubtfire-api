@@ -73,6 +73,7 @@ class UnitsApi < Grape::API
       optional :code, type: String
       optional :description, type: String
       optional :active, type: Boolean
+      optional :peer_progress_enabled, type: Boolean, desc: 'Enable anonymous peer progress for students in this unit'
       optional :teaching_period_id, type: Integer
       optional :start_date, type: Date
       optional :end_date, type: Date
@@ -116,6 +117,7 @@ class UnitsApi < Grape::API
                                                           :description,
                                                           :start_date,
                                                           :end_date,
+                                                          :peer_progress_enabled,
                                                           :teaching_period_id,
                                                           :active,
                                                           :main_convenor_id,
@@ -655,6 +657,35 @@ class UnitsApi < Grape::API
     end
 
     job_id = AggregateTaskCompletionStatsJob.perform_async(unit.id)
+    job = setup_job(job_id)
+    present job, with: Entities::SidekiqJobEntity
+  end
+
+  desc 'Queue an on-demand plagiarism rescan for this unit'
+  params do
+    optional :task_definition_id, type: Integer, desc: 'Reserved for a future per-definition scan; the scan currently covers the whole unit'
+  end
+  post '/units/:id/similarity/scan' do
+    unit = Unit.find(params[:id])
+    unless authorise? current_user, unit, :run_similarity_scan
+      error!({ error: "Not authorised to run a similarity scan for #{unit.code}" }, 403)
+    end
+
+    # Reuse the 30-minute cooldown the snapshot capture endpoint above uses, so a
+    # convenor cannot hammer JPlag by holding the button. last_plagarism_scan is
+    # stamped when a scan finishes and defaults to the distant past, so the first
+    # scan is never blocked.
+    last_scan = unit.last_plagarism_scan
+    if last_scan.present? && last_scan > 30.minutes.ago
+      remaining_seconds = [(last_scan + 30.minutes - Time.zone.now).ceil, 0].max
+      remaining_minutes = [(remaining_seconds / 60.0).ceil, 1].max
+      error!({ error: "A similarity scan ran at #{last_scan.strftime('%H:%M')}. Please wait #{remaining_minutes} more minute(s) before starting another." }, 429)
+    end
+
+    job_id = CheckUnitSimilarityJob.perform_async(unit.id, true, params[:task_definition_id])
+    if job_id.nil?
+      error!({ error: 'A similarity scan is already queued or running for this unit.' }, 409)
+    end
     job = setup_job(job_id)
     present job, with: Entities::SidekiqJobEntity
   end

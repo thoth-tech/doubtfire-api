@@ -60,9 +60,28 @@ Doubtfire::Application.configure do
 
   config.action_mailer.perform_caching = false
 
-  # Tell Action Mailer not to deliver emails to the real world.
-  # Write them to file instead (under doubtfire-api/tmp/mails)
-  config.action_mailer.delivery_method = :file
+  # Never deliver email to the real world in development.
+  #
+  # With docker (the normal case), DF_SMTP_ADDRESS points at the mailpit
+  # container and every email shows up in a web inbox at http://localhost:8025.
+  # Mailpit accepts everything and forwards nothing.
+  #
+  # Without it, mail is written to a file instead. Under docker that file lands
+  # on the host at doubtfire-deploy/data/tmp/mails/, NOT in this repository,
+  # because development/docker-compose.yml mounts ../data/tmp over /doubtfire/tmp
+  # and Rails.root in the container is /doubtfire. Looking for it under
+  # doubtfire-api/tmp/mails shows an empty folder and makes email look broken.
+  #
+  # See doubtfire-deploy/RUNNING-LOCALLY.md.
+  if ENV['DF_SMTP_ADDRESS'].present?
+    config.action_mailer.delivery_method = :smtp
+    config.action_mailer.smtp_settings = {
+      address: ENV['DF_SMTP_ADDRESS'],
+      port: ENV.fetch('DF_SMTP_PORT', 1025).to_i
+    }
+  else
+    config.action_mailer.delivery_method = :file
+  end
 
   # Print deprecation notices to the Rails logger.
   config.active_support.deprecation = :log

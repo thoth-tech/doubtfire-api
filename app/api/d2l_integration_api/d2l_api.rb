@@ -53,11 +53,11 @@ module D2lIntegrationApi
 
       d2l = unit.d2l_assessment_mapping
 
-      if d2l.id != params[:id].to_i
+      if d2l.nil? || d2l.id != params[:id].to_i
         error!({ error: 'D2L details not found' }, 404)
       end
 
-      d2l.destroy if d2l.present?
+      d2l.destroy
       status 204
     end
 
@@ -75,7 +75,7 @@ module D2lIntegrationApi
 
       d2l = unit.d2l_assessment_mapping
 
-      if d2l.id != params[:id].to_i
+      if d2l.nil? || d2l.id != params[:id].to_i
         error!({ error: 'D2L details not found' }, 404)
       end
 

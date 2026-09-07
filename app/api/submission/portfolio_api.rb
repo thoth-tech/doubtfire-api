@@ -34,6 +34,14 @@ module Submission
         error!({ error: "'#{file[:filename]}': #{file_result[:msg]}" }, 403)
       end
 
+      max_file_size = Doubtfire::Application.config.max_file_size.to_i
+      max_file_size = 10_000_000 if max_file_size <= 0
+      size_in_mb = max_file_size / 1_000_000
+
+      if File.size(file[:tempfile].path) > max_file_size
+        error!({ error: "'#{file[:filename]}' exceeds the #{size_in_mb}MB file limit." }, 413)
+      end
+
       # Move file into place
       result = project.move_to_portfolio(file, name, kind) # returns details of file
 

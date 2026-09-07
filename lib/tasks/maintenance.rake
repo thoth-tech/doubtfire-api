@@ -206,9 +206,15 @@ namespace :maintenance do
       .find_each(&:destroy!)
 
     AuthToken.destroy_old_tokens
+    ConsumedLtiToken.destroy_expired_tokens
     clear_abandoned_submissions!
     clear_abandoned_submission_history_markers!
     clear_abandoned_overseer_assessments!
+  end
+
+  desc 'Remove the record of LTI tokens that have passed their expiry'
+  task clear_expired_lti_tokens: [:environment] do
+    ConsumedLtiToken.destroy_expired_tokens
   end
 
   desc 'Clear abandoned in-process submission folders and notify affected users'

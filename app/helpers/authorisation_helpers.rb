@@ -45,16 +45,17 @@ module AuthorisationHelpers
 
     return false if role_obj.nil?
 
-    # Attempt to get the unit role from a Unit context
-    unit_role = object&.unit_role_for(user) if object.respond_to?(:unit_role_for)
+    # Observer status cannot change an allowlisted permission, so avoid a unit
+    # role lookup for those hot-path reads (including plagiarism visibility).
+    unless OBSERVER_ONLY_PERMISSIONS.include?(action)
+      unit_role = object&.unit_role_for(user) if object.respond_to?(:unit_role_for)
 
-    # Attempt to get the unit role if object has a unit reference
-    if unit_role.nil? && object.respond_to?(:unit)
-      unit_role = object.unit.unit_role_for(user)
-    end
+      # Attempt to get the unit role if object has a unit reference
+      if unit_role.nil? && object.respond_to?(:unit)
+        unit_role = object.unit.unit_role_for(user)
+      end
 
-    if !unit_role.nil? && unit_role.observer_only && !OBSERVER_ONLY_PERMISSIONS.include?(action)
-      return false
+      return false if !unit_role.nil? && unit_role.observer_only
     end
 
     role = role_obj.to_sym

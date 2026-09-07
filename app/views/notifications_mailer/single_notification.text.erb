@@ -1,0 +1,9 @@
+Hi <%= @user.name %>,
+
+<%= @notification.message %>
+<% if @notification.link.present? -%>
+
+View it here: <%= @doubtfire_host %><%= @notification.link %>
+<% end -%>
+
+You can update your notification preferences at <%= @unsubscribe_url %>.

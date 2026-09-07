@@ -5,6 +5,7 @@ class LearningOutcomesApi < Grape::API
   helpers AuthorisationHelpers
   helpers MimeCheckHelpers
   helpers CsvHelper
+  helpers ContextModelHelpers
 
   before do
     authenticated?
@@ -26,8 +27,8 @@ class LearningOutcomesApi < Grape::API
   end
   post '/:context_type_plural/:context_id/outcomes' do
     # find context model dynamically
-    context_type = params[:context_type_plural].singularize.camelize
-    context_model = context_type.classify.constantize.find(params[:context_id])
+    context_type = context_type_for(params[:context_type_plural])
+    context_model = context_model_for(params[:context_type_plural], params[:context_id])
 
     unless authorise? current_user, context_model, :update
       error!({ error: 'You are not authorised to create outcomes in this context.' }, 403)
@@ -77,8 +78,7 @@ class LearningOutcomesApi < Grape::API
   end
   put '/:context_type_plural/:context_id/outcomes/:id' do
     # find context model dynamically
-    context_type = params[:context_type_plural].singularize.camelize
-    context_model = context_type.classify.constantize.find(params[:context_id])
+    context_model = context_model_for(params[:context_type_plural], params[:context_id])
 
     unless authorise? current_user, context_model, :update
       error!({ error: 'You are not authorised to update outcomes in this context.' }, 403)
@@ -130,8 +130,7 @@ class LearningOutcomesApi < Grape::API
   end
   delete '/:context_type_plural/:context_id/outcomes/:id' do
     # find context model dynamically
-    context_type = params[:context_type_plural].singularize.camelize
-    context_model = context_type.classify.constantize.find(params[:context_id])
+    context_model = context_model_for(params[:context_type_plural], params[:context_id])
 
     unless authorise? current_user, context_model, :update
       error!({ error: 'You are not authorised to delete outcomes in this context.' }, 403)
@@ -169,8 +168,7 @@ class LearningOutcomesApi < Grape::API
   get '/:context_type_plural/:context_id/outcomes/csv' do
     # find context model dynamically
     include_tlos = params[:includes_tlos] || false
-    context_type = params[:context_type_plural].singularize.camelize
-    context_model = context_type.classify.constantize.find(params[:context_id])
+    context_model = context_model_for(params[:context_type_plural], params[:context_id])
 
     unless authorise? current_user, context_model, :update
       error!({ error: 'You are not authorised to download outcomes for this context.' }, 403)
@@ -197,8 +195,7 @@ class LearningOutcomesApi < Grape::API
     ensure_csv!(params[:file][:tempfile])
 
     # find context model dynamically
-    context_type = params[:context_type_plural].singularize.camelize
-    context_model = context_type.classify.constantize.find(params[:context_id])
+    context_model = context_model_for(params[:context_type_plural], params[:context_id])
 
     unless authorise? current_user, context_model, :upload_csv
       error!({ error: 'Not authorised to upload CSV of outcomes' }, 403)

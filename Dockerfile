@@ -1,4 +1,4 @@
-FROM ruby:3.4-bookworm
+FROM ruby:3.4-bookworm AS dependencies
 
 # DEBIAN_FRONTEND=noninteractive is required to install tzdata in non interactive way
 ENV DEBIAN_FRONTEND=noninteractive
@@ -49,7 +49,17 @@ COPY docker-entrypoint.sh /usr/bin/
 RUN chmod +x /usr/bin/docker-entrypoint.sh
 ENTRYPOINT ["docker-entrypoint.sh"]
 
+# CI always bind-mounts the checked-out source over /doubtfire. Stop this stage
+# before the application copy so source-only changes do not invalidate or load
+# a layer that the test container immediately hides.
+FROM dependencies AS ci
+
+ENV RAILS_ENV=test
+CMD ["bash"]
+
 # Copy code locally to allow container to be used without the code volume
+FROM dependencies AS development
+
 COPY . .
 
 EXPOSE 3000

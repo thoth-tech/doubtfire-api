@@ -5,10 +5,9 @@ on:
     paths-ignore:
       - "*.md"
       - "docs/**"
-  pull_request:
-    paths-ignore:
-      - "*.md"
-      - "docs/**"
+  # This check is required by the repository ruleset, so it must report for
+  # every pull request, including documentation-only changes.
+  pull_request: {}
 
 permissions:
   contents: read
@@ -20,10 +19,10 @@ jobs:
       BUNDLE_WITHOUT: default doc job cable storage ujs test db
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Ruby 3.4
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: 3.4
           bundler-cache: true

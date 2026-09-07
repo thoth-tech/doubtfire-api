@@ -53,6 +53,16 @@ module Submission
         error!({ error: "This task requires a group submission. Ensure you are in a group for the unit's #{task_definition.group_set.name}" }, 403)
       end
 
+      # A finished task stops accepting new student uploads. Without this the
+      # upload lands, submission_date and file_uploaded_at are rewritten and the
+      # assessed pdf is deleted and regenerated, while only the status transition
+      # is skipped. Staff are still allowed through on purpose, because a tutor
+      # sometimes has to upload on a student's behalf when a file is corrupt or
+      # went to the wrong task.
+      if task.task_submission_closed? && !authorise?(current_user, project, :assess)
+        error!({ error: 'This task is closed for new submissions.' }, 403)
+      end
+
       # Check that prerequisite tasks are in the required minimum submitted state
       prerequisites = task_definition.task_prerequisites
       prerequisites.each do |prerequisite|

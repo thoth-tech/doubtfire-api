@@ -109,6 +109,38 @@ class D2lTest < ActiveSupport::TestCase
     assert_equal '54321', unit.d2l_assessment_mapping.org_unit_id
   end
 
+  # A unit with no mapping used to reach d2l.id on nil and answer 500. Both routes
+  # must now report 404 instead.
+  def test_delete_d2l_without_mapping_returns_404
+    unit = FactoryBot.create(:unit, with_students: false)
+    add_auth_header_for(user: unit.main_convenor_user)
+
+    delete "/api/units/#{unit.id}/d2l/1"
+    assert_equal 404, last_response.status, last_response.inspect
+    assert_nil unit.reload.d2l_assessment_mapping
+  end
+
+  def test_update_d2l_without_mapping_returns_404
+    unit = FactoryBot.create(:unit, with_students: false)
+    add_auth_header_for(user: unit.main_convenor_user)
+
+    put "/api/units/#{unit.id}/d2l/1", { org_unit_id: '54321' }
+    assert_equal 404, last_response.status, last_response.inspect
+    assert_nil unit.reload.d2l_assessment_mapping
+  end
+
+  def test_delete_d2l_with_mismatched_id_returns_404
+    unit = FactoryBot.create(:unit, with_students: false)
+    d2l = D2lAssessmentMapping.create(unit: unit, org_unit_id: '12345')
+    add_auth_header_for(user: unit.main_convenor_user)
+
+    initial_count = D2lAssessmentMapping.count
+
+    delete "/api/units/#{unit.id}/d2l/#{d2l.id + 1}"
+    assert_equal 404, last_response.status, last_response.inspect
+    assert_equal initial_count, D2lAssessmentMapping.count
+  end
+
   def test_can_login_to_d2l
     user = FactoryBot.create(:user, :convenor)
     add_auth_header_for(user: user)

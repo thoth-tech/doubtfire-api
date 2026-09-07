@@ -135,7 +135,7 @@ class TaskComment < ApplicationRecord
   end
 
   def remove_comment_read_entry(user)
-    CommentsReadReceipts.delete_all(user: user, task_comment: self)
+    CommentsReadReceipts.where(user: user, task_comment: self).delete_all
   end
 
   def mark_as_read(user, unit = self.unit)

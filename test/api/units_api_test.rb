@@ -488,6 +488,74 @@ class UnitsApiTest < ActiveSupport::TestCase
     assert_equal 404, last_response.status
   end
 
+  def test_main_convenor_can_enable_peer_progress
+    unit = FactoryBot.create(
+      :unit,
+      with_students: false,
+      task_count: 0
+    )
+
+    add_auth_header_for(user: unit.main_convenor_user)
+
+    put_json(
+      "/api/units/#{unit.id}",
+      {
+        unit: {
+          peer_progress_enabled: true
+        }
+      }
+    )
+
+    assert_equal 200, last_response.status, last_response_body
+    assert unit.reload.peer_progress_enabled?
+    assert_equal true, last_response_body['peer_progress_enabled']
+  end
+
+  def test_student_cannot_enable_peer_progress
+  unit = FactoryBot.create(
+    :unit,
+    with_students: false,
+    task_count: 0,
+    tutorials: 1
+  )
+
+  student = FactoryBot.create(:user, :student)
+    unit.enrol_student(
+      student,
+      unit.tutorials.first.campus
+    )
+
+    add_auth_header_for(user: student)
+
+    put_json(
+      "/api/units/#{unit.id}",
+      {
+        unit: {
+          peer_progress_enabled: true
+        }
+      }
+    )
+
+    assert_equal 403, last_response.status
+    assert_not unit.reload.peer_progress_enabled?
+  end
+
+  def test_unit_details_expose_peer_progress_setting_to_the_convenor
+    unit = FactoryBot.create(
+      :unit,
+      with_students: false,
+      task_count: 0,
+      peer_progress_enabled: true
+    )
+
+    add_auth_header_for(user: unit.main_convenor_user)
+
+    get "/api/units/#{unit.id}"
+
+    assert_equal 200, last_response.status
+    assert_equal true, last_response_body['peer_progress_enabled']
+  end
+
   # Test can update unit start and end dates
   def test_put_update_unit_dates
     # Add username and auth_token to Header

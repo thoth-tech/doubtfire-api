@@ -11,6 +11,10 @@ class ErrorLogMailer < ApplicationMailer
     backtrace = exception.backtrace&.join("\n") || 'No backtrace available'
     @error_log = "#{message}\n\n#{exception.message}\n\n#{backtrace}"
 
-    mail(to: email, from: email, subject: "#{@doubtfire_product_name} Error Log - #{subject}")
+    mail(
+      { to: email, subject: "#{@doubtfire_product_name} Error Log - #{subject}" }.merge(
+        outbound_sender_headers(development_from: email)
+      )
+    )
   end
 end

@@ -15,6 +15,10 @@ class D2lResultMailer < ApplicationMailer
       attachments['result.csv'] = File.read(path)
     end
 
-    mail(to: email, from: email, subject: "#{@doubtfire_product_name} #{unit.code} - D2L Grade Transfer Result")
+    mail(
+      { to: email, subject: "#{@doubtfire_product_name} #{unit.code} - D2L Grade Transfer Result" }.merge(
+        outbound_sender_headers(development_from: email)
+      )
+    )
   end
 end

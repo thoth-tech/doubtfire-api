@@ -36,8 +36,8 @@ class TaskCommentsApi < Grape::API
     end
 
     if attached_file.present?
-      error!({ error: "Attachment is empty." }) if File.size?(attached_file["tempfile"].path).blank?
-      error!({ error: "Attachment exceeds the maximum attachment size of 30MB." }) unless File.size?(attached_file["tempfile"].path) < 30_000_000
+      error!({ error: "Attachment is empty." }, 400) if File.size?(attached_file["tempfile"].path).blank?
+      error!({ error: "Attachment exceeds the maximum attachment size of 30MB." }, 413) unless File.size?(attached_file["tempfile"].path) < 30_000_000
     end
 
     type_string = content_type.to_s
@@ -48,7 +48,7 @@ class TaskCommentsApi < Grape::API
       error!(error: 'Original comment is not in this task.') if task.all_comments.find(reply_to_id).blank?
     end
 
-    logger.info("#{current_user.username} - added comment for task #{task.id} (#{task_definition.abbreviation})")
+    logger.info("user_id=#{current_user.id} added comment for task #{task.id} (#{task_definition.abbreviation})")
 
     if attached_file.blank?
       error!({ error: 'Comment text is empty, unable to add new comment' }, 403) if text_comment.blank?
@@ -93,7 +93,10 @@ class TaskCommentsApi < Grape::API
     if project.has_task_for_task_definition? task_definition
       task = project.task_for_task_definition(task_definition)
 
-      comment = task.comments.find(params[:id])
+      # all_comments spans the group's shared submission, so a group member can open
+      # an attachment posted by another member. It stays bounded by this caller's own
+      # project via the :get check above, matching the delete and update endpoints.
+      comment = task.all_comments.find(params[:id])
 
       error!({ error: 'No attachment for this comment.' }, 404) unless %w(audio image pdf).include? comment.content_type
 
@@ -265,7 +268,9 @@ class TaskCommentsApi < Grape::API
 
     task = project.task_for_task_definition(task_definition)
 
-    task_comment = task.comments.find(params[:id])
+    # Group task feedback is shared across every task in the same group
+    # submission, matching the collection returned by the comments endpoint.
+    task_comment = task.all_comments.find(params[:id])
     task_comment.mark_as_unread(current_user)
 
     SessionTracker.record_assessment_activity(

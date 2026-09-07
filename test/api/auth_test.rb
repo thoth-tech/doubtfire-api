@@ -9,6 +9,19 @@ class AuthTest < ActiveSupport::TestCase
     Rails.application
   end
 
+  setup do
+    Rack::Attack.reset!
+  end
+
+  def post_failed_auth(username:, ip:)
+    post(
+      '/api/auth.json',
+      { username: username, password: 'definitely-wrong-password' }.to_json,
+      'CONTENT_TYPE' => 'application/json',
+      'REMOTE_ADDR' => ip
+    )
+  end
+
   # --------------------------------------------------------------------------- #
   # --- Endpoint testing for:
   # ------- /api/auth.json
@@ -19,6 +32,9 @@ class AuthTest < ActiveSupport::TestCase
 
   # Test POST for new authentication token
   def test_auth_post
+    expected_auth = User.first
+    expected_auth.update!(theme_preference: 'dark')
+
     data_to_post = {
       username: 'aadmin',
       password: 'password',
@@ -27,7 +43,6 @@ class AuthTest < ActiveSupport::TestCase
     # Get response back for logging in with username 'aadmin' password 'password'
     post_json '/api/auth.json', data_to_post
     actual_auth = last_response_body
-    expected_auth = User.first
 
     # Check that response contains a user.
     assert actual_auth.key?('user'), 'Expect response to have a user'
@@ -37,10 +52,13 @@ class AuthTest < ActiveSupport::TestCase
 
     # Check that the returned user has the required details.
     # These match the model object... so can compare in loops
-    user_keys = %w[id email first_name last_name username nickname receive_task_notifications receive_portfolio_notifications receive_feedback_notifications opt_in_to_research has_run_first_time_setup]
+    user_keys = %w[id email first_name last_name username nickname receive_task_notifications receive_portfolio_notifications receive_feedback_notifications display_peer_progress opt_in_to_research has_run_first_time_setup theme_preference]
 
     # Check the returned user matches the expected database value
     assert_json_matches_model(expected_auth, response_user_data, user_keys)
+    assert_in_delta expected_auth.theme_preference_updated_at.to_f,
+                    Time.iso8601(response_user_data['theme_preference_updated_at']).to_f,
+                    0.001
 
     # Check other values returned
     assert_equal expected_auth.role.name, response_user_data['system_role'], 'Roles match'
@@ -112,6 +130,40 @@ class AuthTest < ActiveSupport::TestCase
     refute actual_auth.key?('auth_token'), 'Auth token not expected if auth fails'
 
     assert actual_auth.key? 'error'
+  end
+
+  def test_repeated_failed_password_auth_is_rate_limited_by_ip
+    travel_to Time.zone.parse('2026-08-27 03:00:30 UTC') do
+      6.times do |attempt|
+        post_failed_auth(
+          username: "missing-user-#{attempt}",
+          ip: '192.0.2.10'
+        )
+
+        assert_equal(attempt < 5 ? 401 : 429, last_response.status)
+      end
+
+      assert_equal '30', last_response.headers.fetch('retry-after')
+      assert_equal 'Too many authentication attempts. Please try again later.', last_response_body['error']
+    end
+  end
+
+  def test_repeated_failed_password_auth_is_rate_limited_by_normalized_json_username
+    username = User.first.username
+    username_variants = [username, username.upcase, " #{username}", "#{username} ", " #{username.upcase} "]
+
+    travel_to Time.zone.parse('2026-08-27 03:00:30 UTC') do
+      username_variants.each_with_index do |attempted_username, attempt|
+        post_failed_auth(username: attempted_username, ip: "198.51.100.#{attempt + 1}")
+        assert_equal 401, last_response.status
+      end
+
+      post_failed_auth(username: username, ip: '198.51.100.6')
+
+      assert_equal 429, last_response.status
+      assert_equal '30', last_response.headers.fetch('retry-after')
+      assert_equal 'Too many authentication attempts. Please try again later.', last_response_body['error']
+    end
   end
 
   # Test auth with empty request body
@@ -195,6 +247,7 @@ class AuthTest < ActiveSupport::TestCase
 
   def test_refresh_token
     user = FactoryBot.create(:user)
+    user.update!(theme_preference: 'dark')
     token = user.generate_authentication_token!(token_type: :refresh_token)
 
     count = user.auth_tokens.count
@@ -205,6 +258,10 @@ class AuthTest < ActiveSupport::TestCase
     post '/api/auth/access-token', { remember: true }
 
     assert_equal 201, last_response.status
+    assert_equal 'dark', last_response_body.dig('user', 'theme_preference')
+    assert_in_delta user.theme_preference_updated_at.to_f,
+                    Time.iso8601(last_response_body.dig('user', 'theme_preference_updated_at')).to_f,
+                    0.001
     assert_equal count + 1, user.auth_tokens.count
 
     new_token = user.auth_tokens.last

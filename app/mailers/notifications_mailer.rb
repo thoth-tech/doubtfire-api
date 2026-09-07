@@ -5,6 +5,45 @@ class NotificationsMailer < ApplicationMailer
     @unsubscribe_url = "#{@doubtfire_host}/edit_profile"
   end
 
+  # Sends a single in-system notification as an email. Called by
+  # NotificationEmailJob, which lets delivery failures reach Sidekiq so they can
+  # be retried without blocking the request that created the notification.
+  def single_notification(notification)
+    add_general
+
+    @notification = notification
+    @user = notification.user
+
+    # Use the deployment's SMTP-authorised sender, with a development-safe
+    # fallback for older installations that have not configured one yet.
+    from_address = Doubtfire::Application.config.institution[:email_sender].presence || 'noreply@doubtfire.local'
+
+    email_with_name = %("#{@user.name}" <#{@user.email}>)
+    subject = "#{@doubtfire_product_name}: New notification"
+
+    # An event may ship its own pair of templates named after it, for example
+    # task_comment_created.html.erb and task_comment_created.text.erb. Events
+    # without them fall back to the generic single_notification pair.
+    #
+    # This is why a new event ticket only ever adds files and never edits this
+    # method: eight event tickets can run in parallel without touching each
+    # other's work.
+    mail(
+      to: email_with_name,
+      subject: subject,
+      template_name: event_template_name(notification.event),
+      **outbound_sender_headers(development_from: from_address)
+    )
+  end
+
+  # The event's own template if it exists, otherwise the generic one.
+  def event_template_name(event)
+    return 'single_notification' if event.blank?
+    return 'single_notification' unless lookup_context.exists?(event, [self.class.mailer_name], false)
+
+    event
+  end
+
   def weekly_staff_summary(unit_role, summary_stats)
     return nil if unit_role.nil?
 
@@ -41,7 +80,11 @@ class NotificationsMailer < ApplicationMailer
     convenor_email = %("#{@convenor.name}" <#{@convenor.email}>)
     subject = "#{@unit.name}: Weekly Summary"
 
-    mail(to: email_with_name, from: convenor_email, subject: subject)
+    mail(
+      { to: email_with_name, subject: subject }.merge(
+        outbound_sender_headers(development_from: convenor_email, reply_to: convenor_email)
+      )
+    )
   end
 
   def weekly_student_summary(project, summary_stats, did_revert_to_pass)
@@ -77,7 +120,11 @@ class NotificationsMailer < ApplicationMailer
     tutor_email = %("#{@tutor.name}" <#{@tutor.email}>)
     subject = "#{project.unit.name}: Weekly Summary"
 
-    mail(to: email_with_name, from: tutor_email, subject: subject)
+    mail(
+      { to: email_with_name, subject: subject }.merge(
+        outbound_sender_headers(development_from: tutor_email, reply_to: tutor_email)
+      )
+    )
   end
 
   def top_task_desc(tt)

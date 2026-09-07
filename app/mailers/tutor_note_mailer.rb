@@ -21,7 +21,11 @@ class TutorNoteMailer < ApplicationMailer
     recipient_email_with_name = %("#{recipient.name}" <#{recipient.email}>)
     tutor_email = %("#{@from.name}" <#{@from.email}>)
     subject = "#{@unit.name}: New tutor note from #{@from.name}"
-    mail(to: recipient_email_with_name, from: tutor_email, subject: subject)
+    mail(
+      { to: recipient_email_with_name, subject: subject }.merge(
+        outbound_sender_headers(development_from: tutor_email, reply_to: tutor_email)
+      )
+    )
   end
 
 end
