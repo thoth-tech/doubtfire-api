@@ -1,11 +1,22 @@
+# frozen_string_literal: true
+
 require 'csv'
 require 'bcrypt'
 require 'json'
 require 'moss_ruby'
 require 'csv_helper'
 require 'grade_helper'
+require 'securerandom'
 
 class Unit < ApplicationRecord
+  DEFAULT_GRADE_DEFINITIONS = [
+    { 'id' => 'fail', 'value' => -1, 'label' => 'Fail', 'abbreviation' => 'F' },
+    { 'id' => 'pass', 'value' => 0, 'label' => 'Pass', 'abbreviation' => 'P' },
+    { 'id' => 'credit', 'value' => 1, 'label' => 'Credit', 'abbreviation' => 'C' },
+    { 'id' => 'distinction', 'value' => 2, 'label' => 'Distinction', 'abbreviation' => 'D' },
+    { 'id' => 'high-distinction', 'value' => 3, 'label' => 'High Distinction', 'abbreviation' => 'HD' }
+  ].freeze
+
   include ApplicationHelper
   include FileHelper
   include MimeCheckHelpers
@@ -28,7 +39,13 @@ class Unit < ApplicationRecord
       :download_stats,
       :download_unit_csv,
       :download_grades,
-      :exceed_capacity
+      :exceed_capacity,
+      :get_los,
+      :get_feedback_chips,
+      :download_jplag_report,
+      :get_marking_sessions,
+      :get_tutor_times,
+      :get_staff_notes
     ]
 
     # What can convenors do with units?
@@ -40,15 +57,31 @@ class Unit < ApplicationRecord
       :download_unit_csv,
       :update,
       :employ_staff,
+      :grant_spec_con,
       :add_tutorial,
       :add_task_def,
       :provide_feedback,
+      :provide_bulk_feedback,
       :change_project_enrolment,
       :download_stats,
+      :download_overflow_stats,
       :download_grades,
+      :download_jplag_report,
       :rollover_unit,
       :exceed_capacity,
-      :perform_overseer_assessment_test
+      :perform_overseer_assessment_test,
+      :get_los,
+      :create_feedback_chips,
+      :get_feedback_chips,
+      :get_tutor_times,
+      :get_tutor_times_summary,
+      :get_marking_sessions,
+      :upload_grades_csv,
+      :get_staff_notes,
+      :capture_task_completion_snapshot,
+      :run_similarity_scan,
+      :mannage_communications,
+      :delete_engagement
     ]
 
     # What can admin do with units?
@@ -64,9 +97,20 @@ class Unit < ApplicationRecord
       :add_tutorial,
       :add_task_def,
       :download_stats,
+      :download_overflow_stats,
       :download_unit_csv,
       :download_grades,
-      :exceed_capacity
+      :exceed_capacity,
+      :get_los,
+      :create_feedback_chips,
+      :get_feedback_chips,
+      :grant_spec_con,
+      :download_jplag_report,
+      :get_marking_sessions,
+      :get_staff_notes,
+      :get_tutor_times,
+      :run_similarity_scan,
+      :mannage_communications,
     ]
 
     # What can auditors do with units?
@@ -74,6 +118,7 @@ class Unit < ApplicationRecord
       :get_unit,
       :get_students,
       :download_stats,
+      :get_feedback_chips
     ]
 
     # What can other users do with units?
@@ -98,7 +143,7 @@ class Unit < ApplicationRecord
     elsif active_projects.where('projects.user_id=:id', id: user.id).count == 1
       Role.student
     elsif user.has_auditor_capability? &&
-          start_date >= Date.today - Doubtfire::Application.config.auditor_unit_access_years &&
+          start_date >= Time.zone.today - Doubtfire::Application.config.auditor_unit_access_years &&
           end_date < DateTime.now
       Role.auditor
     elsif user.has_admin_capability?
@@ -111,36 +156,43 @@ class Unit < ApplicationRecord
   # Ensure before destroy is above relations - as this needs to clear main convenor before unit roles are deleted
   before_destroy do
     update(main_convenor_id: nil)
-    delete_associated_files
   end
 
+  after_destroy :delete_associated_files
+
+  after_update :move_files_on_code_change, if: :saved_change_to_code?
   after_update :propogate_date_changes_to_tasks, if: :saved_change_to_start_date?
+  after_update :update_overdue_tasks_aip, if: :saved_change_to_mark_late_submissions_as_assess_in_portfolio?
+  after_update :refresh_communication_schedule_caches, if: :saved_change_to_communication_schedule_inputs?
 
   # Model associations.
   # When a Unit is destroyed, any TaskDefinitions, Tutorials, and ProjectConvenor instances will also be destroyed.
-  has_many :projects, dependent: :destroy # projects first to remove tasks
-  has_many :active_projects, -> { where enrolled: true }, class_name: 'Project'
-  has_many :group_sets, dependent: :destroy # group sets next to remove groups
-  has_many :task_definitions, -> { order 'start_date ASC, abbreviation ASC' }, dependent: :destroy
-  has_many :tutorials, dependent: :destroy # tutorials need groups and tasks deleted before it...
-  has_many :tutorial_streams, dependent: :destroy
-  has_many :unit_roles, dependent: :destroy
-  has_many :learning_outcomes, dependent: :destroy
-  has_many :comments, through: :projects
+  has_many :projects, dependent: :destroy, inverse_of: :unit # projects first to remove tasks
+  has_many :group_sets, dependent: :destroy, inverse_of: :unit # group sets next to remove groups
+  has_many :task_definitions, dependent: :destroy, inverse_of: :unit
+  has_many :tutorials, dependent: :destroy, inverse_of: :unit # tutorials need groups and tasks deleted before it...
+  has_many :tutorial_streams, dependent: :destroy, inverse_of: :unit
+  has_many :unit_roles, dependent: :destroy, inverse_of: :unit
+  has_many :learning_outcomes, as: :context, dependent: :destroy # inverse_of: :unit
+  has_many :marking_sessions, dependent: :destroy
+  has_many :task_completion_snapshots, dependent: :destroy, inverse_of: :unit
+  has_many :peer_progress_snapshots, dependent: :destroy, inverse_of: :unit
+  has_many :communication_sets, class_name: 'CommunicationSet', dependent: :destroy
+  has_many :communication_rules, through: :communication_sets, class_name: 'CommunicationRule'
+  has_many :communication_set_schedules, through: :communication_sets, class_name: 'CommunicationSetSchedule'
 
+  has_many :comments, through: :projects
   has_many :tasks, through: :projects
   has_many :groups, through: :group_sets
   has_many :tutorial_enrolments, through: :tutorials
   has_many :group_memberships, through: :groups
   has_many :teaching_staff, through: :unit_roles, class_name: 'User', source: 'user'
-  has_many :learning_outcome_task_links, through: :task_definitions
   has_many :task_engagements, through: :projects
   has_many :tii_submissions, through: :tasks
   has_many :tii_group_attachments, through: :task_definitions
   has_many :campuses, through: :tutorials
 
-  has_many :convenors, -> { joins(:role).where('roles.name = :role', role: 'Convenor') }, class_name: 'UnitRole'
-  has_many :staff, ->     { joins(:role).where('roles.name = :role_convenor or roles.name = :role_tutor', role_convenor: 'Convenor', role_tutor: 'Tutor') }, class_name: 'UnitRole'
+  has_one :d2l_assessment_mapping, dependent: :destroy
 
   # Unit has a teaching period
   belongs_to :teaching_period, optional: true
@@ -161,13 +213,25 @@ class Unit < ApplicationRecord
   validates :code, uniqueness: { scope: :teaching_period, message: "%{value} already exists in this teaching period" }, if: :has_teaching_period?
   validates :extension_weeks_on_resubmit_request, :numericality => { :greater_than_or_equal_to => 0 }
 
+  validates :feedback_warning_threshold_days,
+            numericality: { greater_than_or_equal_to: 0 }
+
+  validates :feedback_overflow_threshold_days,
+            numericality: { greater_than_or_equal_to: 0 }
+
+  validate :warning_not_greater_than_overflow
+
   validate :validate_end_date_after_start_date
   validate :ensure_teaching_period_dates_match, if: :has_teaching_period?
 
-  validate :ensure_main_convenor_is_appropriate
+  validate :ensure_main_convenor_is_appropriate, if: :main_convenor_id_changed?
 
   # Portfolio autogen date validations, must be after start date and before or equal to end date
   validate :autogen_date_within_unit_active_period, if: -> { start_date_changed? || end_date_changed? || teaching_period_id_changed? || portfolio_auto_generation_date_changed? }
+
+  validate :cant_disable_aip_only_if_aip_tasks_exist
+  validate :grade_definitions_are_valid
+  validate :configured_grades_preserve_used_values, if: :will_save_change_to_grade_values?
 
   scope :current,               -> { current_for_date(Time.zone.now) }
   scope :current_for_date,      ->(date) { where('start_date <= ? AND end_date >= ?', date, date) }
@@ -177,10 +241,54 @@ class Unit < ApplicationRecord
   scope :set_inactive,          -> { where('active = ?', false) }
 
   include UnitTiiModule
+
   include UnitSimilarityModule
+
+  validate :warning_not_greater_than_overflow
+
+  def warning_not_greater_than_overflow
+    return if feedback_warning_threshold_days <= feedback_overflow_threshold_days
+
+    errors.add(
+      :feedback_warning_threshold_days,
+      'must be less than or equal to the overflow threshold'
+    )
+  end
 
   def detailed_name
     "#{name} #{teaching_period.present? ? teaching_period.detailed_name : start_date.strftime('%Y-%m-%d')}"
+  end
+
+  def active_projects
+    projects.where(enrolled: true)
+  end
+
+  def refresh_communication_schedule_caches
+    communication_set_schedules.find_each(&:refresh_next_run_at!)
+  end
+
+  def saved_change_to_communication_schedule_inputs?
+    saved_change_to_active? || saved_change_to_start_date? || saved_change_to_end_date?
+  end
+
+  def ordered_task_definitions
+    return task_definitions.order('start_date ASC, abbreviation ASC') unless task_definitions.loaded?
+
+    task_definitions.sort_by do |task_definition|
+      [
+        task_definition.start_date.nil? ? 0 : 1,
+        task_definition.start_date,
+        task_definition.abbreviation.to_s
+      ]
+    end
+  end
+
+  def convenors
+    unit_roles.where(role_id: Role.convenor_id)
+  end
+
+  def staff
+    unit_roles.where(role_id: [Role.convenor_id, Role.tutor_id])
   end
 
   def docker_image_name_tag
@@ -218,9 +326,9 @@ class Unit < ApplicationRecord
 
   def teaching_period=(tp)
     if tp.present?
-      write_attribute(:start_date, tp.start_date)
-      write_attribute(:end_date, tp.end_date)
-      write_attribute(:teaching_period_id, tp.id)
+      self[:start_date] = tp.start_date
+      self[:end_date] = tp.end_date
+      self[:teaching_period_id] = tp.id
     end
     super(tp)
   end
@@ -229,11 +337,59 @@ class Unit < ApplicationRecord
     self.teaching_period.present?
   end
 
+  def grade_values
+    grade_definitions.filter_map { |definition| definition['value'] unless definition['value'] == -1 }
+  end
+
+  def grade_definitions
+    normalize_grade_definitions(self[:grade_values])
+  end
+
+  def grade_value?(value)
+    grade_values.include?(value.to_i)
+  end
+
+  def assessment_grade_value?(value)
+    grade_definitions.any? { |definition| definition['value'] == value.to_i }
+  end
+
+  def grade_definition(value)
+    return nil if value.nil?
+
+    grade_definitions.find { |definition| definition['value'] == value.to_i }
+  end
+
+  def grade_label(value)
+    grade_definition(value)&.fetch('label', nil) || GradeHelper.grade_for(value)
+  end
+
+  def grade_abbreviation(value)
+    grade_definition(value)&.fetch('abbreviation', nil) || GradeHelper.short_grade_for(value)
+  end
+
+  def grade_definitions=(definitions)
+    normalized = normalize_grade_definitions(definitions, sort: false)
+    fail_definition = normalized.find { |definition| definition['value'] == -1 }
+    target_definitions = normalized.reject { |definition| definition['value'] == -1 }
+
+    fail_definition['value'] = -1
+    target_definitions.each_with_index { |definition, index| definition['value'] = index }
+    self[:grade_values] = grade_values_for_column([fail_definition, *target_definitions])
+  end
+
+  def grade_values_for_column(definitions)
+    if self.class.type_for_attribute('grade_values').is_a?(ActiveRecord::Type::Json)
+      definitions
+    else
+      definitions.to_json
+    end
+  end
+
   def ensure_teaching_period_dates_match
-    if read_attribute(:start_date) != teaching_period.start_date
+    if self[:start_date] != teaching_period.start_date
       errors.add(:start_date, "should match teaching period date")
     end
-    if read_attribute(:end_date) != teaching_period.end_date
+    if self[:end_date] != teaching_period.end_date
       errors.add(:end_date, "should match teaching period date")
     end
   end
@@ -243,7 +399,91 @@ class Unit < ApplicationRecord
 
     errors.add(:main_convenor, "must be a staff member from unit") unless id == main_convenor.unit_id
     errors.add(:main_convenor, "must be configured to administer unit") unless main_convenor.is_convenor?
+    errors.add(:main_convenor, "cannot be observer only") if main_convenor.observer_only?
     errors.add(:main_convenor, "must be capable of administering units - ensure user has appropriate permissions (contact admin staff to update)") unless main_convenor_user.has_convenor_capability?
+  end
+
+  def cant_disable_aip_only_if_aip_tasks_exist
+    return unless will_save_change_to_mark_late_submissions_as_assess_in_portfolio?
+    return if mark_late_submissions_as_assess_in_portfolio? # only care about disabling
+
+    if tasks.where(task_status_id: TaskStatus.assess_in_portfolio.id).exists?
+      errors.add(:mark_late_submissions_as_assess_in_portfolio, "cannot be disabled while tasks are in the Assess in Portfolio state")
+    end
+  end
+
+  def grade_definitions_are_valid
+    definitions = grade_definitions
+    values = definitions.map { |definition| definition['value'] }
+    target_values = values.reject { |value| value == -1 }
+
+    errors.add(:grade_definitions, 'must include a failure grade and at least one target grade') if definitions.length < 2
+    errors.add(:grade_definitions, 'must include index -1 exactly once') unless values.count(-1) == 1
+    errors.add(:grade_definitions, 'target grade indexes must be unique non-negative integers') unless target_values.all? { |value| value >= 0 } && target_values.uniq.length == target_values.length
+    errors.add(:grade_definitions, 'must use unique identifiers') unless definitions.map { |definition| definition['id'] }.uniq.length == definitions.length
+    errors.add(:grade_definitions, 'must use unique labels') unless definitions.map { |definition| definition['label'].downcase }.uniq.length == definitions.length
+    errors.add(:grade_definitions, 'must use unique abbreviations') unless definitions.map { |definition| definition['abbreviation'].downcase }.uniq.length == definitions.length
+
+    definitions.each do |definition|
+      errors.add(:grade_definitions, 'labels must be present and no longer than 50 characters') unless definition['label'].present? && definition['label'].length <= 50
+      errors.add(:grade_definitions, 'abbreviations must be present and no longer than 10 characters') unless definition['abbreviation'].present? && definition['abbreviation'].length <= 10
+    end
+  end
+
+  def configured_grades_preserve_used_values
+    used_values = task_definitions.distinct.pluck(:target_grade)
+    used_values |= projects.distinct.pluck(:target_grade, :submitted_grade).flatten.compact
+    used_values |= tasks.distinct.pluck(:grade).compact
+    used_values |= communication_rules.joins(:communication_conditions)
+                                      .pluck('communication_conditions.target_grade', 'communication_conditions.task_target_grade')
+                                      .flatten
+                                      .compact
+    used_values |= communication_rules.joins(:communication_actions)
+                                      .pluck('communication_actions.target_grade')
+                                      .compact
+    previous_definitions = normalize_grade_definitions(attribute_in_database('grade_values'))
+    current_by_id = grade_definitions.index_by { |definition| definition['id'] }
+
+    changed_values = used_values.select do |value|
+      previous_definition = previous_definitions.find { |definition| definition['value'] == value }
+      current_definition = current_by_id[previous_definition&.fetch('id', nil)]
+      current_definition.nil? || current_definition['value'] != value
+    end
+
+    errors.add(:grade_definitions, "cannot remove or reorder grades currently in use at indexes: #{changed_values.uniq.sort.join(', ')}") if changed_values.any?
+  end
+
+  def normalize_grade_definitions(raw_definitions, sort: true)
+    raw_definitions = DEFAULT_GRADE_DEFINITIONS if raw_definitions.blank?
+    raw_definitions = JSON.parse(raw_definitions) if raw_definitions.is_a?(String)
+
+    definitions = Array(raw_definitions).map do |definition|
+      definition = definition.to_h if definition.respond_to?(:to_h)
+      if definition.is_a?(Hash)
+        definition = definition.stringify_keys
+        {
+          'id' => definition['id'].presence || SecureRandom.uuid,
+          'value' => definition['value'].to_i,
+          'label' => definition['label'].to_s.strip,
+          'abbreviation' => definition['abbreviation'].to_s.strip.upcase
+        }
+      else
+        value = definition.to_i
+        default = DEFAULT_GRADE_DEFINITIONS.find { |item| item['value'] == value }
+        default&.dup || {
+          'id' => "grade-#{value}",
+          'value' => value,
+          'label' => "Grade #{value}",
+          'abbreviation' => "G#{value}"
+        }
+      end
+    end
+
+    unless definitions.any? { |definition| definition['value'] == -1 }
+      definitions.unshift(DEFAULT_GRADE_DEFINITIONS.first.dup)
+    end
+
+    sort ? definitions.sort_by { |definition| definition['value'] } : definitions
   end
 
   def validate_end_date_after_start_date
@@ -258,15 +498,22 @@ class Unit < ApplicationRecord
     end
   end
 
-  def rollover(teaching_period, start_date, end_date)
+  def rollover(teaching_period, start_date, end_date, new_code)
     new_unit = self.dup
+    copied_task_definitions = []
+
+    new_unit.code = new_code if new_code.present?
 
     if teaching_period.present?
       new_unit.teaching_period = teaching_period
     else
+      new_unit.teaching_period = nil
       new_unit.start_date = start_date
       new_unit.end_date = end_date
     end
+
+    # Clear archived
+    new_unit.archived = false
 
     if self.portfolio_auto_generation_date.present?
       # Update the portfolio auto generation date to be the same day of the week and week number as the old date
@@ -291,9 +538,28 @@ class Unit < ApplicationRecord
       new_unit.group_sets << group_set.dup
     end
 
+    # Old outcome to new outcome mapping
+    outcome_mapping = {}
+
+    # Duplicate unit learning outcomes - before task definitions as they are linked to them
+    learning_outcomes.each do |learning_outcome|
+      new_outcome = learning_outcome.dup
+      new_outcome.context = new_unit
+      new_outcome.save!
+      new_unit.learning_outcomes << new_outcome
+      outcome_mapping[learning_outcome] = new_outcome
+    end
+
     # Duplicate task definitions
     task_definitions.each do |td|
       new_td = td.copy_to(new_unit)
+      copied_task_definitions << new_td
+
+      td.learning_outcomes.each do |learning_outcome| # for each old task definition, duplicate the learning outcomes associated with it aswell
+        new_outcome = learning_outcome.dup
+        new_td.learning_outcomes << new_outcome
+        outcome_mapping[learning_outcome] = new_outcome
+      end
 
       # Update default task definition if necessary
       if self.draft_task_definition == td
@@ -301,25 +567,66 @@ class Unit < ApplicationRecord
       end
     end
 
-    # Duplicate unit learning outcomes
-    learning_outcomes.each do |learning_outcome|
-      new_unit.learning_outcomes << learning_outcome.dup
+    task_definitions.each do |td|
+      new_td = new_unit.task_definitions.find_by(abbreviation: td.abbreviation)
+      # Duplicate task prerequisites
+      td.task_prerequisites.each do |prereq|
+        new_prerequisite_td = new_unit.task_definitions.find_by(abbreviation: prereq.prerequisite.abbreviation)
+        TaskPrerequisite.create!(
+          task_definition: new_td,
+          prerequisite: new_prerequisite_td,
+          task_status_id: prereq.task_status_id
+        )
+      end
+
+      # Duplicate discussion prompts
+      td.discussion_prompts.each do |prompt|
+        DiscussionPrompt.create!({
+          task_definition: new_td,
+          content: prompt.content,
+          priority: prompt.priority
+        })
+      end
     end
 
-    # Duplicate alignments
-    task_outcome_alignments.each do |align|
-      align.duplicate_to(new_unit)
+    # Link outcomes
+    outcome_mapping.each do |old_outcome, new_outcome|
+      old_outcome.linked_outcomes.each do |old_linked_outcome|
+        new_target = outcome_mapping[old_linked_outcome] || old_linked_outcome
+
+        if new_outcome.present? && new_target.present?
+          LearningOutcomeLink.create!(source_id: new_outcome.id, target_id: new_target.id)
+        end
+      end
     end
+
+    communication_sets.each do |communication_set|
+      communication_set.copy_to(new_unit)
+    end
+
+    # Now duplicate all feedback chips
+    chip_mapping = {}
+
+    outcome_mapping.each do |source_outcome, new_outcome|
+      source_outcome.feedback_chips.each do |chip|
+        new_chip = chip.dup
+        new_outcome.feedback_chips << new_chip
+        new_chip.learning_outcome_id = new_outcome.id
+        new_chip.parent_chip_id = nil
+        new_chip.save!
+        chip_mapping[chip] = new_chip
+      end
+
+      source_outcome.feedback_chips.where.not(parent_chip_id: nil).find_each do |old_chip|
+        child_chip = chip_mapping[old_chip]
+        parent_chip = chip_mapping[old_chip.parent_chip]
+        child_chip.update(parent_chip_id: parent_chip.id)
+      end
+    end
+
+    NewTaskAvailableNotificationJob.track_and_enqueue_all(copied_task_definitions)
 
     new_unit
-  end
-
-  def ordered_ilos
-    learning_outcomes.order(:ilo_number)
-  end
-
-  def task_outcome_alignments
-    learning_outcome_task_links.where('task_id is NULL')
   end
 
   def student_tasks
@@ -331,7 +638,7 @@ class Unit < ApplicationRecord
       Unit.all
     elsif user.has_auditor_capability?
       # Limit range of units that the auditor has access to
-      earliest_unit_start_date = Date.today - Doubtfire::Application.config.auditor_unit_access_years
+      earliest_unit_start_date = Time.zone.today - Doubtfire::Application.config.auditor_unit_access_years
       Unit.all.where('start_date >= :earliest_unit_start_date AND end_date < :today', earliest_unit_start_date: earliest_unit_start_date, today: DateTime.now)
     else
       Unit.joins(:unit_roles).where('unit_roles.user_id = :user_id AND unit_roles.role_id = :convenor_role', user_id: user.id, convenor_role: Role.convenor.id)
@@ -343,7 +650,7 @@ class Unit < ApplicationRecord
 
     unit.name         = 'New Unit'
     unit.description  = 'Enter a description for this unit.'
-    unit.start_date   = Date.today
+    unit.start_date   = Time.zone.today
     unit.end_date     = 13.weeks.from_now
 
     unit
@@ -356,9 +663,7 @@ class Unit < ApplicationRecord
     User.teaching(self)
   end
 
-  def main_convenor_user
-    main_convenor.user
-  end
+  delegate :user, to: :main_convenor, prefix: true
 
   def students
     projects
@@ -373,6 +678,7 @@ class Unit < ApplicationRecord
         .joins('LEFT OUTER JOIN tutorial_enrolments ON tutorial_enrolments.project_id = projects.id')
         .joins('LEFT OUTER JOIN tutorials ON tutorials.id = tutorial_enrolments.tutorial_id')
         .joins('LEFT OUTER JOIN tutorial_streams ON tutorials.tutorial_stream_id = tutorial_streams.id')
+        .joins('LEFT OUTER JOIN staff_notes ON staff_notes.project_id = projects.id')
         .group(
           'projects.id',
           'projects.target_grade',
@@ -389,12 +695,14 @@ class Unit < ApplicationRecord
           'projects.compile_portfolio',
           'projects.grade',
           'projects.grade_rationale',
+          'projects.spec_con_days',
         )
         .select(
           'projects.id AS project_id',
           'projects.enrolled AS enrolled',
           'projects.task_stats AS task_stats',
           'projects.campus_id AS campus_id',
+          'projects.spec_con_days AS spec_con_days',
           'users.first_name AS first_name',
           'users.last_name AS last_name',
           'users.nickname AS nickname',
@@ -407,12 +715,15 @@ class Unit < ApplicationRecord
           'projects.compile_portfolio AS compile_portfolio',
           'projects.grade AS grade',
           'projects.grade_rationale AS grade_rationale',
+          'projects.spec_con_days AS spec_con_days',
           'projects.portfolio_production_date AS portfolio_production_date',
           'MAX(CASE WHEN task_similarities.flagged THEN task_similarities.pct ELSE 0 END) AS task_similarities_max_pct',
           # Get tutorial for each stream in unit
           *tutorial_streams.map { |s| "MAX(CASE WHEN tutorials.tutorial_stream_id = #{s.id} OR tutorials.tutorial_stream_id IS NULL THEN tutorials.id ELSE NULL END) AS tutorial_#{s.id}" },
           # Get tutorial for case when no stream
-          "MAX(CASE WHEN tutorial_streams.id IS NULL THEN tutorials.id ELSE NULL END) AS tutorial"
+          "MAX(CASE WHEN tutorial_streams.id IS NULL THEN tutorials.id ELSE NULL END) AS tutorial",
+          'COUNT(DISTINCT staff_notes.id) AS staff_note_count',
+          'projects.portfolio_submission_date as portfolio_submission_date'
         )
         .order('users.first_name')
 
@@ -446,6 +757,9 @@ class Unit < ApplicationRecord
         similarity_flag: t.task_similarities_max_pct > 0,
         has_portfolio: !t.portfolio_production_date.nil?,
         stats: map_stats.call(t),
+        staff_note_count: t.staff_note_count,
+        portfolio_submission_date: t.portfolio_submission_date,
+        spec_con_days: t.spec_con_days,
         tutorial_enrolments: tutorial_streams.map do |s|
           {
             stream_abbr: s.abbreviation,
@@ -494,6 +808,10 @@ class Unit < ApplicationRecord
     end
   end
 
+  def unit_role_for(user)
+    unit_roles.find_by(user: user)
+  end
+
   # Adds a user to this project.
   def enrol_student(user, campus)
     # Validates that a student is not already assigned to the unit
@@ -538,12 +856,93 @@ class Unit < ApplicationRecord
     result
   end
 
+  def import_grades_from_csv(file, assessor_id, progress_callback: nil)
+    success = []
+    errors = []
+    ignored = []
+
+    assessor = User.find(assessor_id)
+
+    csv = CSV.new(File.read(file), headers: true,
+                                   header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip unless hdr.nil? }],
+                                   converters: [->(i) { i.nil? ? '' : i }, ->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }])
+    # Read the header row to determine what kind of file it is
+    if csv.header_row?
+      csv.shift
+    else
+      errors << { row: [], message: "Header row missing" }
+      return
+    end
+
+    total_rows = csv.read.size
+    progress_callback.call(message: "Parsing CSV", rows_processed: 0, total_rows: total_rows) if progress_callback
+
+
+    row_count = 0
+    # Loop over csv rows converting to hash values
+    CSV.foreach(file, headers: true,
+                      header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip unless hdr.nil? }],
+                      converters: [->(i) { i.nil? ? '' : i }, ->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }]) do |row|
+      begin
+        row_count += 1
+        progress_callback.call(message: "Importing grades", rows_processed: row_count, total_rows: total_rows) if progress_callback
+
+        missing = missing_headers(row, %w(unit_code username student_id rationale))
+        if missing.count > 0
+          errors << { row: row, message: "Missing headers: #{missing.join(', ')}" }
+          next
+        end
+
+        if self.code != row['unit_code']
+          ignored << { row: row, message: "Unit code is different" }
+          next
+        end
+
+        student = User.find_by(username: row['username'])
+
+        if student.nil?
+          errors << { row: row, message: "Could not find student" }
+          next
+        end
+
+        project = self.projects.find_by(user: student)
+
+        if project.nil?
+          errors << { row: row, message: "Student is not enrolled in unit" }
+          next
+        end
+
+        if project.grade == row['grade'].to_i && project.grade_rationale.to_s.strip == row['rationale'].to_s.strip
+          ignored << { row: row, message: "No change" }
+          next
+        end
+
+
+
+        project.update!(
+          grade: row['grade'],
+          grade_rationale: row['rationale'],
+          assessor: assessor
+        )
+
+        success << { row: row, message: "Grade updated: #{row['grade']}" }
+      rescue Exception => e
+          errors << { row: row, message: e.message }
+      end
+    end # for each csv row
+
+    {
+      success: success,
+      ignored: ignored,
+      errors: errors
+    }
+  end
   #
   # Imports users into a project from CSV file.
   # Format: Unit Code, Student ID,First Name, Surname, email, tutorial, campus
   # Expected columns: unit_code, username, first_name, last_name, email, tutorial, campus
   #
-  def import_users_from_csv(file)
+  def import_users_from_csv(file, progress_callback: nil)
     success = []
     errors = []
     ignored = []
@@ -556,8 +955,7 @@ class Unit < ApplicationRecord
 
     csv = CSV.new(File.read(file), headers: true,
                                    header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip unless hdr.nil? }],
-                                   converters: [->(i) { i.nil? ? '' : i }, ->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }])
-
+                                   converters: [->(i) { i.nil? ? '' : i }, ->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }])
     # Read the header row to determine what kind of file it is
     if csv.header_row?
       csv.shift
@@ -566,10 +964,20 @@ class Unit < ApplicationRecord
       return
     end
 
+    progress_callback.call(message: "Parsing CSV", rows_processed: 0) if progress_callback
+
     # Check if these headers should be processed by institution file or from DF format
+    # Asking "Who will convert the users to the right format?"
+    # If these are "institution formatted"? then use import settings from institution settings
+    # Which contain:
+    #  - function to check if row is missing header values
+    #  - function to convert row to hash in the required format
+    #  - booleans for replacing tutorial/campus if different
     if Doubtfire::Application.config.institution_settings.are_headers_institution_users? csv.headers
+      logger.debug 'Importing users using institution\'s import settings'
       import_settings = Doubtfire::Application.config.institution_settings.user_import_settings_for(csv.headers)
     else
+      logger.debug 'Importing users using default import settings'
       if tutorial_streams.count > 0
         stream_names = tutorial_stream_abbr.map { |abbr| abbr.downcase }
       else
@@ -577,14 +985,16 @@ class Unit < ApplicationRecord
       end
 
       # Settings include:
-      #   missing_headers_lambda - lambda to check if row is missing key data
-      #   fetch_row_data_lambda - lambda to convert row from csv to required import data
+      #   missing_headers_lambda - lambda to check if row is missing key data, so that students missing
+      #                            any of these header names does not get imported and the missing header
+      #                            is reported.
+      #   fetch_row_data_lambda - lambda to convert row from csv to required import data. Called for each
+      #                           row that has the required headers.
       #   replace_existing_tutorial - boolean to indicate if tutorials in csv override ones in doubtfire
       #   replace_existing_campus - boolean to indicate if campus in csv override ones in doubtfire
       import_settings = {
         missing_headers_lambda: ->(row) {
-          missing_headers(row, %w(unit_code username student_id first_name last_name email campus))
-          missing_headers(row, stream_names)
+          missing_headers(row, %w(unit_code username student_id first_name last_name email campus) + stream_names)
         },
         fetch_row_data_lambda: ->(row, unit) {
           tutorials = []
@@ -607,25 +1017,28 @@ class Unit < ApplicationRecord
           }
         },
         replace_existing_tutorial: true,
-        replace_existing_campus: true
+        replace_existing_campus: true,
+        merge_duplicate_students: false, # If true, will merge duplicate students into one entry, combining their tutorials
       }
     end
 
     student_list = []
 
+    row_count = 0
     # Loop over csv rows converting to hash values
     CSV.foreach(file, headers: true,
                       header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip unless hdr.nil? }],
-                      converters: [->(i) { i.nil? ? '' : i }, ->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }]) do |row|
+                      converters: [->(i) { i.nil? ? '' : i }, ->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }]) do |row|
       # Check data has headers
       missing = import_settings[:missing_headers_lambda].call(row)
       if missing.count > 0
         errors << { row: row, message: "Missing headers: #{missing.join(', ')}" }
         next
       end
-
+      row_count += 1
       begin
         # Convert to hash...
+        progress_callback.call(message: "Parsing CSV", total_rows: row_count) if progress_callback
         row_data = import_settings[:fetch_row_data_lambda].call(row, self)
         row_data[:row] = row
         # Store in list...
@@ -636,7 +1049,7 @@ class Unit < ApplicationRecord
     end # for each csv row
 
     # Now process the listt
-    sync_enrolment_with(student_list, import_settings, result)
+    sync_enrolment_with(student_list, import_settings, result, progress_callback: progress_callback)
   end
 
   # Sync the unit enrolment details eith the list of enrolment data. The enrolment data
@@ -659,9 +1072,10 @@ class Unit < ApplicationRecord
   #   fetch_row_data_lambda - lambda to convert row from csv to required import data
   #   replace_existing_tutorial - boolean to indicate if tutorials in csv override ones in doubtfire
   #   replace_existing_campus - boolean to indicate if campus in csv override ones in doubtfire
-  def sync_enrolment_with(enrolment_data, import_settings, result)
+  def sync_enrolment_with(enrolment_data, import_settings, result, progress_callback: nil)
+    progress_callback.call(message: "Validating CSV", rows_processed: 0) if progress_callback
+
     # Get lists for reporting results
-    success = result[:success]
     errors = result[:errors]
     ignored = result[:ignored]
 
@@ -673,7 +1087,7 @@ class Unit < ApplicationRecord
     enrolment_data.each do |row_data|
       begin
         if row_data[:username].nil?
-          ignored << { row: row, message: "Skipping row with missing username" }
+          ignored << { row: row_data[:row], message: "Skipping row with missing username" }
           next
         end
 
@@ -692,7 +1106,31 @@ class Unit < ApplicationRecord
         if changes.key? username
           if row_data[:enrolled] # they should be enrolled - record that... overriding anything else
             # record previous row as ignored
-            ignored << { row: changes[username][:row], message: "Skipping duplicate role - ensuring enrolled" }
+            ignored_entry = { row: changes[username][:row], message: 'Skipping duplicate role - ensuring enrolled.' }
+
+            # Allocate+ csv data may have duplicate student rows for each tutorial enrolment
+            if import_settings[:merge_duplicate_students]
+                # Init the tutorials array if nil
+                row_data[:tutorials] ||= []
+                changes[username][:tutorials] ||= []
+
+                # Combine the tutorials from both rows so that the student is enrolled into each tutorial
+                row_data[:tutorials].concat(changes[username][:tutorials])
+
+                # Prefer values from previous row, but fallback to current row data if nil
+                row_data[:unit_code] = changes[username][:unit_code] || row_data[:unit_code]
+                row_data[:username] = changes[username][:username] || row_data[:username]
+                row_data[:student] = changes[username][:student] || row_data[:student]
+                row_data[:first] = changes[username][:first] || row_data[:first]
+                row_data[:last] = changes[username][:last] || row_data[:last]
+                row_data[:nickname] = changes[username][:nickname] || row_data[:nickname]
+                row_data[:email] = changes[username][:email] || row_data[:email]
+                row_data[:enrolled] = changes[username][:enrolled] || row_data[:enrolled]
+                row_data[:campus] = changes[username][:campus] || row_data[:campus]
+                ignored_entry[:message] += ' Merged duplicate student data.'
+            end
+
+            ignored << ignored_entry
             changes[username] = row_data
           else
             # record this row as skipped
@@ -706,7 +1144,7 @@ class Unit < ApplicationRecord
       end
     end # for each csv row
 
-    update_student_enrolments(changes, import_settings, result)
+    update_student_enrolments(changes, import_settings, result, progress_callback: progress_callback)
   end # csv import
 
   # Apply enrolment changes. The changes parameter should be:
@@ -729,7 +1167,7 @@ class Unit < ApplicationRecord
   # - :replace_existing_campus boolean
   #
   # Returns hash with :success, :ignored, :errors
-  def update_student_enrolments(changes, import_settings, result)
+  def update_student_enrolments(changes, import_settings, result, progress_callback: nil)
     tutorial_cache = {}
     # Get lists for reporting results
     success = result[:success]
@@ -737,7 +1175,8 @@ class Unit < ApplicationRecord
     ignored = result[:ignored]
 
     # now apply the changes...
-    changes.each_value do |row_data|
+    changes.each_value.with_index(1) do |row_data, row_count|
+      progress_callback&.call(message: "Importing students", total_rows: changes.count, rows_processed: row_count)
       begin
         row = row_data[:row]
         username = row_data[:username].downcase
@@ -762,33 +1201,13 @@ class Unit < ApplicationRecord
 
         # Perform withdraw if needed...
         unless row_data[:enrolled]
-          # Find the user
-          project_participant = User.where(username: username)
-
-          # If they dont exist... ignore
-          if project_participant.nil? || project_participant.count == 0
-            ignored << { row: row, message: "Ignoring student to withdraw, as not enrolled" }
-          else
-            # Get the user's project
-            user_project = projects.where(user_id: project_participant.first.id).first
-
-            # If no project... then not enrolled
-            if user_project.nil? || !user_project.enrolled
-              ignored << { row: row, message: "Ignoring student to withdraw, as not enrolled" }
-            else
-              # Withdraw...
-              user_project.enrolled = false
-              user_project.save
-              success << { row: row, message: "Student was withdrawn" }
-            end
-          end
-
+          withdraw_user(username, success, ignored)
           # Move to next row as this was a withdraw...
           next
         end
 
         # Find the campus
-        campus = campus_data.present? ? Campus.find_by_abbr_or_name(campus_data) : nil
+        campus = campus_data.present? ? Campus.find_by('abbreviation = :name OR name = :name', name: campus_data) : nil
         if campus_data.present? && campus.nil?
           errors << { row: row, message: "Unable to find campus (#{campus_data})" }
           next
@@ -815,13 +1234,14 @@ class Unit < ApplicationRecord
         #
         if project_participant.persisted?
           # Add in the student id if it was supplied...
-          if (project_participant.student_id.nil? || project_participant.student_id.empty? || project_participant.student_id != student_id) && student_id.present?
+          if (project_participant.student_id.blank? || project_participant.student_id != student_id) && student_id.present?
             project_participant.student_id = student_id
             project_participant.save!
           end
 
           # Clear success message...
-          success_message = ''
+          success_message = String.new('')
+          ignored_message = String.new('No change.')
 
           # Now find the project for the user
           user_project = projects.where(user_id: project_participant.id).first
@@ -830,7 +1250,7 @@ class Unit < ApplicationRecord
           if user_project.nil?
             # Enrol user...
             user_project = enrol_student(project_participant, campus)
-            success_message = 'Enrolled student'
+            success_message << 'Enrolled student.'
             new_project = true
           else
             new_project = false # We are updating existing project
@@ -858,20 +1278,24 @@ class Unit < ApplicationRecord
               tutorial = tutorial_cache[tutorial_code] || tutorial_with_abbr(tutorial_code)
               tutorial_cache[tutorial_code] ||= tutorial
 
-              if tutorial.present?
-                # Use tutorial as we have it :)
-                begin
+              next if tutorial.blank?
+
+              # Use tutorial as we have it :)
+              begin
+                unless user_project.enrolled_in?(tutorial)
                   user_project.enrol_in tutorial
                   success_message << ' Enrolled in ' << tutorial.abbreviation
-                rescue Exception => e
-                  success_message << " UNABLE TO enroll in #{tutorial.abbreviation} #{e.message}"
+                  next
                 end
+                ignored_message << ' No change to ' << tutorial.abbreviation
+              rescue Exception => e
+                errors << { row: row, message: "#{success_message} UNABLE TO enroll in #{tutorial.abbreviation} #{e.message}" }
               end
             end
           end
 
           if success_message.empty?
-            ignored << { row: row, message: 'No change.' }
+            ignored << { row: row, message: ignored_message }
           else
             success << { row: row, message: success_message }
           end
@@ -884,6 +1308,32 @@ class Unit < ApplicationRecord
     end
 
     result
+  end
+
+  def withdraw_user(username, result)
+    success = result[:success]
+    ignored = result[:ignored]
+
+    # Find the user
+    project_participant = User.where(username: username)
+
+    # If they dont exist... ignore
+    if project_participant.nil? || project_participant.count == 0
+      ignored << { row: row, message: "Ignoring student to withdraw, as not enrolled" }
+    else
+      # Get the user's project
+      user_project = projects.where(user_id: project_participant.first.id).first
+
+      # If no project... then not enrolled
+      if user_project.nil? || !user_project.enrolled
+        ignored << { row: row, message: "Ignoring student to withdraw, as not enrolled" }
+      else
+        # Withdraw...
+        user_project.enrolled = false
+        user_project.save
+        success << { row: row, message: "Student was withdrawn" }
+      end
+    end
   end
 
   # Use the values in the CSV to set the enrolment of these
@@ -901,7 +1351,7 @@ class Unit < ApplicationRecord
     CSV.parse(data,
               headers: true,
               header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip unless hdr.nil? }],
-              converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }]).each do |row|
+              converters: [->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }]).each do |row|
       # Make sure we're not looking at the header or an empty line
       next if row[0] =~ /(username)|(((unit)|(subject))_code)/
 
@@ -960,7 +1410,7 @@ class Unit < ApplicationRecord
     grp_sets = group_sets
 
     CSV.generate do |csv|
-      csv <<  (%w(unit_code campus username student_id preferred_name first_name last_name email) +
+      csv <<  (%w(unit_code campus username student_id preferred_name first_name last_name email spec_con_days) +
               (streams.count > 0 ? streams.map { |t| t.abbreviation } : ['tutorial']))
 
       active_projects
@@ -972,7 +1422,7 @@ class Unit < ApplicationRecord
           'LEFT OUTER JOIN tutorial_enrolments ON tutorial_enrolments.project_id = projects.id',
           'LEFT OUTER JOIN tutorials ON tutorial_enrolments.tutorial_id = tutorials.id'
         ).select(
-          'projects.id as project_id', 'users.student_id as student_id', 'users.username as username', 'users.first_name as first_name',
+          'projects.id as project_id', 'projects.spec_con_days as spec_con_days', 'users.student_id as student_id', 'users.username as username', 'users.first_name as first_name',
           'users.last_name as last_name', 'users.email as email', 'users.nickname as nickname', 'campuses.abbreviation as campus_abbreviation',
           # Get tutorial for each stream in unit
           *streams.map { |s| "MAX(CASE WHEN tutorials.tutorial_stream_id = #{s.id} OR tutorials.tutorial_stream_id IS NULL THEN tutorials.abbreviation ELSE NULL END) AS tutorial_#{s.id}" },
@@ -989,7 +1439,8 @@ class Unit < ApplicationRecord
             row['nickname'],
             row['first_name'],
             row['last_name'],
-            row['email']
+            row['email'],
+            row['spec_con_days']
           ] + [1].map do
                 if streams.empty?
                   [row['tutorial']]
@@ -1001,13 +1452,45 @@ class Unit < ApplicationRecord
     end
   end
 
-  def export_learning_outcome_to_csv
+  def export_learning_outcome_to_csv(include_tlos: false)
     CSV.generate do |row|
       row << LearningOutcome.csv_header
-      learning_outcomes.each do |outcome|
+      unit_outcomes = learning_outcomes
+      task_outcomes = if include_tlos
+                        task_definitions.map(&:learning_outcomes).flatten
+                      else
+                        []
+                      end
+
+      all_outcomes = (unit_outcomes + task_outcomes).uniq
+
+      all_outcomes.each do |outcome|
         outcome.add_csv_row row
       end
     end
+  end
+
+  def export_feedback_chips_to_csv(include_tlos: false)
+    CSV.generate do |row|
+      row << Feedback::FeedbackChip.csv_header
+      unit_outcomes = learning_outcomes
+      task_outcomes = if include_tlos
+                        task_definitions.map(&:learning_outcomes).flatten
+                      else
+                        []
+                      end
+
+      all_outcomes = (unit_outcomes + task_outcomes).uniq
+      all_outcomes.each do |outcome|
+        outcome.feedback_chips.each do |chip|
+          chip.add_csv_row row
+        end
+      end
+    end
+  end
+
+  def export_title
+    code
   end
 
   def import_outcomes_from_csv(file)
@@ -1022,98 +1505,18 @@ class Unit < ApplicationRecord
     CSV.parse(data,
               headers: true,
               header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip unless hdr.nil? }],
-              converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }]).each do |row|
+              converters: [->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }]).each do |row|
       # Make sure we're not looking at the header or an empty line
       next if row[0] =~ /unit_code/
 
       begin
-        LearningOutcome.create_from_csv(self, row, result)
+        LearningOutcome.create_from_csv(self, nil, row, result)
       rescue Exception => e
         result[:errors] << { row: row, message: e.message.to_s }
       end
     end
 
     result
-  end
-
-  def export_task_alignment_to_csv
-    LearningOutcomeTaskLink.export_task_alignment_to_csv(self, self)
-  end
-
-  # Use the values in the CSV to setup task alignments
-  def import_task_alignment_from_csv(file, for_project)
-    success = []
-    errors = []
-    ignored = []
-
-    data = read_file_to_str(file)
-
-    CSV.parse(data,
-              headers: true,
-              header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip unless hdr.nil? }],
-              converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }]).each do |row|
-      # Make sure we're not looking at the header or an empty line
-      next if row[0] =~ /unit_code/
-
-      begin
-        unit_code = row['unit_code']
-
-        if unit_code != code
-          ignored << { row: row, message: "Invalid unit code. #{unit_code} does not match #{code}" }
-          next
-        end
-
-        outcome_abbr = row['learning_outcome']
-        outcome = learning_outcomes.where('abbreviation = :abbr', abbr: outcome_abbr).first
-
-        if outcome.nil?
-          errors << { row: row, message: "Unable to locate learning outcome with abbreviation #{outcome_abbr}" }
-          next
-        end
-
-        task_def_abbr = row['task_abbr']
-        task_def = task_definitions.where('abbreviation = :abbr', abbr: task_def_abbr).first
-
-        if task_def.nil?
-          errors << { row: row, message: "Unable to locate task with abbreviation #{task_def_abbr}" }
-          next
-        end
-
-        rating = row['rating'].to_i
-        description = row['description']
-
-        if for_project.nil?
-          link = LearningOutcomeTaskLink.find_or_create_by(task_definition_id: task_def.id, learning_outcome_id: outcome.id, task_id: nil)
-        else
-          task = for_project.tasks.where('task_definition_id = :tdid', tdid: task_def.id).first
-
-          if task.nil?
-            errors << { row: row, message: "Unable to locate task related to #{task_def_abbr}" }
-            next
-          end
-          link = LearningOutcomeTaskLink.find_or_create_by(task_definition_id: task_def.id, learning_outcome_id: outcome.id, task_id: task.id)
-        end
-
-        link.rating = rating
-        link.description = description
-
-        link.save!
-
-        if link.new_record?
-          success << { row: row, message: "Link between task #{task_def.abbreviation} and outcome #{outcome.abbreviation} created for unit" }
-        else
-          success << { row: row, message: "Link between task #{task_def.abbreviation} and outcome #{outcome.abbreviation} updated for unit" }
-        end
-      rescue Exception => e
-        errors << { row: row, message: e.message.to_s }
-      end
-    end
-
-    {
-      success: success,
-      ignored: ignored,
-      errors: errors
-    }
   end
 
   # Import the actual groups from a csv - no students...
@@ -1129,7 +1532,7 @@ class Unit < ApplicationRecord
     CSV.parse(data,
               headers: true,
               header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip unless hdr.nil? }],
-              converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }]).each do |row|
+              converters: [->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }]).each do |row|
       next if row[0] =~ /^(group_name)|(name)/ # Skip header
 
       begin
@@ -1155,7 +1558,7 @@ class Unit < ApplicationRecord
           change += ' Created new tutorial.'
 
           campus_data = row['campus'].strip unless row['campus'].nil?
-          campus = Campus.find_by_abbr_or_name(campus_data)
+          campus = Campus.find_by('abbreviation = :name OR name = :name', name: campus_data)
 
           tutorial = add_tutorial(
             'Monday',
@@ -1204,7 +1607,7 @@ class Unit < ApplicationRecord
     CSV.parse(data,
               headers: true,
               header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip unless hdr.nil? }],
-              converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }]).each do |row|
+              converters: [->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }]).each do |row|
       next if row[0] =~ /^(group_name)|(name)/ # Skip header
 
       begin
@@ -1245,7 +1648,9 @@ class Unit < ApplicationRecord
           project.enrol_in(grp.tutorial)
         end
 
-        grp.add_member(project)
+        # Bulk imports can add many students in one request. Do not send a
+        # separate notification for every CSV row.
+        grp.add_member(project, notify: false)
 
         success << { row: row, message: "Added #{username} to #{grp.name}." }
       rescue Exception => e
@@ -1317,38 +1722,51 @@ class Unit < ApplicationRecord
       return nil if day_num.nil?
 
       start_day_num = start_date.wday
+      day_offset = day_num - start_day_num
+      day_offset += 7 if day_offset.negative?
 
-      start_date + week.weeks + (day_num - start_day_num).days
+      start_date + (week - 1).weeks + day_offset.days
     end
   end
 
   def week_number(date)
+    return nil if date.nil? || start_date.nil?
+
     if teaching_period.present?
       teaching_period.week_number(date)
     else
-      ((date - start_date) / 1.week).floor + 1
+      target_date = date.to_date
+      unit_start_date = start_date.to_date
+      ((target_date - unit_start_date).to_i / 7).floor + 1
     end
   end
 
-  def import_tasks_from_csv(file)
+  def import_tasks_from_csv(file, notify: true)
     success = []
     errors = []
     ignored = []
+    imported_task_definitions = []
 
     data = read_file_to_str(file)
+
+    prerequisites_by_task = {}
 
     CSV.parse(data,
               headers: true,
               header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip.tr(' ', '_').to_sym unless hdr.nil? }],
-              converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }]).each do |row|
-      next if row[0] =~ /^(Task Name)|(name)/ # Skip header
+              converters: [->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }]).each do |row|
+      next if ['Task Name', 'name'].include?(row[0].to_s.strip) # Skip header rows
 
       begin
-        missing = missing_headers(row, TaskDefinition.csv_columns)
+        missing = missing_headers(row, TaskDefinition.required_csv_columns)
         if missing.count > 0
           errors << { row: row, message: "Missing headers: #{missing.join(', ')}" }
           next
         end
+
+        existing_task_definition = task_definitions.find_by(abbreviation: row[:abbreviation]&.strip)
+        existing_task_definition ||= task_definitions.find_by(name: row[:name]&.strip)
+        existing_task_definition&.task_prerequisites&.destroy_all
 
         task_definition, new_task, message = TaskDefinition.task_def_for_csv_row(self, row)
 
@@ -1357,10 +1775,51 @@ class Unit < ApplicationRecord
           next
         end
 
+        prerequisites_by_task[task_definition.abbreviation] = JSON.parse(row[:task_prerequisites]) unless row[:task_prerequisites].nil?
+        imported_task_definitions << task_definition if new_task
+
         success << { row: row, message: message }
       rescue Exception => e
         errors << { row: row, message: e.message }
       end
+    end
+
+    # Parse task prerequisites once all task definitions have been imported
+    prerequisites_by_task.each do |task_abbreviation, prerequisites_list|
+      td = task_definitions.find_by(abbreviation: task_abbreviation)
+      next if td.nil?
+
+      begin
+        td.task_prerequisites.destroy_all
+
+        next if prerequisites_list.nil?
+        next if prerequisites_list.empty?
+        prerequisites_list.each do |prerequisite|
+          abbreviation = prerequisite['abbreviation']
+          prerequisite_td = task_definitions.find_by(abbreviation: abbreviation)
+          task_status_id = prerequisite['task_status_id'].to_i
+
+          if prerequisite_td.nil?
+            errors << {
+              row: "TaskDef '#{task_abbreviation}' prerequisites: #{prerequisites_list}",
+              message: "Unable to find prerequisite task definition with abbreviation #{abbreviation}."
+            }
+            next
+          end
+
+          TaskPrerequisite.create!({
+            task_definition_id: td.id,
+            prerequisite: prerequisite_td,
+            task_status_id: task_status_id
+          })
+        end
+      rescue Exception => e
+        errors << { row: "TaskDef '#{task_abbreviation}' prerequisites: #{prerequisites_list}", message: e.message }
+      end
+    end
+
+    if notify
+      NewTaskAvailableNotificationJob.track_and_enqueue_all(imported_task_definitions)
     end
 
     {
@@ -1383,23 +1842,161 @@ class Unit < ApplicationRecord
     tutorial_streams.map { |ts| ts.abbreviation }
   end
 
+  def times_tasks_have_been_assessed
+    CSV.generate() do |csv|
+      # Add headers
+      csv << [
+        'Tutorial',
+        'Tutor',
+        'Student Username',
+        'Student Name',
+        'Project ID',
+        'Task Definition',
+        'Task ID',
+        'complete',
+        'need_help',
+        'fix_and_resubmit',
+        'redo',
+        'discuss',
+        'demonstrate',
+        'ready_for_feedback',
+        'discussed_in_class'
+      ]
+
+      tasks
+      .joins("LEFT JOIN task_engagements ON task_engagements.task_id = tasks.id")
+      .joins(:task_definition)
+      .joins("INNER JOIN users ON users.id = projects.user_id")
+      .joins("LEFT OUTER JOIN (#{tutorial_enrolment_subquery}) as sq ON sq.project_id = projects.id AND (sq.tutorial_stream_id = task_definitions.tutorial_stream_id OR sq.tutorial_stream_id IS NULL)")
+      .joins("LEFT JOIN tutorials ON tutorials.id = sq.tutorial_id")
+      .joins("LEFT JOIN task_comments ON task_comments.task_id = tasks.id AND task_comments.content_type = 'discussed_in_class'")
+      .select(
+        "tutorials.abbreviation AS tutorial_abbreviation",
+        "tutorials.unit_role_id as unit_role_id",
+        "users.username AS username",
+        "users.first_name AS first_name",
+        "users.last_name AS last_name",
+        "tasks.project_id AS project_id",
+        "task_definitions.abbreviation AS task_abbr",
+        "tasks.id AS task_id",
+        "(SELECT COUNT(*) FROM task_engagements te WHERE te.task_id = tasks.id AND te.engagement = 'Complete') AS complete_count",
+        "(SELECT COUNT(*) FROM task_engagements te WHERE te.task_id = tasks.id AND te.engagement = 'Need Help') AS need_help_count",
+        "(SELECT COUNT(*) FROM task_engagements te WHERE te.task_id = tasks.id AND te.engagement = 'Fix and Resubmit') AS fix_and_resubmit_count",
+        "(SELECT COUNT(*) FROM task_engagements te WHERE te.task_id = tasks.id AND te.engagement = 'Redo') AS redo_count",
+        "(SELECT COUNT(*) FROM task_engagements te WHERE te.task_id = tasks.id AND te.engagement = 'Discuss') AS discuss_count",
+        "(SELECT COUNT(*) FROM task_engagements te WHERE te.task_id = tasks.id AND te.engagement = 'Demonstrate') AS demonstrate_count",
+        "(SELECT COUNT(*) FROM task_engagements te WHERE te.task_id = tasks.id AND te.engagement = 'Ready for Feedback') AS ready_for_feedback_count",
+        "(SELECT COUNT(*) FROM task_comments tc WHERE tc.task_id = tasks.id AND tc.content_type = 'discussed_in_class') AS discussed_in_class_count",
+      )
+      .group("tasks.id, task_definitions.abbreviation, tutorials.id, users.id")
+      .each do |row|
+        csv << [
+          row["tutorial_abbreviation"],
+          row["unit_role_id"].present? ? UnitRole.find(row["unit_role_id"]).user.name : "",
+          row["username"],
+          "#{row['first_name']} #{row['last_name']}",
+          row["project_id"],
+          row["task_abbr"],
+          row["task_id"],
+          row["complete_count"],
+          row["need_help_count"],
+          row["fix_and_resubmit_count"],
+          row["redo_count"],
+          row["discuss_count"],
+          row["demonstrate_count"],
+          row["ready_for_feedback_count"],
+          row["discussed_in_class_count"]
+        ]
+      end
+    end
+  end
+
+
+  def days_awaiting_feedback_by_tutorial_csv
+    CSV.generate() do |csv|
+      # Add headers
+      csv << [
+        'Tutorial',
+        'Tutor',
+        'Username',
+        'Student Name',
+        'Project ID',
+        'Task Definition',
+        'Task ID',
+        'Days Awaiting Feedback',
+        'Days Awaiting Feedback (Incl. Breaks)'
+      ]
+
+      # Add data
+      rows = tasks
+             .includes(project: { unit: { teaching_period: :breaks } })
+             .joins(:task_definition)
+             .joins('INNER JOIN users ON users.id = projects.user_id')
+             .joins("LEFT OUTER JOIN (#{tutorial_enrolment_subquery}) as sq ON sq.project_id = projects.id AND (sq.tutorial_stream_id = task_definitions.tutorial_stream_id OR sq.tutorial_stream_id IS NULL)")
+             .joins('LEFT JOIN tutorials ON tutorials.id = sq.tutorial_id')
+             .select(
+               'users.username AS username',
+               'users.first_name AS first_name',
+               'users.last_name AS last_name',
+               'tasks.id as task_id',
+               'task_definitions.abbreviation as task_abbr',
+               'tasks.project_id as project_id',
+               'tasks.submission_date',
+               'tutorial_id',
+               'tutorials.unit_role_id as unit_role_id',
+               'tutorials.abbreviation AS tutorial_abbreviation'
+             )
+             .group('tasks.id', 'task_definitions.abbreviation', 'tasks.project_id', 'tutorial_id', 'unit_role_id', 'tasks.submission_date')
+             .where(projects: { enrolled: true })
+             .where(task_status: TaskStatus.ready_for_feedback)
+             .to_a
+
+      unit_roles_by_id = UnitRole.includes(:user).where(id: rows.map(&:unit_role_id).compact.uniq).index_by(&:id)
+
+      rows
+        .sort_by { |row| [row.unit_role_id || Float::INFINITY, -row.days_awaiting_feedback] }
+        .each do |row|
+          csv << [
+            row['tutorial_abbreviation'],
+            row.unit_role_id.present? ? unit_roles_by_id[row.unit_role_id]&.user&.name.to_s : '',
+            row['username'],
+            "#{row['first_name']} #{row['last_name']}",
+            row['project_id'],
+            row['task_abbr'],
+            row['task_id'],
+            row.days_awaiting_feedback,
+            row.calendar_days_awaiting_feedback
+          ]
+      end
+    end
+  end
+
   def task_completion_csv
+    task_completion_csv_generator()
+  end
+
+  def task_completion_csv_generator(task_status_uses_id: false)
     task_def_by_grade = task_definitions_by_grade
     streams = tutorial_streams
     grp_sets = group_sets
+    base_headers = [
+      'Student ID',
+      'Username',
+      'Student Name',
+    ]
+    base_headers << 'Campus'
+    base_headers.push(
+      'Target Grade',
+      'Email',
+      'Portfolio',
+      'Grade',
+      'Rationale',
+      'Assessor',
+    )
 
     CSV.generate() do |csv|
       # Add header row
-      csv << ([
-        'Student ID',
-        'Username',
-        'Student Name',
-        'Target Grade',
-        'Email',
-        'Portfolio',
-        'Grade',
-        'Rationale',
-      ] +
+      csv << (base_headers +
              (streams.count > 0 ? streams.map { |t| t.abbreviation } : ['Tutorial']) +
              grp_sets.map(&:name) +
              task_def_by_grade.map do |task_definition|
@@ -1414,18 +2011,25 @@ class Unit < ApplicationRecord
       # Get the details to fetch for each task definition...
       td_select = task_def_by_grade.map do |td|
         result = []
-        result << "MAX(CASE WHEN tasks.task_definition_id = #{td.id} THEN (CASE WHEN task_statuses.name IS NULL THEN 'Not Started' ELSE task_statuses.name END) ELSE NULL END) AS status_#{td.id}"
+        if task_status_uses_id
+          result << "MAX(CASE WHEN tasks.task_definition_id = #{td.id} THEN (CASE WHEN tasks.task_status_id IS NULL THEN #{TaskStatus.not_started.id} ELSE tasks.task_status_id END) ELSE NULL END) AS status_#{td.id}"
+        else
+          result << "MAX(CASE WHEN tasks.task_definition_id = #{td.id} THEN (CASE WHEN task_statuses.name IS NULL THEN 'Not Started' ELSE task_statuses.name END) ELSE NULL END) AS status_#{td.id}"
+        end
         result << "MAX(CASE WHEN tasks.task_definition_id = #{td.id} THEN tasks.grade ELSE NULL END) AS grade_#{td.id}" if td.is_graded?
         result << "MAX(CASE WHEN tasks.task_definition_id = #{td.id} THEN tasks.quality_pts ELSE NULL END) AS stars_#{td.id}" if td.has_stars?
         result << "MAX(CASE WHEN tasks.task_definition_id = #{td.id} THEN tasks.contribution_pts ELSE NULL END) AS people_#{td.id}" if td.is_group_task?
         result
       end.flatten
 
+      group_table_alias = 'task_completion_groups'
+
       # Query across all projects, joined to task's via definitions to ensure all definitions are covered
       active_projects
         .joins(
           :unit,
           'INNER JOIN users ON projects.user_id = users.id',
+          'LEFT OUTER JOIN campuses ON campuses.id = projects.campus_id',
           'INNER JOIN task_definitions ON task_definitions.unit_id = units.id',
           'LEFT OUTER JOIN tutorial_streams ON tutorial_streams.unit_id = units.id',
           'LEFT OUTER JOIN tutorial_enrolments ON tutorial_enrolments.project_id = projects.id',
@@ -1433,28 +2037,33 @@ class Unit < ApplicationRecord
           'LEFT OUTER JOIN tasks ON tasks.task_definition_id = task_definitions.id AND projects.id = tasks.project_id',
           'LEFT OUTER JOIN task_statuses ON tasks.task_status_id = task_statuses.id',
           'LEFT OUTER JOIN group_memberships ON group_memberships.project_id = projects.id AND group_memberships.active = TRUE',
-          'LEFT OUTER JOIN groups ON groups.id = group_memberships.group_id'
+          "LEFT OUTER JOIN #{Group.quoted_table_name} #{group_table_alias} ON #{group_table_alias}.id = group_memberships.group_id"
         ).select(
-          'projects.id as project_id', 'users.student_id as student_id', 'users.username as username', 'users.first_name as first_name',
-          'users.last_name as last_name', 'projects.target_grade', 'users.email as email', 'compile_portfolio', 'portfolio_production_date', 'grade', 'grade_rationale',
+          'projects.id as project_id', 'users.student_id as student_id', 'users.username as username', 'users.first_name as first_name', 'projects.assessor_id as project_assessor',
+          'users.last_name as last_name', 'campuses.abbreviation as campus_abbreviation', 'projects.target_grade', 'users.email as email', 'compile_portfolio', 'portfolio_production_date', 'grade', 'grade_rationale',
           *td_select,
           # Get tutorial for each stream in unit
           *streams.map { |s| "MAX(CASE WHEN tutorials.tutorial_stream_id = #{s.id} OR tutorials.tutorial_stream_id IS NULL THEN tutorials.abbreviation ELSE NULL END) AS tutorial_#{s.id}" },
           # Get tutorial for case when no stream
           "MAX(CASE WHEN tutorial_streams.id IS NULL THEN tutorials.abbreviation ELSE NULL END) AS tutorial",
-          *grp_sets.map { |gs| "MAX(CASE WHEN groups.group_set_id = #{gs.id} THEN groups.name ELSE NULL END) AS grp_#{gs.id}" }
+          *grp_sets.map { |gs| "MAX(CASE WHEN #{group_table_alias}.group_set_id = #{gs.id} THEN #{group_table_alias}.name ELSE NULL END) AS grp_#{gs.id}" }
         ).group(
-          'projects.id', 'student_id', 'username', 'first_name', 'last_name', 'target_grade', 'email', 'compile_portfolio', 'portfolio_production_date', 'grade', 'grade_rationale'
+          'projects.id', 'student_id', 'username', 'first_name', 'last_name', 'campus_abbreviation', 'target_grade', 'email', 'compile_portfolio', 'portfolio_production_date', 'grade', 'grade_rationale'
         ).each do |row|
-          csv << ([
+          student_details = [
             row['student_id'],
             row['username'],
             "#{row['first_name']} #{row['last_name']}",
-            GradeHelper.grade_for(row['target_grade']),
+          ]
+          student_details << row['campus_abbreviation']
+
+          csv << (student_details + [
+            grade_label(row['target_grade']),
             row['email'],
-            row['portfolio_production_date'].present? && !row['compile_portfolio'] && File.exist?(FileHelper.student_portfolio_path(self, row['username'], true)),
+            row['portfolio_production_date'].present? && !row['compile_portfolio'] && File.exist?(FileHelper.student_portfolio_path(self, row['username'], create: true)),
             row['grade'] > 0 ? row['grade'] : nil,
-            row['grade_rationale']
+            row['grade_rationale'],
+            row['project_assessor']
           ] + [1].map do
             if streams.empty?
               [row['tutorial']]
@@ -1464,8 +2073,12 @@ class Unit < ApplicationRecord
           end.flatten + grp_sets.map do |gs|
             row["grp_#{gs.id}"]
           end + task_def_by_grade.map do |td|
-            result = [row["status_#{td.id}"].nil? ? TaskStatus.not_started.name : row["status_#{td.id}"]]
-            result << GradeHelper.short_grade_for(row["grade_#{td.id}"]) if td.is_graded?
+            if task_status_uses_id
+              result = [row["status_#{td.id}"].nil? ? TaskStatus.not_started.id : row["status_#{td.id}"].to_i]
+            else
+              result = [row["status_#{td.id}"].nil? ? TaskStatus.not_started.name : row["status_#{td.id}"]]
+            end
+            result << grade_abbreviation(row["grade_#{td.id}"]) if td.is_graded?
             result << row["stars_#{td.id}"] if td.has_stars?
             result << row["people_#{td.id}"] if td.is_group_task?
             result
@@ -1474,21 +2087,62 @@ class Unit < ApplicationRecord
     end
   end
 
+  def staff_notes_csv
+    CSV.generate() do |csv|
+      # Add headers
+      csv << [
+        'Student Username',
+        'Project ID',
+        'Student Name',
+        'Staff Note',
+        'Created',
+        'Author Name',
+        'Author Username',
+      ]
+
+      StaffNote.joins(project: :unit)
+        .where(units: { id: id })
+        .order('projects.id', 'created_at')
+        .each do |row|
+          csv << [
+            row.project.student.username,
+            row.project.id.to_s,
+            row.project.student.name,
+            row.note,
+            row.created_at.localtime,
+            row.user.name,
+            row.user.username,
+          ]
+        end
+    end
+  end
+
+  def get_portfolio_zip_filename(current_user)
+    filename = FileHelper.sanitized_filename("portfolios-#{code}-#{current_user.username}")
+    "#{FileHelper.tmp_file(filename)}.zip"
+  end
+
   #
   # Create a temp zip file with all student portfolios
   #
-  def get_portfolio_zip(current_user)
+  def get_portfolio_zip(current_user, progress_callback: nil)
     # Get a temp file path
-    filename = FileHelper.sanitized_filename("portfolios-#{code}-#{current_user.username}")
-    result = "#{FileHelper.tmp_file(filename)}.zip"
+    portfolio_zip_name = get_portfolio_zip_filename(current_user)
 
-    return result if File.exist?(result)
+    # All active projects with a compiled portfolio
+    portfolio_projects = active_projects.select(&:portfolio_available)
+    progress_callback.call(message: "Initialising portfolio download", total_rows: portfolio_projects.count, rows_processed: portfolio_projects.count) if progress_callback
+
+    return portfolio_zip_name if File.exist?(portfolio_zip_name)
+
+    progress_callback.call(message: "Initialising portfolio download", total_rows: portfolio_projects.count, rows_processed: 0) if progress_callback
+    count = 0
 
     # Create a new zip
-    Zip::File.open(result, Zip::File::CREATE) do |zip|
-      active_projects.each do |project|
-        # Skip if no portfolio at this time...
-        next unless project.portfolio_available
+    Zip::File.open(portfolio_zip_name, Zip::File::CREATE) do |zip|
+      portfolio_projects.each do |project|
+        count += 1
+        progress_callback.call(message: "Compressing portfolios", rows_processed: count) if progress_callback
 
         # Add file to zip in grade folder
         src_path = project.portfolio_path
@@ -1498,7 +2152,7 @@ class Unit < ApplicationRecord
         zip.add(dst_path, src_path)
       end # active_projects
     end # zip
-    result
+    portfolio_zip_name
   end
 
   #
@@ -1530,26 +2184,34 @@ class Unit < ApplicationRecord
   #
   # Create a temp zip file with all submission PDFs for a task
   #
-  def get_task_submissions_pdf_zip(current_user, td)
+  def get_task_submissions_pdf_zip(current_user, td, progress_callback: nil)
     # Get a temp file path
     result = FileHelper.tmp_file("submissions-#{code}-#{td.abbreviation}-#{current_user.username}-pdfs.zip")
 
     tasks_with_files = td.related_tasks_with_files
+    progress_callback.call(message: "Initialising submission pdfs download", total_rows: tasks_with_files.count, rows_processed: tasks_with_files.count) if progress_callback
 
     return result if File.exist?(result)
+
+    progress_callback.call(message: "Initialising submission pdfs download", total_rows: tasks_with_files.count, rows_processed: 0) if progress_callback
+
+    count = 0
 
     # Create a new zip
     Zip::File.open(result, Zip::File::CREATE) do |zip|
       Dir.mktmpdir do |dir|
         # Extract all of the files...
         tasks_with_files.each do |task|
+          count += 1
+          progress_callback.call(message: "Compressing submission pdfs", rows_processed: count) if progress_callback
+
           path_part = if td.is_group_task? && task.group
                         task.group.name.to_s
                       else
                         task.student.username.to_s
                       end
 
-          FileUtils.cp task.portfolio_evidence_path, File.join(dir, path_part.to_s) + '.pdf'
+          FileUtils.cp task.final_pdf_path, File.join(dir, path_part.to_s) + '.pdf'
         end # each task
 
         # Copy files into zip
@@ -1563,19 +2225,26 @@ class Unit < ApplicationRecord
   #
   # Create a temp zip file with all submissions for a task
   #
-  def get_task_submissions_zip(current_user, td)
+  def get_task_submissions_zip(current_user, td, progress_callback: nil)
     # Get a temp file path
     result = FileHelper.tmp_file("submissions-#{code}-#{td.abbreviation}-#{current_user.username}-files.zip")
 
     tasks_with_files = td.related_tasks_with_files
+    progress_callback.call(message: "Initialising submission files download", total_rows: tasks_with_files.count, rows_processed: tasks_with_files.count) if progress_callback
 
     return result if File.exist?(result)
+    progress_callback.call(message: "Initialising submission files download", total_rows: tasks_with_files.count, rows_processed: 0) if progress_callback
+
+    count = 0
 
     # Create a new zip
     Zip::File.open(result, Zip::File::CREATE) do |zip|
       Dir.mktmpdir do |dir|
         # Extract all of the files...
         tasks_with_files.each do |task|
+          count += 1
+          progress_callback.call(message: "Compressing submission files", rows_processed: count) if progress_callback
+
           path_part = if td.is_group_task? && task.group
                         task.group.name.to_s
                       else
@@ -1595,35 +2264,6 @@ class Unit < ApplicationRecord
       end # mktmpdir
     end # zip
     result
-  end
-
-  #
-  # Create an ILO
-  #
-  def add_ilo(name, desc, abbr)
-    next_num = learning_outcomes.count + 1
-
-    LearningOutcome.create!(
-      unit_id: id,
-      name: name,
-      description: desc,
-      abbreviation: abbr,
-      ilo_number: next_num
-    )
-  end
-
-  #
-  # Reorder ILO sequence numbers based on ILO update
-  #
-  def move_ilo(ilo, new_num)
-    if ilo.ilo_number < new_num
-      logger.debug "Moving ILOs up #{ilo.ilo_number} to #{new_num}"
-      learning_outcomes.where("ilo_number > #{ilo.ilo_number} and ilo_number <= #{new_num}").find_each { |ilo| ilo.ilo_number -= 1; ilo.save }
-    elsif ilo.ilo_number > new_num
-      learning_outcomes.where("ilo_number < #{ilo.ilo_number} and ilo_number >= #{new_num}").find_each { |ilo| ilo.ilo_number += 1; ilo.save }
-    end
-    ilo.ilo_number = new_num
-    ilo.save
   end
 
   #
@@ -1674,9 +2314,6 @@ class Unit < ApplicationRecord
     result
   end
 
-
-
-
   def tasks_as_hash(data)
     task_ids = data.map(&:task_id).uniq
     data.map do |t|
@@ -1702,54 +2339,62 @@ class Unit < ApplicationRecord
   def tutorial_enrolment_subquery
     tutorial_enrolments
       .joins(:tutorial)
-      .select('tutorials.tutorial_stream_id as tutorial_stream_id', 'tutorials.id as tutorial_id', 'project_id').to_sql
+      .select('tutorials.tutorial_stream_id as tutorial_stream_id', 'tutorials.id as tutorial_id', 'project_id', 'tutorials.unit_role_id as unit_role_id').to_sql
   end
 
   #
   # Return all tasks from the database for this unit and given user
   #
-  def get_all_tasks_for(user)
-    student_tasks.
-      joins(:task_status).
-      joins("LEFT OUTER JOIN (#{tutorial_enrolment_subquery}) as sq ON sq.project_id = projects.id AND (sq.tutorial_stream_id = task_definitions.tutorial_stream_id OR sq.tutorial_stream_id IS NULL)").
-      joins("LEFT JOIN task_comments ON task_comments.task_id = tasks.id AND (task_comments.type IS NULL OR task_comments.type <> 'TaskStatusComment')").
-      joins("LEFT JOIN comments_read_receipts crr ON crr.task_comment_id = task_comments.id AND crr.user_id = #{user.id}").
-      joins("LEFT JOIN task_pins ON task_pins.task_id = tasks.id AND task_pins.user_id = #{user.id}").
-      joins('LEFT OUTER JOIN task_similarities ON tasks.id = task_similarities.task_id').
-      select(
-        'sq.tutorial_id AS tutorial_id',
-        'sq.tutorial_stream_id AS tutorial_stream_id',
-        'tasks.id',
-        "SUM(case when crr.user_id is null AND NOT task_comments.id is null then 1 else 0 end) as number_unread",
-        'COUNT(distinct task_pins.task_id) != 0 as pinned',
-        "SUM(case when task_comments.date_extension_assessed IS NULL AND task_comments.type = 'ExtensionComment' AND NOT task_comments.id IS NULL THEN 1 ELSE 0 END) > 0 as has_extensions",
-        'project_id',
-        'tasks.id as task_id',
-        'task_definition_id',
-        'task_definitions.start_date as start_date',
-        'task_statuses.id as status_id',
-        'completion_date',
-        'times_assessed',
-        'submission_date',
-        'tasks.grade as grade',
-        'quality_pts',
-        'SUM(case when task_similarities.flagged then 1 else 0 end) as similar_to_count'
-      ).
-      group(
-        'sq.tutorial_id',
-        'sq.tutorial_stream_id',
-        'task_statuses.id',
-        'project_id',
-        'tasks.id',
-        'task_definition_id',
-        'task_definitions.start_date',
-        'status_id',
-        'completion_date',
-        'times_assessed',
-        'submission_date',
-        'grade',
-        'quality_pts'
-      )
+  def get_all_tasks_for(user, my_tutorials_only = false)
+    result =  student_tasks.
+              joins(:task_status).
+              joins("LEFT OUTER JOIN (#{tutorial_enrolment_subquery}) as sq ON sq.project_id = projects.id AND (sq.tutorial_stream_id = task_definitions.tutorial_stream_id OR sq.tutorial_stream_id IS NULL)").
+              joins("LEFT JOIN task_comments ON task_comments.task_id = tasks.id AND (task_comments.type IS NULL OR task_comments.type <> 'TaskStatusComment') AND (task_comments.content_type IS NULL OR (task_comments.content_type <> 'plan' AND task_comments.content_type <> 'discussed_in_class'))").
+              joins("LEFT JOIN comments_read_receipts crr ON crr.task_comment_id = task_comments.id AND crr.user_id = #{user.id}").
+              joins("LEFT JOIN task_pins ON task_pins.task_id = tasks.id AND task_pins.user_id = #{user.id}").
+              joins('LEFT OUTER JOIN task_similarities ON tasks.id = task_similarities.task_id').
+              select(
+                'sq.tutorial_id AS tutorial_id',
+                'sq.tutorial_stream_id AS tutorial_stream_id',
+                'tasks.id',
+                "SUM(case when crr.user_id is null AND NOT task_comments.id is null then 1 else 0 end) as number_unread",
+                'COUNT(distinct task_pins.task_id) != 0 as pinned',
+                "SUM(case when task_comments.date_extension_assessed IS NULL AND task_comments.type = 'ExtensionComment' AND NOT task_comments.id IS NULL THEN 1 ELSE 0 END) > 0 as has_extensions",
+                'project_id',
+                'tasks.id as task_id',
+                'task_definition_id',
+                'task_definitions.start_date as start_date',
+                'task_statuses.id as status_id',
+                'completion_date',
+                'times_assessed',
+                'submission_date',
+                'tasks.grade as grade',
+                'quality_pts',
+                'SUM(case when task_similarities.flagged then 1 else 0 end) as similar_to_count'
+              ).
+              group(
+                'sq.tutorial_id',
+                'sq.tutorial_stream_id',
+                'task_statuses.id',
+                'project_id',
+                'tasks.id',
+                'task_definition_id',
+                'task_definitions.start_date',
+                'status_id',
+                'completion_date',
+                'times_assessed',
+                'submission_date',
+                'grade',
+                'quality_pts'
+              )
+    if my_tutorials_only
+      unit_role = unit_role_for(user)
+      unless unit_role.nil?
+        result = result.where('sq.unit_role_id = :unit_role_id', unit_role_id: unit_role.id)
+      end
+    end
+
+    result
   end
 
   #
@@ -1757,7 +2402,7 @@ class Unit < ApplicationRecord
   #
   def tasks_awaiting_feedback(user)
     get_all_tasks_for(user)
-      .where('task_statuses.id IN (:ids)', ids: [TaskStatus.discuss, TaskStatus.redo, TaskStatus.demonstrate, TaskStatus.fix_and_resubmit])
+      .where('task_statuses.id IN (:ids)', ids: [TaskStatus.discuss, TaskStatus.rediscuss, TaskStatus.attention_required, TaskStatus.redo, TaskStatus.demonstrate, TaskStatus.fix_and_resubmit])
       .order('task_definition_id')
   end
 
@@ -1772,10 +2417,134 @@ class Unit < ApplicationRecord
   # time a task has been "actioned", either the submission date or latest
   # student comment -- whichever is newer.
   #
-  def tasks_for_task_inbox(user)
-    get_all_tasks_for(user)
+  def tasks_for_task_inbox(user, my_students_only = false)
+    get_all_tasks_for(user, my_students_only)
       .having('task_statuses.id IN (:ids) OR COUNT(task_pins.task_id) > 0 OR SUM(case when crr.user_id is null AND NOT task_comments.id is null then 1 else 0 end) > 0', ids: [TaskStatus.ready_for_feedback, TaskStatus.need_help])
       .order('pinned DESC, submission_date ASC, MAX(task_comments.created_at) ASC, task_definition_id ASC')
+  end
+
+  #
+  # Return the tasks that have been selected to be moderated by the tutor's mentor
+  #
+  # Tasks that are included are:
+  # - If a ModeratedTask exists for a task, and has not been dismissed
+  # - A TaskComment exists from the task's tutor, that is atleast 15 minutes old
+  #
+  # Tasks with the oldest feedback are shown first
+  #
+  def tasks_for_moderation(user)
+    my_unit_role = unit_role_for(user)
+    mentees = my_unit_role ? staff.where(mentor_id: my_unit_role.id) : staff.none
+
+    tasks = student_tasks
+                  .joins(:moderated_task)
+                  .where(moderated_tasks: { state: %i[open waiting_for_new_feedback] })
+                  .where(projects: { unit_id: id })
+                  .joins(:task_definition)
+                  .joins(project: { tutorial_enrolments: :tutorial })
+                  .where('tutorials.tutorial_stream_id = task_definitions.tutorial_stream_id')
+                  .select(
+                    'tasks.id AS task_id',
+                    'tasks.project_id',
+                    'tasks.task_definition_id',
+                    # 'tutorials.id AS tutorial_id',
+                    'tasks.task_status_id AS status_id',
+                    'tasks.completion_date',
+                    'tasks.submission_date',
+                    # 'tasks.times_assessed',
+                    # 'tasks.grade',
+                    # 'tasks.quality_pts',
+                    # '0 AS number_unread',
+                    # '0 AS similar_to_count',
+                    # 'false AS pinned',
+                    # 'false AS has_extensions',
+                    'tasks.*',
+                  )
+                  .distinct
+
+    if my_unit_role.nil? || my_unit_role.role != Role.convenor
+      tasks = tasks.where(tutorials: { unit_role_id: mentees.select(:id) })
+    end
+
+    # Only include tasks where the tutor's latest comment is at least 15 minutes old
+    # to ensure that the feedback is likely complete before adding it for moderation
+    comment_threshold = 15.minutes.ago
+
+    tasks = tasks.to_a.select do |task|
+      mt = task.moderated_task
+      next false if mt.nil?
+      next true if mt.escalation?
+
+      feedback_time = task.last_tutor_feedback_at
+      feedback_time.present? &&
+        feedback_time <= comment_threshold &&
+        feedback_time > (mt.last_moderated_date || epoch)
+    end
+
+    tasks.sort_by { |task| [task.moderated_task.escalation? ? 0 : 1, task.last_tutor_feedback_at || Time.zone.at(0)] }
+  end
+
+
+  #
+  # Return the tasks that have been waiting for feedback the longest (past the unit's feedback threshold setting)
+  #
+  # Tasks that are included are:
+  # - If the task is ready for feedback
+  # - Has been submitted more than {{ unit.feedback_overflow_threshold_days }} days ago
+  # - Has not been claimed by another tutor
+  #
+  # Tasks claimed by the current user will be shown first, then sorted by showing oldest submitted tasks first
+  #
+  def tasks_for_overflow_marking(user)
+    threshold     = feedback_overflow_threshold_days.days.ago
+    unit_role_id  = unit_role_for(user)&.id
+
+    tasks = student_tasks
+              .includes(:comments, :overflow_task_claim)
+              .where(projects: { unit_id: id })
+              .joins(:task_definition)
+              .where(tasks: { task_status_id: TaskStatus.ready_for_feedback.id })
+              .where('tasks.submission_date <= ?', threshold)
+              .select(
+                'tasks.id AS task_id',
+                'tasks.project_id',
+                'tasks.task_definition_id',
+                '(SELECT te.tutorial_id
+                      FROM tutorial_enrolments te
+                      WHERE te.project_id = tasks.project_id
+                      ORDER BY te.created_at DESC
+                      LIMIT 1) AS tutorial_id',
+                'tasks.task_status_id AS status_id',
+                'tasks.completion_date',
+                'tasks.submission_date',
+                'tasks.times_assessed',
+                'tasks.grade',
+                'tasks.quality_pts',
+                '0 AS number_unread',
+                '0 AS similar_to_count',
+                'false AS pinned',
+                'false AS has_extensions',
+                'tasks.*'
+          )
+              .distinct
+              .to_a
+
+    # Filter out tasks claimed by someone else (active claim only)
+    tasks = tasks.select do |task|
+      claim = task.active_overflow_task_claim
+      claim.nil? || claim.claimed_by_unit_role_id == unit_role_id
+    end
+
+    # Sort:
+    # 1) tasks claimed by current user (active claim) first
+    # 2) then oldest submission first
+    tasks.sort_by! do |task|
+      claim = task.active_overflow_task_claim
+      claimed_by_me = claim && claim.claimed_by_unit_role_id == unit_role_id ? 0 : 1
+      [claimed_by_me, task.submission_date]
+    end
+
+    tasks
   end
 
   #
@@ -1881,7 +2650,7 @@ class Unit < ApplicationRecord
   def _calculate_task_completion_stats(data)
     values = data.map { |r| r[:num] }
 
-    if values && !values.empty?
+    if values.present?
       values.sort!
 
       median_value = if values.length.even?
@@ -1927,186 +2696,18 @@ class Unit < ApplicationRecord
       result[:tutorial][t.id] = _calculate_task_completion_stats(data.select { |r| r[:tutorial_id] == t.id })
     end
 
-    for i in GradeHelper::RANGE do
+    for i in grade_values do
       result[:grade][i] = _calculate_task_completion_stats(data.select { |r| r[:grade] == i })
     end
 
     result
   end
 
-  #
-  # Returns a result that maps tutorial_id -> { student outcome map }
-  # Where the student outcome map contains each LO and its rating for that student (no student id)
-  #
-  def student_ilo_progress_stats
-    data = student_tasks
-           .joins(task_definition: :learning_outcome_task_links)
-           .joins(:task_status)
-           .joins('LEFT OUTER JOIN tutorial_enrolments ON tutorial_enrolments.project_id = projects.id')
-           .joins('LEFT OUTER JOIN tutorials ON tutorials.id = tutorial_enrolments.tutorial_id AND (tutorials.tutorial_stream_id = task_definitions.tutorial_stream_id OR tutorials.tutorial_stream_id IS NULL)')
-           .select('tutorials.tutorial_stream_id as tutorial_stream_id, tutorial_enrolments.tutorial_id as tutorial_id, projects.id as project_id, task_statuses.id as status_id, task_definitions.target_grade, learning_outcome_task_links.learning_outcome_id, learning_outcome_task_links.rating, COUNT(tasks.id) as num')
-           .where('projects.enrolled = TRUE AND learning_outcome_task_links.task_id is NULL')
-           .group('tutorial_enrolments.tutorial_id, tutorials.tutorial_stream_id, projects.id, task_statuses.id, task_definitions.target_grade, learning_outcome_task_links.learning_outcome_id, learning_outcome_task_links.rating')
-           .order('tutorial_enrolments.tutorial_id, projects.id')
-           .map do |r|
-      {
-        project_id: r.project_id,
-        tutorial_id: r.tutorial_id,
-        tutorial_stream_id: r.tutorial_stream_id,
-        learning_outcome_id: r.learning_outcome_id,
-        rating: r.rating,
-        grade: r.target_grade,
-        status: TaskStatus.id_to_key(r.status_id),
-        num: r.num
-      }
-    end
-
-    grade_weight = { 0 => 1, 1 => 2, 2 => 4, 3 => 8 }
-    status_weight = {
-      not_started: 0.0,
-      fail: 0.0,
-      working_on_it: 0.0,
-      need_help: 0.0,
-      redo: 0.1,
-      feedback_exceeded: 0.1,
-      fix_and_resubmit: 0.3,
-      time_exceeded: 0.5,
-      ready_for_feedback: 0.7,
-      discuss: 0.8,
-      demonstrate: 0.8,
-      complete: 1.0
-    }
-
-    result = {}
-
-    # order by tutorial and project...
-    current = nil
-    data.each do |e|
-      # chech for change in tutorial
-      if current.nil? || e[:tutorial_id] != current[:tutorial_id]
-        # if there was a currentious element
-        if current
-          # add the project to the tutorial
-          current[:tutorial] << current[:project]
-
-          # add the tutorial to the results
-          result[current[:tutorial_id]] = current[:tutorial]
-        end
-
-        current = { project_id: e[:project_id], tutorial_id: e[:tutorial_id], tutorial: [], project: { id: e[:project_id] } }
-      elsif e[:project_id] != current[:project_id] # check change of project
-        # add the project to the tutorial
-        current[:tutorial] << current[:project]
-
-        # reset the
-        current[:project_id] = e[:project_id]
-        current[:project] = { id: e[:project_id] }
-      end
-
-      old_val = 0
-      if current[:project].key? e[:learning_outcome_id]
-        old_val = current[:project][e[:learning_outcome_id]]
-      end
-
-      current[:project][e[:learning_outcome_id]] = old_val +
-                                                   (e[:rating] * status_weight[e[:status]] * grade_weight[e[:grade]] * e[:num])
-    end
-
-    # Add last project/tutorial to results
-    if current
-      # add the project to the tutorial
-      current[:tutorial] << current[:project]
-
-      # add the tutorial to the results
-      result[current[:tutorial_id]] = current[:tutorial]
-    end
-
-    result.each do |tutorial_id_key, array_of_ilo_scores|
-      result[tutorial_id_key] = array_of_ilo_scores.map do |map_scores|
-        map_scores.each { |ilo_id, score| map_scores[ilo_id] = score.round(1) }
-        map_scores
-      end
-    end
-
-    result
-  end
-
-  # Functions processes the ilo data to generate stats
-  # Can be passed all details, or details for one tutorial.
-  def _ilo_progress_summary(data)
-    result = {}
-
-    learning_outcomes.each do |ilo|
-      if data.nil?
-        lower_value = upper_value = median_value = min_value = max_value = 0
-      else
-        values = data.map { |e| e.key?(ilo.id) ? e[ilo.id] : 0 }
-        values = values.sort
-
-        median_value = if values.length.even?
-                         ((values[values.length / 2] + values[(values.length / 2) - 1]) / 2.0).round(1)
-                       else
-                         values[values.length / 2]
-                       end
-
-        lower_value = values[values.length * 3 / 10]
-        upper_value = values[values.length * 8 / 10]
-        min_value = values.first
-        max_value = values.last
-      end
-
-      result[ilo.id] = {
-        median: median_value,
-        lower: lower_value,
-        upper: upper_value,
-        min: min_value,
-        max: max_value
-      }
-    end
-
-    result
-  end
-
-  #
-  # Returns the details of the ILO progress for students in the class.
-  #
-  def ilo_progress_class_details
-    result = {}
-    data = student_ilo_progress_stats
-
-    return {} if data.nil?
-
-    tutorials.each do |tute|
-      result[tute.id] = _ilo_progress_summary(data[tute.id])
-      # if data[tute.id]
-      #   result[tute.id][:students] = data[tute.id]
-      # else
-      #   result[tute.id][:students] = []
-      # end
-    end
-
-    result['all'] = _ilo_progress_summary(data.values.reduce(:+))
-
-    result
-  end
-
-  def ilo_progress_class_stats
-    temp = student_ilo_progress_stats.values
-
-    return {} if temp.nil?
-
-    data = temp.reduce(:+)
-
-    _ilo_progress_summary(data)
-  end
-
   def student_grades_csv
-    students_with_grades = active_projects.where('grade > 0')
-
     CSV.generate do |row|
-      row << %w(unit_code username student_id grade rationale)
-      students_with_grades.each do |project|
-        row << [project.unit.code, project.student.username, project.student.student_id, project.grade, project.grade_rationale]
+      row << %w(unit_code username student_id target_grade submitted_grade portfolio_submission_date portfolio_production_date has_portfolio spec_con_days grade rationale assessor assessor_id)
+      active_projects.each do |project|
+        row << [project.unit.code, project.student.username, project.student.student_id, project.target_grade, project.submitted_grade, project.portfolio_submission_date, project.portfolio_production_date, project.portfolio_exists?, project.spec_con_days, project.grade, project.grade_rationale, project.assessor&.name, project.assessor&.id]
       end
     end
   end
@@ -2130,6 +2731,43 @@ class Unit < ApplicationRecord
     end
   end
 
+  def overflow_task_claims_csv
+    CSV.generate do |csv|
+      csv << [
+        'Tutor who claimed',
+        'Claiming Unit Role ID',
+        'Original Tutor',
+        'Student Username',
+        'Student ID',
+        'Task ID',
+        'Task Definition',
+        'Days Awaiting Feedback',
+        'Timestamp'
+      ]
+
+      OverflowTaskClaimLog
+        .where(unit_id: id)
+        .includes(:claimed_by_user, :original_tutor_user, :student_user, task: :task_definition)
+        .order(:claimed_at)
+        .each do |claim|
+          task = claim.task
+          student = claim.student_user
+
+          csv << [
+            claim.claimed_by_user&.name,
+            claim.claimed_by_unit_role_id,
+            claim.original_tutor_user&.name,
+            student&.username,
+            student&.student_id,
+            claim.task_id,
+            task&.task_definition&.abbreviation,
+            claim.days_awaiting_feedback,
+            claim.claimed_at,
+          ]
+        end
+    end
+  end
+
   #----------------------------------------------------------------------------
   # Task updates from offline download/upload
   #----------------------------------------------------------------------------
@@ -2146,7 +2784,7 @@ class Unit < ApplicationRecord
   end
 
   def readme_text
-    path = Rails.root.join('public', 'resources', 'marking_package_readme.txt')
+    path = Rails.root.join("public/resources/marking_package_readme.txt")
     File.read path
   end
 
@@ -2180,9 +2818,9 @@ class Unit < ApplicationRecord
 
         csv_str << "\n#{student.username.tr(',', '_')},#{student.name.tr(',', '_')},#{task.project.tutorial_for(task.task_definition).abbreviation},#{task.task_definition.abbreviation.tr(',', '_')},\"#{task.last_comment_by(task.project.student).gsub(/"/, '""')}\",\"#{task.last_comment_by(user).gsub(/"/, '""')}\",#{mark_col},,,#{task.task_definition.max_quality_pts},"
 
-        src_path = task.portfolio_evidence_path
+        src_path = task.final_pdf_path
 
-        next if src_path.nil? || src_path.empty?
+        next if src_path.blank?
         next unless File.exist? src_path
 
         # make dst path of "<student id>/<task abbrev>.pdf"
@@ -2203,9 +2841,9 @@ class Unit < ApplicationRecord
 
         csv_str << "\nGRP_#{grp.id}_#{subm.id},#{grp.name.tr(',', '_')},#{grp.tutorial.abbreviation},#{task.task_definition.abbreviation.tr(',', '_')},\"#{task.last_comment_not_by(user).gsub(/"/, '""')}\",\"#{task.last_comment_by(user).gsub(/"/, '""')}\",rff,,#{task.task_definition.max_quality_pts},"
 
-        src_path = task.portfolio_evidence_path
+        src_path = task.final_pdf_path
 
-        next if src_path.nil? || src_path.empty?
+        next if src_path.blank?
         next unless File.exist? src_path
 
         # make dst path of "<student id>/<task abbrev>.pdf"
@@ -2237,8 +2875,8 @@ class Unit < ApplicationRecord
 
     # read data from CSV
     CSV.parse(csv_str, headers: true, return_headers: true,
-                       header_converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '').downcase unless body.nil? }],
-                       converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }]).each do |task_entry|
+                       header_converters: [->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '')&.downcase }],
+                       converters: [->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }]).each do |task_entry|
       group = nil
 
       # check the header row
@@ -2318,15 +2956,28 @@ class Unit < ApplicationRecord
       end
 
       begin
-        task.trigger_transition(trigger: task_entry['status'], by_user: user, quality: task_entry['new quality'].to_i) # saves task
-        task.grade_task(task_entry['new grade']) # try to grade task if need be
+        requested_status = TaskStatus.status_for_name(task_entry['status'].to_s)
+        raise "Unable to update task status to '#{task_entry['status']}'." if requested_status.nil?
 
-        if task_entry['new comment'].nil? || task_entry['new comment'].empty?
-          success << { row: task_entry, message: "Updated task #{task.task_definition.abbreviation} for #{owner_text}" }
-        else
-          task.add_text_comment user, task_entry['new comment']
-          success << { row: task_entry, message: "Updated task #{task.task_definition.abbreviation} for #{owner_text}" }
-          success << { row: {}, message: "Added comment to #{task.task_definition.abbreviation} for #{owner_text}" }
+        status_changed = false
+        comment_added = false
+
+        unless task.task_status == requested_status
+          task.trigger_transition(trigger: task_entry['status'], by_user: user, quality: task_entry['new quality'].to_i) # saves task
+          task.grade_task(task_entry['new grade']) # try to grade task if need be
+          status_changed = true
+        end
+
+        new_comment = task_entry['new comment'].to_s.strip
+        last_comment = task.comments.last&.comment.to_s.strip
+        if new_comment.present? && last_comment != new_comment
+          task.add_text_comment user, new_comment
+          comment_added = true
+        end
+
+        if status_changed || comment_added
+          success << { row: task_entry, message: "Updated task #{task.task_definition.abbreviation} for #{owner_text}" } if status_changed
+          success << { row: {}, message: "Added comment to #{task.task_definition.abbreviation} for #{owner_text}" } if comment_added
         end
       rescue Exception => e
         errors << { row: task_entry, message: e.message }
@@ -2424,69 +3075,71 @@ class Unit < ApplicationRecord
         # read keys from CSV - to check that files exist in csv
         entry_data = CSV.parse(csv_str, headers: true,
                                         header_converters: [->(i) { i.nil? ? '' : i }, :downcase],
-                                        converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }])
+                                        converters: [->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }])
 
         # Copy over the updated/marked files to the file system
         zip.each do |file|
           # Skip processing marking file
-          next if File.basename(file[:name]) == 'marks.csv' || File.basename(file[:name]) == 'readme.txt'
+          next if ['marks.csv', 'readme.txt'].include?(File.basename(file.name))
 
           # Test filename pattern
-          if (/.*-\d+.pdf/i =~ File.basename(file[:name])) != 0
-            if file[:name][-1] != '/'
-              ignored << { row: "File #{file[:name]}", message: 'Does not appear to be a task PDF.' }
+          if (/.*-\d+.pdf/i =~ File.basename(file.name)) != 0
+            if file.name[-1] != '/'
+              ignored << { row: "File #{file.name}", message: 'Does not appear to be a task PDF.' }
             end
             next
           end
-          if (/\._.*/ =~ File.basename(file[:name])) == 0
-            ignored << { row: "File #{file[:name]}", message: 'Does not appear to be a task PDF.' }
+          if (/\._.*/ =~ File.basename(file.name)) == 0
+            ignored << { row: "File #{file.name}", message: 'Does not appear to be a task PDF.' }
             next
           end
 
           # Extract the id from the filename
-          task_id_from_filename = File.basename(file[:name], '.pdf').split('-').last
+          task_id_from_filename = File.basename(file.name, '.pdf').split('-').last
           task = Task.find_by(id: task_id_from_filename)
           if task.nil?
-            ignored << { row: "File #{file[:name]}", message: 'Unable to find associated task.' }
+            ignored << { row: "File #{file.name}", message: 'Unable to find associated task.' }
             next
           end
 
           # Ensure that this task's id is inside entry_data
           task_entry = entry_data.select { |t| t['task'] == task.task_definition.abbreviation.tr(',', '_') && t['username'] == task.project.user.username }.first
           if task_entry.nil?
-            # error!({"error" => "File #{file[:name]} has a mismatch of task id ##{task.id} (this task id does not exist in marks.csv)"}, 403)
-            errors << { row: "File #{file[:name]}", message: "Task id #{task.id} not in marks.csv" }
+            # error!({"error" => "File #{file.name} has a mismatch of task id ##{task.id} (this task id does not exist in marks.csv)"}, 403)
+            errors << { row: "File #{file.name}", message: "Task id #{task.id} not in marks.csv" }
             next
           end
 
           if task.unit != self
-            errors << { row: "File #{file[:name]}", message: 'This task does not relate to this unit.' }
+            errors << { row: "File #{file.name}", message: 'This task does not relate to this unit.' }
             next
           end
 
           # Can the user assess this task?
           unless AuthorisationHelpers.authorise? user, task, :put
-            errors << { row: "File #{file[:name]}", error: "You do not have permission to assess task with id #{task.id}" }
+            errors << { row: "File #{file.name}", error: "You do not have permission to assess task with id #{task.id}" }
             next
           end
 
-          # Read into the task's portfolio_evidence path the new file
-          tmp_file = File.join(tmp_dir, File.basename(file[:name]))
-          task.portfolio_evidence_path = task.final_pdf_path
+          # Read into the task's final pdf path the new file
+          tmp_file = File.join(tmp_dir, File.basename(file.name))
 
           # get file out of zip... to tmp_file
           file.extract(tmp_file) { true }
 
           # copy tmp_file to dest
-          if FileHelper.copy_pdf(tmp_file, task.portfolio_evidence_path)
+          destination_path = task.final_pdf_path(ignore_portfolio_evidence: true)
+
+          if FileHelper.copy_pdf(tmp_file, destination_path)
+            task.update(portfolio_evidence: nil) if task.portfolio_evidence.present?
             if task.group.nil?
-              success << { row: "File #{file[:name]}", message: "Replace PDF of task #{task.task_definition.abbreviation} for #{task.student.name}" }
+              success << { row: "File #{file.name}", message: "Replace PDF of task #{task.task_definition.abbreviation} for #{task.student.name}" }
             else
-              success << { row: "File #{file[:name]}", message: "Replace PDF of group task #{task.task_definition.abbreviation} for #{task.group.name}" }
+              success << { row: "File #{file.name}", message: "Replace PDF of group task #{task.task_definition.abbreviation} for #{task.group.name}" }
             end
             FileUtils.rm tmp_file
           else
-            errors << { row: "File #{file[:name]}", message: 'The file does not appear to be a valid PDF.' }
+            errors << { row: "File #{file.name}", message: 'The file does not appear to be a valid PDF.' }
             next
           end
         end
@@ -2503,15 +3156,345 @@ class Unit < ApplicationRecord
     }
   end
 
+  def batch_feedback_csv_required_headers
+    ['username', 'student id', 'status', 'comment']
+  end
+
+  def parse_batch_feedback_csv(csv_str, return_headers: false)
+    CSV.parse(
+      csv_str,
+      headers: true,
+      return_headers: return_headers,
+      header_converters: [->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '')&.downcase }],
+      converters: [->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }]
+    )
+  end
+
+  def find_project_for_batch_feedback_csv_entry(task_entry)
+    username = task_entry['username'].to_s.strip
+    student_id = task_entry['student id'].to_s.strip
+
+    return [nil, 'Provide either Username or Student ID.'] if username.blank? && student_id.blank?
+
+    username_project = if username.present?
+                         projects.joins(:user).where('LOWER(users.username) = ?', username.downcase).first
+                       end
+    student_id_project = if student_id.present?
+                           projects.joins(:user).where(users: { student_id: student_id }).first
+                         end
+
+    if username.present? && username_project.nil? && student_id.blank?
+      return [nil, "Unable to find student with username '#{username}'."]
+    end
+
+    if student_id.present? && student_id_project.nil? && username.blank?
+      return [nil, "Unable to find student with student ID '#{student_id}'."]
+    end
+
+    if username_project.present? && student_id_project.present? && username_project != student_id_project
+      return [nil, "Username '#{username}' and student ID '#{student_id}' refer to different students."]
+    end
+
+    project = username_project || student_id_project
+    return [nil, 'Unable to find student project for this row.'] if project.nil?
+
+    [project, nil]
+  end
+
+  def build_batch_feedback_task_rows(task_definition, csv_str, errors, zip: nil, progress_callback: nil)
+    task_rows = []
+
+    csv_str.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '')
+    csv_str.tr!("\r", "\n")
+    csv_str.gsub!("\n\n", "\n")
+
+    entries = parse_batch_feedback_csv(csv_str, return_headers: true)
+    total_rows = 0
+
+    entries.each do |task_entry|
+      next if task_entry.header_row?
+      next if task_entry.to_hash.values.all? { |value| value.to_s.strip.blank? }
+
+      total_rows += 1
+    end
+
+    rows_processed = 0
+
+    progress_callback&.call(message: 'Validating batch feedback rows', total_rows: total_rows, rows_processed: 0)
+
+    entries.each do |task_entry|
+      if task_entry.header_row?
+        batch_feedback_csv_required_headers.each do |expect_header|
+          unless task_entry.to_hash.keys.include?(expect_header)
+            errors << { row: task_entry, message: "Missing header '#{expect_header}', ensure first row has header information." }
+            return nil
+          end
+        end
+        next
+      end
+
+      next if task_entry.to_hash.values.all? { |value| value.to_s.strip.blank? }
+
+      rows_processed += 1
+      progress_callback&.call(message: 'Validating batch feedback rows', rows_processed: rows_processed)
+
+      project, project_error = find_project_for_batch_feedback_csv_entry(task_entry)
+      if project_error.present?
+        errors << { row: task_entry, message: project_error }
+        next
+      end
+
+      task = project.task_for_task_definition(task_definition)
+      if task.nil?
+        errors << { row: task_entry, message: "Unable to find task for #{task_definition.abbreviation}" }
+        next
+      end
+
+      if task.group_task?
+        errors << { row: task_entry, message: 'Batch feedback upload does not support group tasks.' }
+        next
+      end
+
+      status = task_entry['status'].to_s.strip
+      if status.blank?
+        errors << { row: task_entry, message: 'Status cannot be blank.' }
+        next
+      end
+
+      if TaskStatus.status_for_name(status).nil?
+        errors << { row: task_entry, message: "Unable to update task status to '#{status}'." }
+        next
+      end
+
+      student_entries = zip.nil? ? [] : batch_feedback_entries_for_project(zip, project)
+      pdf_entries = zip.nil? ? [] : batch_feedback_named_pdf_entries_for_project(zip, project)
+
+      if zip.present?
+        if student_entries.any? && pdf_entries.empty?
+          expected_identifier = batch_feedback_primary_identifier_for_project(project)
+          errors << {
+            row: task_entry,
+            message: "Expected a PDF named #{expected_identifier}.pdf inside #{expected_identifier}'s folder."
+          }
+          next
+        end
+
+        if pdf_entries.length > 1
+          expected_identifier = batch_feedback_primary_identifier_for_project(project)
+          errors << {
+            row: task_entry,
+            message: "Found multiple PDFs named #{expected_identifier}.pdf inside #{expected_identifier}'s folder."
+          }
+          next
+        end
+      end
+
+      task_rows << {
+        task: task,
+        project: project,
+        task_entry: task_entry,
+        pdf_entry: pdf_entries.first
+      }
+    end
+
+    task_rows
+  end
+
+  def write_batch_feedback_csv_file(task_rows)
+    file = Tempfile.new(["batch_feedback_#{id}_", '.csv'])
+    file.write(build_batch_feedback_legacy_marks_csv(task_rows))
+    file.rewind
+    file
+  end
+
+  def upload_batch_feedback_csv(user, task_definition, file, progress_callback: nil)
+    success = []
+    errors = []
+    ignored = []
+
+    type = mime_type(file["tempfile"].path)
+
+    unless mime_in_list?(file["tempfile"].path, ['text/', 'text/plain', 'text/csv', 'application/zip', 'multipart/x-gzip', 'multipart/x-zip', 'application/x-gzip', 'application/octet-stream'])
+      errors << { row: {}, message: "File given is not a csv or zip file - detected #{type}" }
+      return {
+        success: success,
+        ignored: ignored,
+        errors: errors
+      }
+    end
+
+    if type.start_with?('text/', 'text/plain', 'text/csv')
+      task_rows = build_batch_feedback_task_rows(
+        task_definition,
+        File.read(file["tempfile"].path),
+        errors,
+        progress_callback: progress_callback
+      )
+
+      if task_rows.blank?
+        return {
+          success: success,
+          ignored: ignored,
+          errors: errors
+        }
+      end
+
+      converted_csv = write_batch_feedback_csv_file(task_rows)
+      progress_callback&.call(message: 'Applying batch feedback updates', total_rows: task_rows.count, rows_processed: 0)
+      result = upload_batch_task_zip_or_csv(user, { 'tempfile' => converted_csv })
+      result[:errors] = errors + result[:errors]
+      result
+    else
+      upload_batch_feedback_zip(user, task_definition, file, progress_callback: progress_callback)
+    end
+  ensure
+    converted_csv.close! if defined?(converted_csv) && converted_csv.present?
+  end
+
+  def batch_feedback_primary_identifier_for_project(project)
+    project.user.student_id.to_s.strip.presence || project.user.username.to_s.strip
+  end
+
+  def batch_feedback_identifiers_for_project(project)
+    [
+      project.user.student_id.to_s.strip.presence,
+      project.user.username.to_s.strip.presence
+    ].compact.uniq
+  end
+
+  def batch_feedback_entries_for_identifier(zip, identifier)
+    zip.select do |entry|
+      path_parts = entry.name.split('/').reject(&:blank?)
+      next false if path_parts.empty?
+
+      if entry.name_is_directory?
+        path_parts.any? { |part| part.casecmp(identifier).zero? }
+      else
+        path_parts[0...-1].any? { |part| part.casecmp(identifier).zero? }
+      end
+    end
+  end
+
+  def batch_feedback_entries_for_project(zip, project)
+    batch_feedback_identifiers_for_project(project).flat_map do |identifier|
+      batch_feedback_entries_for_identifier(zip, identifier)
+    end.uniq
+  end
+
+  def batch_feedback_named_pdf_entries_for_identifier(zip, identifier)
+    batch_feedback_entries_for_identifier(zip, identifier).select do |entry|
+      next false if entry.name_is_directory?
+      next false unless File.extname(entry.name).casecmp('.pdf').zero?
+
+      File.basename(entry.name, '.pdf').casecmp(identifier).zero?
+    end
+  end
+
+  def batch_feedback_named_pdf_entries_for_project(zip, project)
+    batch_feedback_identifiers_for_project(project).flat_map do |identifier|
+      batch_feedback_named_pdf_entries_for_identifier(zip, identifier)
+    end.uniq
+  end
+
+  def build_batch_feedback_legacy_marks_csv(task_rows)
+    CSV.generate do |csv|
+      csv << check_mark_csv_headers.split(',')
+
+      task_rows.each do |task_row|
+        task = task_row[:task]
+        project = task_row[:project]
+        task_entry = task_row[:task_entry]
+        tutorial = project.tutorial_for(task.task_definition)&.abbreviation.to_s
+
+        csv << [
+          project.user.username,
+          project.user.name,
+          tutorial,
+          task.task_definition.abbreviation,
+          task_entry['status'].to_s.strip,
+          '',
+          '',
+          task_entry['comment'].to_s.strip
+        ]
+      end
+    end
+  end
+
+  def upload_batch_feedback_zip(user, task_definition, file, progress_callback: nil)
+    success = []
+    errors = []
+    ignored = []
+    repacked_zip = Tempfile.new(["batch_feedback_#{id}_", '.zip'])
+
+    Zip::File.open(file["tempfile"].path) do |zip|
+      marking_file = zip.glob('**/marks.csv').first
+      if marking_file.nil?
+        errors << { row: {}, message: 'No marks.csv contained in zip.' }
+        return {
+          success: success,
+          ignored: ignored,
+          errors: errors
+        }
+      end
+
+      csv_str = marking_file.get_input_stream.read
+      csv_str.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless csv_str.nil?
+
+      task_rows = build_batch_feedback_task_rows(task_definition, csv_str, errors, zip: zip, progress_callback: progress_callback)
+
+      if task_rows.blank?
+        return {
+          success: success,
+          ignored: ignored,
+          errors: errors
+        }
+      end
+
+      Zip::File.open(repacked_zip.path, Zip::File::CREATE) do |output_zip|
+        output_zip.get_output_stream('marks.csv') do |f|
+          f.write(build_batch_feedback_legacy_marks_csv(task_rows))
+        end
+
+        progress_callback&.call(message: 'Preparing PDF replacements', total_rows: task_rows.count, rows_processed: 0)
+
+        task_rows.each_with_index do |task_row, index|
+          next if task_row[:pdf_entry].nil?
+
+          output_name = "#{task_row[:task].task_definition.abbreviation}-#{task_row[:task].id}.pdf"
+          output_zip.get_output_stream(output_name) do |f|
+            f.write(task_row[:pdf_entry].get_input_stream.read)
+          end
+
+          progress_callback&.call(message: 'Preparing PDF replacements', rows_processed: index + 1)
+        end
+      end
+    end
+
+    result = upload_batch_task_zip_or_csv(user, { 'tempfile' => repacked_zip })
+    result[:errors] = errors + result[:errors]
+    result
+  ensure
+    repacked_zip.close! if defined?(repacked_zip) && repacked_zip.present?
+  end
+
   def send_weekly_status_emails(summary_stats)
     return unless send_notifications
 
     summary_stats[:unit] = self
-    summary_stats[:unit_week_comments] = comments.where("task_comments.created_at > :start AND task_comments.created_at < :end", start: summary_stats[:week_start], end: summary_stats[:week_end]).count
-    summary_stats[:unit_week_engagements] = task_engagements.where("task_engagements.engagement_time > :start AND task_engagements.engagement_time < :end", start: summary_stats[:week_start], end: summary_stats[:week_end]).count
+    summary_stats[:tutorials] = {}
+    summary_stats[:tutorial_streams] = {}
+    summary_stats[:staff] ||= {}
     summary_stats[:revert_count] = 0
     summary_stats[:revert] = {}
-    summary_stats[:staff] = {}
+    summary_stats[:oldest_task_days] ||= 0
+
+    summary_stats[:unit_week_comments] =
+      comments
+      .where("task_comments.created_at > :start AND task_comments.created_at < :end", start: summary_stats[:week_start], end: summary_stats[:week_end])
+      .where(content_type: :text)
+      .count
+
+    summary_stats[:unit_week_engagements] = task_engagements.where("task_engagements.engagement_time > :start AND task_engagements.engagement_time < :end", start: summary_stats[:week_start], end: summary_stats[:week_end]).count
 
     days_to_end_of_unit = (end_date.to_date - DateTime.now).to_i
     days_from_start_of_unit = (DateTime.now - start_date.to_date).to_i
@@ -2519,6 +3502,12 @@ class Unit < ApplicationRecord
     return if days_from_start_of_unit < 4 || days_to_end_of_unit < 0
 
     staff.each do |ur|
+      summary_stats[:staff][ur.user] ||= {}
+      summary_stats[:staff][ur.user][:staff_engagements] ||= 0
+      summary_stats[:staff][ur.user][:tasks_awaiting_feedback_count] ||= 0
+      summary_stats[:staff][ur.user][:weekly_engagements_count] ||= 0
+      summary_stats[:staff][ur.user][:weekly_total_tasks_discussed] ||= 0
+      summary_stats[:staff][ur.user][:oldest_task_days] ||= 0
       summary_stats[:revert][ur.user] = []
     end
 
@@ -2526,25 +3515,274 @@ class Unit < ApplicationRecord
       project.send_weekly_status_email(summary_stats, days_from_start_of_unit > 28 && days_to_end_of_unit > 14)
     end
 
-    summary_stats[:num_students_without_tutors] = active_projects.joins('LEFT OUTER JOIN tutorial_enrolments on tutorial_enrolments.project_id = projects.id').where('tutorial_enrolments.tutorial_id' => nil).count
+    tutorial_streams.each do |tutorial_stream|
+      summary_stats[:tutorial_streams][tutorial_stream] ||= {}
 
-    staff.each do |ur|
-      ur.populate_summary_stats(summary_stats)
+      # count projects that have NO enrolment for any tutorial in this stream
+      projects_in_unit = active_projects.select(:id)
+      tutorial_ids_in_stream = tutorial_stream.tutorials.select(:id)
+      projects_without_tutor = Project
+              .where(id: projects_in_unit)
+              .where(enrolled: true)
+              .where.not(
+                id: TutorialEnrolment
+                  .where(tutorial_id: tutorial_ids_in_stream)
+                  .select(:project_id)
+              )
+              .distinct
+
+      summary_stats[:tutorial_streams][tutorial_stream][:num_students_without_tutors] = projects_without_tutor.count
+
+      stream_linked_to_task_definition = task_definitions.any? { |td| td.tutorial_stream_id == tutorial_stream.id }
+      summary_stats[:tutorial_streams][tutorial_stream][:stream_linked_to_task_definition] = stream_linked_to_task_definition
+
+      # Continue if this tutorial stream is not linked to any task definition
+      next unless stream_linked_to_task_definition
+
+      row = summary_stats[:tutorial_streams][tutorial_stream][:tutorials] ||= {}
+
+      tutorial_stream.tutorials.each do |tutorial|
+          # Create new entry for tutorial row
+          row = summary_stats[:tutorial_streams][tutorial_stream][:tutorials][tutorial] ||= {}
+          tutorial.unit_role.populate_summary_stats(summary_stats, tutorial_stream, tutorial, row)
+      end
     end
 
+    # Group tutorials by tutor
+    group_tutorials_by_tutor(summary_stats)
+
     staff.each do |ur|
-      ur.send_weekly_status_email(summary_stats)
+        ur.send_weekly_status_email(summary_stats)
     end
 
     summary_stats[:staff] = {}
   end
 
+  def group_tutorials_by_tutor(summary_stats)
+    summary_stats[:tutorial_streams].each_value do |tutorial_stream_data|
+      next unless tutorial_stream_data[:stream_linked_to_task_definition]
+      tutorial_stream_data[:unit_roles] ||= {}
+
+      tutorial_stream_data[:tutorials].each do |tutorial, data|
+        unit_role = tutorial.unit_role
+        unit_role_row = tutorial_stream_data[:unit_roles][unit_role] ||= {
+          staff_engagements: 0,
+          tasks_awaiting_feedback_count: 0,
+          weekly_engagements_count: 0,
+          total_tasks_discussed: 0,
+          weekly_tasks_discussed: 0,
+          oldest_task_days: 0,
+          number_of_students: 0,
+          total_staff_engagements: 0,
+          total_comments: [],
+          sent_comments: [],
+          tutorials: 0
+        }
+        unit_role_row[:staff_engagements] += data[:staff_engagements].count
+        unit_role_row[:tasks_awaiting_feedback_count] += data[:tasks_awaiting_feedback_count]
+        unit_role_row[:weekly_engagements_count] += data[:weekly_engagements_count]
+        unit_role_row[:total_tasks_discussed] += data[:total_tasks_discussed].count
+        unit_role_row[:weekly_tasks_discussed] += data[:weekly_tasks_discussed].count
+        unit_role_row[:oldest_task_days] = [unit_role_row[:oldest_task_days], data[:oldest_task_days]].max
+        unit_role_row[:number_of_students] += data[:number_of_students]
+        unit_role_row[:total_staff_engagements] += data[:total_staff_engagements]
+        unit_role_row[:total_comments].concat(data[:total_comments].to_a)
+        unit_role_row[:sent_comments].concat(data[:sent_comments].to_a)
+        unit_role_row[:tutorials] += 1
+      end
+    end
+  end
+
+  def archive_submissions(out)
+    out.puts "Unit: #{code} - #{name}"
+    projects.each do |project|
+      project.archive_submissions(out)
+    end
+  end
+
+  def move_files_to_archive
+    FileUtils.mkdir_p FileHelper.archive_root
+    FileUtils.mkdir_p FileHelper.root_portfolio_dir(archived: true)
+
+    # Indicate unit is now archived
+    update(archived: true)
+
+    # Move work
+    archive_work_path = FileHelper.unit_work_root(self, archived: :force)
+    original_work_path = FileHelper.unit_work_root(self, archived: false)
+
+    if File.exist?(original_work_path) && ! File.exist?(archive_work_path)
+      FileUtils.mv(original_work_path, archive_work_path)
+    end
+
+    # Move portfolios
+    archive_portfolio_path = FileHelper.unit_portfolio_dir(self, create: false, archived: :force)
+    original_portfolio_path = FileHelper.unit_portfolio_dir(self, create: false, archived: false)
+
+    if File.exist?(original_portfolio_path) && ! File.exist?(archive_portfolio_path)
+      FileUtils.mv(original_portfolio_path, archive_portfolio_path)
+    end
+
+    # Move submission history
+    archive_submission_history_path = FileHelper.unit_submission_history_dir(self, archived: :force)
+    original_submission_history_path = FileHelper.unit_submission_history_dir(self, archived: false)
+
+    if File.exist?(original_submission_history_path) && ! File.exist?(archive_submission_history_path)
+      FileUtils.mkdir_p(FileHelper.root_submission_history_dir(archived: true))
+      FileUtils.mv(original_submission_history_path, archive_submission_history_path)
+    end
+
+    # Move JPlag reports
+    archive_jplag_report_path = FileHelper.unit_jplag_report_dir(self, create: false, archived: :force)
+    original_jplag_report_path = FileHelper.unit_jplag_report_dir(self, create: false, archived: false)
+
+    if File.exist?(original_jplag_report_path) && ! File.exist?(archive_jplag_report_path)
+      FileUtils.mkdir_p(FileHelper.root_jplag_report_dir(archived: true))
+      FileUtils.mv(original_jplag_report_path, archive_jplag_report_path)
+    end
+  end
+
+  def get_tutor_times(start_date: nil, end_date: nil, timezone: nil, ignore_sessions_during_tutorials: false)
+    query = MarkingSession.where(unit_id: id)
+
+
+    tz = Time.zone
+    tz = ActiveSupport::TimeZone[timezone] if timezone
+
+    end_date = if end_date.present?
+             tz.parse(end_date.to_s).end_of_day
+               else
+             tz.today.end_of_day
+               end
+
+    start_date = if start_date.present?
+                   tz.parse(start_date.to_s).beginning_of_day
+                 else
+                   (end_date - 7.days).beginning_of_day
+                 end
+
+    query = query.where(start_time: start_date..end_date)
+
+
+    query = query.where(during_tutorial: false) if ignore_sessions_during_tutorials
+
+    # Precompute sessions grouped by user_id
+    sessions_by_user = query.to_a.group_by(&:user_id).transform_values do |sessions|
+      sessions.sum(&:duration_minutes)
+    end
+    # => { 2 => 16, 3 => 45, ... }
+
+    # Precompute activities grouped by session_id and action
+    activities_by_session = SessionActivity
+      .joins(:marking_session)
+      .where(marking_sessions: { unit_id: id })
+      .group(:marking_session_id, :action)
+      .count
+    # => { [12, "assessing"] => 3, [12, "add-comment"] => 1, ... }
+
+    # Build a mapping from session_id => user_id for quick lookup
+    session_to_user = query.pluck(:id, :user_id).to_h
+    # => { 12 => 2, 13 => 2, 14 => 2 }
+
+    tutor_summary = Hash.new { |h, k| h[k] = { total_minutes: 0, assessments: 0, comments: 0 } }
+
+    # Sum session durations per user
+    sessions_by_user.each do |user_id, minutes|
+      tutor_summary[user_id][:total_minutes] = minutes
+    end
+
+    # Sum activities per user
+    activities_by_session.each do |(session_id, action), count|
+      user_id = session_to_user[session_id]
+      next unless user_id
+
+      case action
+      when "add-comment"
+        tutor_summary[user_id][:comments] += count
+      when "assessing"
+        tutor_summary[user_id][:assessments] += count
+      end
+    end
+
+    # Get names of the tutors
+    users = User.where(id: tutor_summary.keys).index_by(&:id).transform_values(&:name)
+
+    tutor_summary.map do |user_id, data|
+      {
+        user_id: user_id,
+        tutor_name: users[user_id],
+        total_minutes: data[:total_minutes],
+        assessments_made: data[:assessments],
+        comments_made: data[:comments]
+      }
+    end
+  end
+
+  def get_tutor_times_csv(start_date: nil, end_date: nil, timezone: nil, ignore_sessions_during_tutorials: false)
+    summary = get_tutor_times(start_date: start_date, end_date: end_date, timezone: timezone, ignore_sessions_during_tutorials: ignore_sessions_during_tutorials)
+
+    CSV.generate() do |csv|
+      # Add headers
+      csv << [
+        'User ID',
+        'Tutor',
+        'Total Minutes',
+        'Assessments',
+        'Comments',
+      ]
+
+
+      summary.each do |row|
+        csv << [
+          row[:user_id].to_s,
+          row[:tutor_name],
+          row[:total_minutes].to_s,
+          row[:assessments_made].to_s,
+          row[:comments_made].to_s,
+        ]
+      end
+    end
+  end
+
+  def capture_task_complete_stats_snapshot!(snapshot_time: Time.zone.now)
+    snapshot_payload = task_completion_csv_generator(task_status_uses_id: true)
+
+    timestamp = snapshot_time.to_i.to_s
+
+    task_completion_snapshots
+      .find_or_initialize_by(snapshot_timestamp: timestamp)
+      .tap do |snapshot|
+      snapshot.save!
+      snapshot.store_stats!(snapshot_payload)
+    end
+  end
+
   private
 
   def delete_associated_files
-    FileUtils.rm_rf FileHelper.unit_dir(self)
-    FileUtils.rm_rf FileHelper.unit_portfolio_dir(self)
+    unit_path = FileHelper.unit_dir(self, create: false)
+    unit_portfolio_path = FileHelper.unit_portfolio_dir(self, create: false)
+    submission_history_path = FileHelper.unit_submission_history_dir(self)
+    jplag_report_path = FileHelper.unit_jplag_report_dir(self, create: false)
+
+    FileUtils.rm_rf unit_path
+    FileUtils.rm_rf unit_portfolio_path
+    FileUtils.rm_rf submission_history_path
+    FileUtils.rm_rf jplag_report_path
+
     FileUtils.cd FileHelper.student_work_dir
+  end
+
+  def update_overdue_tasks_aip
+    return unless saved_change_to_mark_late_submissions_as_assess_in_portfolio? && mark_late_submissions_as_assess_in_portfolio
+
+    # If the mark_late_submissions_as_assess_in_portfolio was enabled, move all Time & Feedback exceeded tasks to Assess in Portfolio
+    overdue_statuses = [TaskStatus.time_exceeded.id]
+
+    tasks.where(task_status_id: overdue_statuses).find_each do |task|
+      task.add_status_comment(main_convenor.user, TaskStatus.assess_in_portfolio)
+      task.update(task_status_id: TaskStatus.assess_in_portfolio.id)
+    end
   end
 
   def propogate_date_changes_to_tasks
@@ -2558,5 +3796,39 @@ class Unit < ApplicationRecord
     task_definitions.each do |td|
       td.propogate_date_changes date_diff
     end
+  end
+
+  def move_files_on_code_change
+    return unless saved_change_to_code?
+
+    old_dir = FileHelper.dir_for_unit_code_and_id(saved_change_to_code[0], id, create: false, archived: archived)
+    if File.exist? old_dir
+      new_dir = FileHelper.unit_dir(self, create: false)
+      FileUtils.mv(old_dir, new_dir) unless File.exist?(new_dir)
+    end
+
+    old_submission_history_dir = File.join(
+      FileHelper.root_submission_history_dir(archived: archived),
+      FileHelper.sanitized_path("#{saved_change_to_code[0]}-#{id}")
+    )
+
+    if File.exist? old_submission_history_dir
+      new_submission_history_dir = FileHelper.unit_submission_history_dir(self)
+      FileUtils.mv(old_submission_history_dir, new_submission_history_dir) unless File.exist? new_submission_history_dir
+    end
+
+    old_jplag_report_dir = File.join(
+      FileHelper.root_jplag_report_dir(archived: archived),
+      FileHelper.sanitized_path("#{saved_change_to_code[0]}-#{id}")
+    )
+
+    if File.exist? old_jplag_report_dir
+      new_jplag_report_dir = FileHelper.unit_jplag_report_dir(self, create: false)
+      FileUtils.mv(old_jplag_report_dir, new_jplag_report_dir) unless File.exist? new_jplag_report_dir
+    end
+
+    # rubocop:disable Rails/SkipsModelValidations
+    tasks.where('portfolio_evidence IS NOT NULL').update_all("portfolio_evidence = REPLACE(portfolio_evidence, '#{saved_change_to_code[0]}-#{id}', '#{code}-#{id}')")
+    # rubocop:enable Rails/SkipsModelValidations
   end
 end

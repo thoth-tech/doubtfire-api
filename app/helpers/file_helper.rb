@@ -1,20 +1,28 @@
+# frozen_string_literal: true
+
 require 'English'
 require 'zip'
 require 'tmpdir'
 require 'open3'
 require 'shellwords'
 require 'pdf-reader'
+require 'zlib'
+require 'rubygems/package'
 
 module FileHelper
   extend LogHelper
   extend TimeoutHelper
   extend MimeCheckHelpers
 
+  ZIP_NESTED_ARCHIVE_EXTENSIONS = %w[
+    .7z .bz2 .ear .gz .jar .rar .tar .tar.bz2 .tar.gz .tar.xz .tbz .tbz2 .tgz .txz .war .xz .zip
+  ].freeze
+
   def known_extension?(extn)
-    allow_extensions = %w(pdf ps csv xls xlsx pas cpp c cs csv h hpp java py js html coffee scss yaml yml xml json ts r rb rmd rnw rhtml rpres tex vb sql txt md jack hack asm hdl tst out cmp vm sh bat dat ipynb css png bmp tiff tif jpeg jpg gif zip gz tar wav ogg mp3 mp4 webm aac pcm aiff flac wma alac pml)
+    allow_extensions = %w(pdf ps csv xls xlsx pas cpp c cs csv h hpp java py js html coffee scss yaml yml xml json ts r rb rmd rnw rhtml rpres tex vb sql txt md jack hack asm hdl tst out cmp vm sh bat dat ipynb css png bmp tiff tif jpeg jpg gif zip gz tgz tar wav ogg mp3 mp4 webm aac pcm aiff flac wma alac pml vue)
 
     # Allow empty or nil extensions for blobs otherwise check that it matches the allowed list
-    extn.nil? || extn.empty? || allow_extensions.include?(extn)
+    extn.blank? || allow_extensions.include?(extn)
   end
 
   #
@@ -32,6 +40,16 @@ module FileHelper
                 'application/tst', 'text/x-cmp', 'text/x-vm', 'application/x-sh', 'application/x-bat', 'application/dat', 'application/x-wine-extension-ini']
     when 'document'
       mime_allow_list = [ 'application/pdf' ]
+    when 'zip', 'archive'
+      mime_allow_list = [
+        'application/zip',
+        'application/x-zip',
+        'application/x-zip-compressed',
+        'multipart/x-zip',
+        'application/x-tar',
+        'application/gzip',
+        'application/x-gzip'
+      ]
     when 'audio'
       mime_allow_list = ['audio/', 'video/webm', 'application/ogg', 'application/octet-stream']
     when 'comment_attachment'
@@ -42,20 +60,20 @@ module FileHelper
       logger.error "Unknown type '#{kind}' provided for '#{name}'"
     end
 
-    extension_check = FileHelper.known_extension?(File.extname(file["tempfile"]).downcase[1..])
+    extension_check = FileHelper.known_extension?(File.extname(file['tempfile']).downcase[1..])
     unless extension_check
-      msg = "invalid file extension."
-      logger.debug "File extension check failed"
+      msg = 'invalid file extension.'
+      logger.debug 'File extension check failed'
       return {
         accepted: false,
         msg: msg
       }
     end
 
-    mime_check = mime_in_list?(file["tempfile"].path, mime_allow_list)
+    mime_check = mime_in_list?(file['tempfile'].path, mime_allow_list)
     unless mime_check
-      msg = "invalid file MIME type, file is likely corrupted."
-      logger.debug "File MIME check failed"
+      msg = 'invalid file MIME type, file is likely corrupted.'
+      logger.debug 'File MIME check failed'
       return {
         accepted: false,
         msg: msg
@@ -63,12 +81,12 @@ module FileHelper
     end
 
     # Extra checks for PDF documents
-    if kind == "document"
-      pdf_validation_result = validate_pdf(file["tempfile"].path)
+    if kind == 'document'
+      pdf_validation_result = validate_pdf(file['tempfile'].path)
 
       if pdf_validation_result[:encrypted]
-        msg = "PDF file is encrypted, encrypted files are not supported."
-        logger.debug "PDF file is encrypted"
+        msg = 'PDF file is encrypted, encrypted files are not supported.'
+        logger.debug 'PDF file is encrypted'
         return {
           accepted: false,
           msg: msg
@@ -76,8 +94,8 @@ module FileHelper
       end
 
       unless pdf_validation_result[:valid]
-        msg = "PDF file is corrupted."
-        logger.debug "PDF file is corrupted"
+        msg = 'PDF file is corrupted.'
+        logger.debug 'PDF file is corrupted'
         return {
           accepted: false,
           msg: msg
@@ -85,12 +103,24 @@ module FileHelper
       end
     end
 
-    logger.debug "Uploaded file is accepted"
+    if %w[zip archive].include?(kind)
+      zip_validation_result = validate_zip_upload(file['tempfile'].path, File.basename(file[:filename].to_s))
+
+      unless zip_validation_result[:valid]
+        logger.debug "Zip file is invalid: #{zip_validation_result[:msg]}"
+        return {
+          accepted: false,
+          msg: zip_validation_result[:msg]
+        }
+      end
+    end
+
+    logger.debug 'Uploaded file is accepted'
 
     # All checks are done
     {
       accepted: true,
-      msg: "success"
+      msg: 'success'
     }
   end
 
@@ -125,9 +155,7 @@ module FileHelper
   end
 
   def task_file_dir_for_unit(unit, create = true)
-    file_server = Doubtfire::Application.config.student_work_dir
-    dst = "#{file_server}/" # trust the server config and passed in type for paths
-    dst << sanitized_path("#{unit.code}-#{unit.id}", 'TaskFiles') << '/'
+    dst = unit_work_root(unit) << 'TaskFiles/'
 
     FileUtils.mkdir_p dst if create && (!Dir.exist? dst)
 
@@ -176,6 +204,30 @@ module FileHelper
     Doubtfire::Application.config.student_work_dir
   end
 
+  def archive_root
+    Doubtfire::Application.config.archive_dir
+  end
+
+  # Get the path to the unit root - will take into consideration if archived
+  #
+  # @param [Unit] unit - the unit to get the root path for
+  # @param [Boolean] archived - whether to use the archived property (true/false)
+  #                             or force it to be the archived path (:force)
+  def unit_work_root(unit, archived: true)
+    dst = if (unit.archived && archived) || (archived == :force)
+            "#{archive_root}/"
+          else
+            "#{student_work_root}/"
+          end
+
+    dst << sanitized_path("#{unit.code}-#{unit.id}") << '/'
+  end
+
+  def project_work_root(project, archived: true, username: nil)
+    username = project.student.username.to_s if username.nil?
+    unit_work_root(project.unit, archived: archived) << sanitized_path(username) << '/'
+  end
+
   #
   # Generates a path for storing student work
   # type = [:new, :in_process, :done, :pdf, :plagarism]
@@ -187,18 +239,17 @@ module FileHelper
       file_server = Doubtfire::Application.config.student_work_dir
       dst = "#{file_server}/" # trust the server config and passed in type for paths
 
-      if !(type.nil? || task.nil?)
+      if !(type.nil? || task.nil?) # we have task and type
         if [:discussion, :pdf, :comment].include? type
-          dst << sanitized_path("#{task.project.unit.code}-#{task.project.unit.id}", task.project.student.username.to_s, type.to_s) << '/'
+          dst = project_work_root(task.project) << sanitized_path(type.to_s) << '/'
         elsif [:done, :plagarism].include? type
-          dst << sanitized_path("#{task.project.unit.code}-#{task.project.unit.id}", task.project.student.username.to_s, type.to_s, task.id.to_s) << '/'
+          dst = project_work_root(task.project) << sanitized_path(type.to_s, task.id.to_s) << '/'
         else # new and in_process -- just have task id
           # Add task id to dst if we want task
           dst << "#{type}/#{task.id}/"
         end
-      elsif !type.nil?
+      elsif !type.nil? # have type but not task
         if [:in_process, :new].include? type
-          # Add task id to dst if we want task
           dst << "#{type}/"
         else
           raise 'Error in request to student work directory'
@@ -211,19 +262,40 @@ module FileHelper
     dst
   end
 
-  def unit_dir(unit, create = true)
-    file_server = Doubtfire::Application.config.student_work_dir
-    dst = "#{file_server}/" # trust the server config and passed in type for paths
-    dst << sanitized_path("#{unit.code}-#{unit.id}") << '/'
+  def dir_for_unit_code_and_id(unit_code, unit_id, create: true, archived: false)
+    dst = if archived
+            "#{archive_root}/"
+          else
+            "#{student_work_root}/"
+          end
 
-    FileUtils.mkdir_p dst if create && (!Dir.exist? dst)
+    dst << sanitized_path("#{unit_code}-#{unit_id}")
+
+    FileUtils.mkdir_p dst if create && !Dir.exist?(dst)
 
     dst
   end
 
-  def unit_portfolio_dir(unit, create = true)
-    file_server = Doubtfire::Application.config.student_work_dir
-    dst = "#{file_server}/portfolio/" # trust the server config and passed in type for paths
+  def unit_dir(unit, create: true, archived: true)
+    dir_for_unit_code_and_id(unit.code, unit.id, create: create, archived: archived == :force || (archived && unit.archived))
+  end
+
+  def root_portfolio_dir(archived: false)
+    file_server = if archived
+                    archive_root
+                  else
+                    student_work_root
+                  end
+
+    "#{file_server}/portfolio/" # trust the server config and passed in type for paths
+  end
+
+  def unit_portfolio_dir(unit, create: true, archived: true)
+    dst = if (unit.archived && archived) || (archived == :force)
+            "#{archive_root}/portfolio/"
+          else
+            "#{student_work_root}/portfolio/"
+          end
 
     dst << sanitized_path("#{unit.code}-#{unit.id}") << '/'
 
@@ -232,11 +304,30 @@ module FileHelper
     dst
   end
 
+  def unit_analytics_dir(unit, create: true, archived: true)
+    dst = unit_work_root(unit, archived: archived)
+    dst << 'analytics/'
+
+    FileUtils.mkdir_p(dst) if create
+    dst
+  end
+
+  def unit_task_status_snapshot_path(unit, create: true, archived: true)
+    analytics_dir = unit_analytics_dir(unit, create: create, archived: archived)
+    FileUtils.mkdir_p(analytics_dir) if create
+    File.join(analytics_dir, 'task-status-snapshots.zip')
+  end
+
+  def snapshot_csv_filename(snapshot_timestamp)
+    return nil if snapshot_timestamp.blank?
+    "#{sanitized_filename(snapshot_timestamp.to_s)}.csv"
+  end
+
   #
   # Generates a path for storing student portfolios
   #
-  def student_portfolio_dir(unit, username, create = true)
-    dst = unit_portfolio_dir(unit, create)
+  def student_portfolio_dir(unit, username, create: true, archived: true)
+    dst = unit_portfolio_dir(unit, create: create, archived: archived)
 
     dst << sanitized_path(username.to_s)
 
@@ -245,12 +336,47 @@ module FileHelper
     dst
   end
 
-  def student_portfolio_path(unit, username, create = true)
-    File.join(student_portfolio_dir(unit, username, create), FileHelper.sanitized_filename("#{username}-portfolio.pdf"))
+  def student_portfolio_path(unit, username, create: true, archived: true)
+    File.join(student_portfolio_dir(unit, username, create: create, archived: archived), FileHelper.sanitized_filename("#{username}-portfolio.pdf"))
+  end
+
+  def root_jplag_report_dir(archived: false)
+    file_server = if archived
+                    archive_root
+                  else
+                    student_work_root
+                  end
+
+    "#{file_server}/jplag/results/"
+  end
+
+  def unit_jplag_report_dir(unit, create: false, archived: true)
+    dst = if (unit.archived && archived) || (archived == :force)
+            File.join(root_jplag_report_dir(archived: true), sanitized_path("#{unit.code}-#{unit.id}"))
+          else
+            File.join(root_jplag_report_dir(archived: false), sanitized_path("#{unit.code}-#{unit.id}"))
+          end
+
+    FileUtils.mkdir_p dst if create
+    "#{dst}/"
+  end
+
+  def task_jplag_report_dir(unit, create: false, archived: true)
+    unit_jplag_report_dir(unit, create: create, archived: archived)
+  end
+
+  def task_jplag_report_path(unit, task)
+    File.join(unit_jplag_report_dir(unit), FileHelper.sanitized_filename("#{task.abbreviation}-result.jplag"))
   end
 
   def comment_attachment_path(task_comment, attachment_extension)
     "#{File.join(student_work_dir(:comment, task_comment.task), "#{task_comment.id.to_s}#{attachment_extension}")}"
+  end
+
+  def engagement_attachment_path(engagement, attachment_extension)
+    dir = File.join(project_work_root(engagement.project), 'engagement')
+    FileUtils.mkdir_p(dir)
+    File.join(dir, "#{engagement.id}#{attachment_extension}")
   end
 
   def comment_prompt_path(task_comment, attachment_extension, count)
@@ -264,10 +390,10 @@ module FileHelper
   def compress_image_to_dest(source, dest, delete_frames = false)
     exec = "convert -quiet \
             \"#{source}\" \
-            #{delete_frames ? '-delete 1--1' : ''} -strip -density 72 -quality 85% -resize 2048x2048\\> -resize 48x48\\< \
+            #{delete_frames ? '-delete 1--1' : ''} -auto-orient -strip -density 72 -quality 85% -resize 2048x2048\\> -resize 48x48\\< \
             \"#{dest}\" >>/dev/null 2>>/dev/null"
 
-    did_compress = system_try_within 40, 'compressing image using convert', exec
+    system_try_within 40, 'compressing image using convert', exec
   end
 
   def compress_pdf(path, max_size: 2_500_000, timeout_seconds: 30)
@@ -330,11 +456,198 @@ module FileHelper
     FileUtils.rm_f tmp_file
   end
 
+  def zip_path_safe?(path)
+    return false if path.blank?
+
+    clean_path = path.tr('\\', '/')
+    return false if clean_path.start_with?('/') || clean_path.include?("\0")
+
+    clean_path.sub!(%r{\A\./+}, '')
+    clean_path.split('/').none? { |part| part.blank? || part == '.' || part == '..' }
+  end
+
+  def zip_entry_limit
+    limit = Doubtfire::Application.config.zip_entry_limit.to_i
+    limit.positive? ? limit : 1_000
+  end
+
+  def zip_compression_ratio_limit
+    limit = Doubtfire::Application.config.zip_compression_ratio_limit.to_i
+    limit.positive? ? limit : 100
+  end
+
+  def zip_uncompressed_size_multiplier
+    multiplier = Doubtfire::Application.config.zip_uncompressed_size_multiplier.to_i
+    multiplier.positive? ? multiplier : 10
+  end
+
+  def zip_nested_archive?(path)
+    clean_path = path.to_s.downcase
+    ZIP_NESTED_ARCHIVE_EXTENSIONS.any? { |extension| clean_path.end_with?(extension) }
+  end
+
+  def validate_zip_upload_entry!(name, size, zip_stats, _max_file_size, max_uncompressed_size)
+    raise 'Zip contains a file with an unsafe path.' unless zip_path_safe?(name)
+    raise 'Zip contains another archive file. Nested archives are not allowed.' if zip_nested_archive?(name)
+
+    zip_stats[:entries] += 1
+    zip_stats[:total_uncompressed_size] += size.to_i
+
+    raise "Zip contains too many files. Limit is #{zip_entry_limit} files." if zip_stats[:entries] > zip_entry_limit
+    # raise "Zip contains a file larger than the #{max_file_size / 1_000_000}MB file limit." if size.to_i > max_file_size
+    if zip_stats[:total_uncompressed_size] > max_uncompressed_size
+      raise "Zip expands beyond the #{max_uncompressed_size / 1_000_000}MB uncompressed size limit."
+    end
+  end
+
+  def validate_zip_file(path, max_file_size, max_uncompressed_size)
+    stats = { entries: 0, total_uncompressed_size: 0 }
+
+    Zip::File.open(path) do |zip_file|
+      zip_file.each do |entry|
+        raise 'Encrypted zip entries are not supported.' if entry.respond_to?(:encrypted?) && entry.encrypted?
+        raise 'Zip contains an unsupported link entry.' if entry.respond_to?(:ftype) && entry.ftype == :symlink
+        next if entry.directory?
+
+        validate_zip_upload_entry!(entry.name, entry.size, stats, max_file_size, max_uncompressed_size)
+      end
+    end
+
+    stats
+  end
+
+  def validate_tar_file(io, max_file_size, max_uncompressed_size)
+    stats = { entries: 0, total_uncompressed_size: 0 }
+
+    Gem::Package::TarReader.new(io) do |tar|
+      tar.each do |entry|
+        next if entry.directory?
+        raise 'Zip contains an unsupported non-file entry.' unless entry.file?
+
+        validate_zip_upload_entry!(entry.full_name, entry.header.size, stats, max_file_size, max_uncompressed_size)
+      end
+    end
+
+    stats
+  end
+
+  def validate_zip_upload(path, filename)
+    max_file_size = Doubtfire::Application.config.max_file_size.to_i
+    max_file_size = 10_000_000 if max_file_size <= 0
+    max_uncompressed_size = max_file_size * zip_uncompressed_size_multiplier
+    return { valid: false, msg: "Zip exceeds the #{max_file_size / 1_000_000}MB file limit." } if File.size(path) > max_file_size
+
+    begin
+      stats =
+        if filename.downcase.end_with?('.zip')
+          validate_zip_file(path, max_file_size, max_uncompressed_size)
+        elsif filename.downcase.end_with?('.tar')
+          File.open(path, 'rb') { |file| validate_tar_file(file, max_file_size, max_uncompressed_size) }
+        elsif filename.downcase.end_with?('.tar.gz', '.tgz')
+          Zlib::GzipReader.open(path) { |gzip| validate_tar_file(gzip, max_file_size, max_uncompressed_size) }
+        else
+          return { valid: false, msg: 'Unsupported zip format. Use .zip, .tar, .tar.gz, or .tgz.' }
+        end
+
+      return { valid: false, msg: 'Zip must contain at least one file.' } if stats[:entries].zero?
+
+      compressed_size = [File.size(path), 1].max
+      if stats[:total_uncompressed_size] / compressed_size > zip_compression_ratio_limit
+        return { valid: false, msg: "Zip compression ratio is too high. Limit is #{zip_compression_ratio_limit}:1." }
+      end
+
+      { valid: true, msg: 'success' }
+    rescue Zip::Error, Zlib::Error, Gem::Package::TarInvalidError, EOFError
+      { valid: false, msg: 'Zip file is corrupted or not a supported zip.' }
+    rescue StandardError => e
+      { valid: false, msg: e.message }
+    end
+  end
+
+  def zip_tree_add_path(tree, path)
+    clean_path = path.to_s.tr('\\', '/').sub(%r{\A\./+}, '').sub(%r{/+\z}, '')
+    return if clean_path.blank?
+
+    parts = clean_path.split('/').reject(&:blank?)
+    node = tree
+
+    parts.each_with_index do |part, index|
+      key = index == parts.length - 1 ? part : "#{part}/"
+      node[key] ||= {}
+      node = node[key]
+    end
+  end
+
+  def zip_tree_walk(node, prefix = '', lines = [])
+    sorted_entries = node.keys.sort_by { |key| [key.end_with?('/') ? 0 : 1, key.downcase] }
+
+    sorted_entries.each_with_index do |name, index|
+      last = index == sorted_entries.length - 1
+      connector = '↳ '
+      lines << "#{prefix}#{connector}#{name}"
+      zip_tree_walk(node[name], "#{prefix}  ", lines) if node[name].any?
+    end
+
+    lines
+  end
+
+  def zip_file_tree(path, filename, display_limit: 200)
+    tree = {}
+    entries = 0
+
+    read_entry = lambda do |entry_name|
+      return unless zip_path_safe?(entry_name)
+
+      entries += 1
+      zip_tree_add_path(tree, entry_name)
+    end
+
+    if filename.downcase.end_with?('.zip')
+      Zip::File.open(path) do |zip_file|
+        zip_file.each do |entry|
+          next if entry.directory?
+
+          read_entry.call(entry.name)
+        end
+      end
+    elsif filename.downcase.end_with?('.tar')
+      File.open(path, 'rb') do |file|
+        Gem::Package::TarReader.new(file) do |tar|
+          tar.each do |entry|
+            next if entry.directory?
+
+            read_entry.call(entry.full_name)
+          end
+        end
+      end
+    elsif filename.downcase.end_with?('.tar.gz', '.tgz', '.gz')
+      Zlib::GzipReader.open(path) do |gzip|
+        Gem::Package::TarReader.new(gzip) do |tar|
+          tar.each do |entry|
+            next if entry.directory?
+
+            read_entry.call(entry.full_name)
+          end
+        end
+      end
+    end
+
+    all_lines = zip_tree_walk(tree)
+    lines = all_lines.first(display_limit)
+    { lines: lines, entries: entries, tree_lines: all_lines.length, truncated: all_lines.length > display_limit }
+  rescue Zip::Error, Zlib::Error, Gem::Package::TarInvalidError, EOFError => e
+    logger.debug "Could not read zip file tree for #{filename}: #{e.message}"
+    { lines: [], entries: 0, truncated: false, error: true }
+  rescue StandardError => e
+    logger.debug "Could not read zip file tree for #{filename}: #{e.message}"
+    { lines: [], entries: 0, truncated: false, error: true }
+  end
+
   def pages_in_pdf(path)
     exec = "qpdf --show-npages #{path}"
 
-    out_text, error_text, exit_status = Open3.capture3(exec)
-    result = out_text.to_i # will default to 0 if not a number
+    out_text, _error_text, _exit_status = Open3.capture3(exec)
+    out_text.to_i # will default to 0 if not a number
   rescue => e
     logger.error "Failed to run QPDF on #{path}. Rescued with error:\n\t#{e.message}"
     0
@@ -357,7 +670,13 @@ module FileHelper
   # - only_before = date for files to move (only if retain from is true)
   def move_files(from_path, to_path, retain_from = false, only_before = nil)
     # move into the new dir - and mv files to the in_process_dir
-    pwd = FileUtils.pwd
+    begin
+      pwd = FileUtils.pwd
+    rescue
+      # if no pwd, reset to the root
+      pwd = Rails.root
+    end
+
     begin
       FileUtils.mkdir_p(to_path)
       Dir.chdir(from_path)
@@ -366,7 +685,7 @@ module FileHelper
       begin
         # remove from_path as files are now "in process"
         # these can be retained when the old folder wants to be kept
-        FileUtils.rm_r(from_path) unless retain_from
+        FileUtils.rm_rf(from_path) unless retain_from
       rescue
         logger.warn "failed to rm #{from_path}"
       end
@@ -537,12 +856,50 @@ module FileHelper
     task.extract_file_from_done student_work_dir(:new), '*', ->(_task, to_path, name) { "#{to_path}#{name}" }
   end
 
+  REPLACEMENTS_PERL_COMMAND = [
+    ['[\\\\]u0000','[NUL]'],
+    ['[\\\\]u0001','[SOH]'],
+    ['[\\\\]u0002','[STX]'],
+    ['[\\\\]u0003','[ETX]'],
+    ['[\\\\]u0004','[EOT]'],
+    ['[\\\\]u0005','[ENQ]'],
+    ['[\\\\]u0006','[ACK]'],
+    ['[\\\\]u0007','[BEL]'],
+    ['[\\\\]u0008','[BS]'],
+    ['(?<![\\\\])[\\\\]b','[BS]'],
+    ['[\\\\]u0009','[HT]'],
+    ['[\\\\]u000A','[LF]'],
+    ['[\\\\]u000B','[VT]'],
+    ['[\\\\]u000C','[FF]'],
+    ['(?<![\\\\])[\\\\]f','[FF]'],
+    ['[\\\\]u000D','[CR]'],
+    ['(?<![\\\\])[\\\\]r','[CR]'],
+    ['[\\\\]u000E','[SO]'],
+    ['[\\\\]u000F','[SI]'],
+    ['[\\\\]u0010','[DLE]'],
+    ['[\\\\]u0011','[DC1]'],
+    ['[\\\\]u0012','[DC2]'],
+    ['[\\\\]u0013','[DC3]'],
+    ['[\\\\]u0014','[DC4]'],
+    ['[\\\\]u0015','[NAK]'],
+    ['[\\\\]u0016','[SYN]'],
+    ['[\\\\]u0017','[ETB]'],
+    ['[\\\\]u0018','[CSN]'],
+    ['[\\\\]u0019','[EM]'],
+    ['[\\\\]u001A','[SUB]'],
+    ['[\\\\]u001B','[ESC]'],
+    ['[\\\\]u001C','[FS]'],
+    ['[\\\\]u001D','[GS]'],
+    ['[\\\\]u001E','[RS]'],
+    ['[\\\\]u001F','[US]']
+  ].map { |r| "s/#{r[0]}/#{r[1]}/gi" }.join(';').freeze
+
   #
   # Ensure that the contents of a file appear to be valid UTF8, on retry convert to ASCII to ensure
   #
   def ensure_utf8_code(output_filename, force_ascii)
     # puts "Converting #{output_filename} to utf8"
-    tmp_filename = Dir::Tmpname.create(["new", ".code"]) { |name| raise Errno::EEXIST if File.exist?(name)  }
+    tmp_filename = Dir::Tmpname.create(["new", ".code"]) { |name| raise Errno::EEXIST if File.exist?(name) }
 
     # Convert to utf8 from read encoding
     if force_ascii
@@ -551,6 +908,9 @@ module FileHelper
       `iconv -c -t UTF-8 "#{output_filename}" > "#{tmp_filename}"`
     end
 
+    # Remove utf8 control character sequences
+    `perl -i -pe '#{FileHelper::REPLACEMENTS_PERL_COMMAND}' "#{tmp_filename}"`
+
     # Move into place
     FileUtils.mv(tmp_filename, output_filename)
   end
@@ -558,7 +918,30 @@ module FileHelper
   def process_audio(input_path, output_path)
     logger.info("Trying to process audio in FileHelper")
     path = Doubtfire::Application.config.institution[:ffmpeg]
-    TimeoutHelper.system_try_within 20, "Failed to process audio submission - timeout", "#{path} -loglevel quiet -y -i #{input_path} -ac 1 -ar 16000 -sample_fmt s16 #{output_path}"
+    out_text, error_text, status = Open3.capture3(
+      'timeout', '-k', '2', '20',
+      'nice', '-n', '10',
+      path,
+      '-loglevel', 'quiet',
+      '-y',
+      '-i', input_path.to_s,
+      '-ac', '1',
+      '-ar', '16000',
+      '-sample_fmt', 's16',
+      output_path.to_s
+    )
+
+    return true if status.success?
+
+    logger.error(
+      "Failed to process audio submission from #{input_path} to #{output_path}. " \
+      "Exit status: #{status.exitstatus}. STDERR: #{error_text.presence || '(none)'}. " \
+      "STDOUT: #{out_text.presence || '(none)'}"
+    )
+    false
+  rescue => e
+    logger.error "Failed to process audio submission from #{input_path} to #{output_path}. Rescued with error:\n\t#{e.message}"
+    false
   end
 
   def sorted_timestamp_entries_in_dir(path)
@@ -569,13 +952,39 @@ module FileHelper
     sorted_timestamp_entries_in_dir(path)[0]
   end
 
+  def root_submission_history_dir(archived: false)
+    file_server = if archived
+                    archive_root
+                  else
+                    student_work_root
+                  end
+
+    "#{file_server}/submission_history/" # trust the server config and passed in type for paths
+  end
+
+  def unit_submission_history_dir(unit, archived: true)
+    dst = if (unit.archived && archived) || (archived == :force)
+            "#{archive_root}/"
+          else
+            "#{student_work_root}/"
+          end
+
+    dst << sanitized_path('submission_history', "#{unit.code}-#{unit.id}")
+  end
+
+  def project_submission_history_dir(project, username: nil, archived: true)
+    username = project.student.username.to_s if username.nil?
+    dst = unit_submission_history_dir(project.unit, archived: archived)
+
+    File.join(dst, sanitized_path(username))
+  end
+
   def task_submission_identifier_path(type, task)
-    file_server = Doubtfire::Application.config.student_work_dir
-    "#{file_server}/submission_history/#{sanitized_path("#{task.project.unit.code}-#{task.project.unit.id}", task.project.student.username.to_s, type.to_s, task.id.to_s)}"
+    "#{project_submission_history_dir(task.project)}/#{sanitized_path(type.to_s, task.id.to_s)}"
   end
 
   def task_submission_identifier_path_with_timestamp(type, task, timestamp)
-    "#{task_submission_identifier_path(type, task)}/#{timestamp.to_s}"
+    "#{task_submission_identifier_path(type, task)}/#{sanitized_path(timestamp.to_s)}"
   end
 
   # Apply line wrapping to a given file, returns true when line wrapping is necessary.
@@ -624,11 +1033,20 @@ module FileHelper
   module_function :student_group_work_dir
   module_function :student_work_dir
   module_function :student_work_root
+  module_function :archive_root
+  module_function :dir_for_unit_code_and_id
   module_function :unit_dir
+  module_function :root_portfolio_dir
   module_function :unit_portfolio_dir
+  module_function :unit_analytics_dir
+  module_function :unit_task_status_snapshot_path
+  module_function :snapshot_csv_filename
+  module_function :unit_work_root
+  module_function :project_work_root
   module_function :student_portfolio_dir
   module_function :student_portfolio_path
   module_function :comment_attachment_path
+  module_function :engagement_attachment_path
   module_function :comment_prompt_path
   module_function :comment_reply_prompt_path
   module_function :compress_image_to_dest
@@ -636,6 +1054,18 @@ module FileHelper
   module_function :qpdf
   module_function :move_files
   module_function :validate_pdf
+  module_function :zip_path_safe?
+  module_function :zip_entry_limit
+  module_function :zip_compression_ratio_limit
+  module_function :zip_uncompressed_size_multiplier
+  module_function :zip_nested_archive?
+  module_function :validate_zip_upload_entry!
+  module_function :validate_zip_file
+  module_function :validate_tar_file
+  module_function :validate_zip_upload
+  module_function :zip_tree_add_path
+  module_function :zip_tree_walk
+  module_function :zip_file_tree
   module_function :copy_pdf
   module_function :read_file_to_str
   module_function :path_to_plagarism_html
@@ -653,9 +1083,16 @@ module FileHelper
   module_function :process_audio
   module_function :sorted_timestamp_entries_in_dir
   module_function :latest_submission_timestamp_entry_in_dir
+  module_function :root_submission_history_dir
+  module_function :unit_submission_history_dir
+  module_function :project_submission_history_dir
   module_function :task_submission_identifier_path
   module_function :task_submission_identifier_path_with_timestamp
   module_function :known_extension?
   module_function :pages_in_pdf
   module_function :line_wrap
+  module_function :root_jplag_report_dir
+  module_function :unit_jplag_report_dir
+  module_function :task_jplag_report_dir
+  module_function :task_jplag_report_path
 end

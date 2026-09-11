@@ -5,6 +5,140 @@ class TaskSimilarityTest < ActiveSupport::TestCase
   include TestHelpers::AuthHelper
   include TestHelpers::JsonHelper
   include TestHelpers::TiiTestHelper
+  include TestHelpers::TestFileHelper
+
+  def test_jplag_similarity_pct
+    unit = FactoryBot.create(:unit, code: 'COS10001', with_students: false, stream_count: 0)
+    td = FactoryBot.create(:task_definition, unit: unit, abbreviation: 'java-1', outcome_count: 0, similarity_language: "java", plagiarism_warn_pct: 10)
+
+    td.upload_requirements = [
+      {
+        "key" => 'file0',
+        "name" => 'java',
+        "type" => 'code',
+        "tii_check" => true
+      }
+    ]
+
+    td.similarity_language = "java"
+    td.plagiarism_warn_pct = 25
+    td.save!
+
+    # Initialise students
+    student1 = FactoryBot.create(:user, :student)
+    student1_project = FactoryBot.create(:project, user_id: student1.id, unit: unit)
+
+    student2 = FactoryBot.create(:user, :student)
+    student2_project = FactoryBot.create(:project, user_id: student2.id, unit: unit)
+
+    # Submit java file student1
+    add_auth_header_for(user: student1)
+
+    data_to_post = {
+      trigger: 'ready_for_feedback'
+    }
+    data_to_post = with_file('test_files/submissions/jplag/Angry Coyote/sociologia.java', 'text/x-java-source', data_to_post)
+
+    post "/api/projects/#{student1_project.id}/task_def_id/#{td.id}/submission", data_to_post
+    assert_equal 201, last_response.status
+
+    student1_task = student1_project.task_for_task_definition(td)
+    student1_task.convert_submission_to_pdf(log_to_stdout: false)
+    assert File.exist? student1_task.final_pdf_path
+    assert student1_task.has_pdf
+
+    # Submit duplicate file for student_2
+    add_auth_header_for(user: student2)
+
+    post "/api/projects/#{student2_project.id}/task_def_id/#{td.id}/submission", data_to_post
+    assert_equal 201, last_response.status
+
+    student2_task = student2_project.task_for_task_definition(td)
+    student2_task.convert_submission_to_pdf(log_to_stdout: false)
+    assert File.exist? student2_task.final_pdf_path
+    assert student2_task.has_pdf
+
+    # Run jplag
+    unit.check_jplag_similarity(force: true)
+
+    # Validate similarities
+    similarity1 = JplagTaskSimilarity.find_by(task_id: student1_task.id)
+    similarity2 = JplagTaskSimilarity.find_by(task_id: student2_task.id)
+
+    assert_not_nil similarity1, "Similarity1 does not exist"
+    assert_not_nil similarity2, "Similarity2 does not exist"
+
+    assert similarity1.valid?, similarity1.errors.full_messages
+    assert similarity2.valid?, similarity2.errors.full_messages
+
+    assert_not_nil similarity1.other_task, "Similarity1 'other_task' is nil"
+    assert_not_nil similarity2.other_task, "Similarity2 'other_task' is nil"
+
+    assert similarity1.other_task.valid?, similarity1.errors.full_messages
+    assert similarity2.other_task.valid?, similarity2.errors.full_messages
+
+    assert_not_nil similarity1.other_student, "Similarity1 'other_student' is nil"
+    assert_not_nil similarity2.other_student, "Similarity2 'other_student' is nil"
+
+    assert similarity1.other_student.valid?, similarity1.errors.full_messages
+    assert similarity2.other_student.valid?, similarity2.errors.full_messages
+
+    assert_equal similarity1.other_task_id, similarity2.task_id
+    assert_equal similarity2.other_task_id, similarity1.task_id
+
+    assert_equal 100, similarity1.pct
+    assert_equal 100, similarity2.pct
+
+    assert td.has_jplag_report?, "Expected task definition to have a JPlag report"
+
+    # Create a similarity below the threshold
+    similarity1 = JplagTaskSimilarity.create(
+      task: student1_task,
+      other_task: student2_task,
+      pct: 10,
+      flagged: true
+    )
+
+    # Create a similarity above the threshold
+    similarity2 = JplagTaskSimilarity.create(
+      task: student1_task,
+      other_task: student2_task,
+      pct: 99,
+      flagged: true
+    )
+
+    unit.check_jplag_similarity(force: true)
+
+    assert_not JplagTaskSimilarity.exists?(similarity1.id), "Similarity with lower threshold whould have been deleted"
+    assert JplagTaskSimilarity.exists?(similarity2.id), "Similarity with higher threshold should not have been deleted"
+
+    JplagTaskSimilarity.delete_all
+
+    # Test JPlag base code: reuse the same file so previous similarity matches are ignored
+
+    java_file = Rails.root.join("test_files/submissions/jplag/Angry Coyote/sociologia.java")
+    zip_path = Rails.root.join("tmp/resources/resources.zip")
+    FileUtils.mkdir_p(zip_path.dirname)
+
+    Zip::File.open(zip_path, Zip::File::CREATE) do |zipfile|
+      zipfile.add(File.basename(java_file), java_file)
+    end
+
+    td.add_task_resources(zip_path, copy: false)
+
+    assert td.has_task_resources?
+
+    td.update!(use_resources_for_jplag_base_code: true)
+
+    unit.reload
+    unit.check_jplag_similarity(force: true)
+
+    similarity1 = JplagTaskSimilarity.find_by(task_id: student1_task.id)
+    similarity2 = JplagTaskSimilarity.find_by(task_id: student2_task.id)
+
+    assert_nil similarity1, "JPlag base code should have been used to ignore similarity"
+    assert_nil similarity2, "JPlag base code should have been used to ignore similarity"
+  end
 
   # Test that when you create a plagiarism match link, that a moss test needs the other task
   def test_other_details
@@ -139,7 +273,7 @@ class TaskSimilarityTest < ActiveSupport::TestCase
 
     get "/api/tasks/#{task.id}/similarities/#{sim.id}/viewer_url"
     assert_equal 200, last_response.status
-    assert last_response.body.include? "https://viewer.url"
+    assert_equal 'https://viewer.url', JSON.parse(last_response.body)
 
     add_auth_header_for(user: task.project.student)
     get "/api/tasks/#{task.id}/similarities/#{sim.id}/viewer_url"
@@ -148,5 +282,156 @@ class TaskSimilarityTest < ActiveSupport::TestCase
     sim.tii_submission.update!(submission_id: nil)
     sim.destroy!
     task.destroy!
+  end
+
+  # A MOSS match that points at a task destroyed between the scan and this run
+  # used to raise ActiveRecord::RecordNotFound from Task.find and abort the whole
+  # import, losing every later match. find_by returns nil so the guard skips it
+  # and the remaining matches are still linked.
+  def test_moss_import_skips_a_missing_task_and_keeps_processing
+    unit = FactoryBot.create(:unit, with_students: false, stream_count: 0)
+    td = unit.task_definitions.first
+    td.update!(plagiarism_updated: true, plagiarism_warn_pct: 10)
+
+    task_a = FactoryBot.create(:project, unit: unit).task_for_task_definition(td)
+    task_b = FactoryBot.create(:project, unit: unit).task_for_task_definition(td)
+    missing_id = Task.maximum(:id).to_i + 100_000
+
+    results = [
+      [{ filename: "u/#{missing_id}/" }, { filename: "u/#{task_a.id}/" }], # one side deleted
+      [{ filename: "u/#{task_a.id}/" }, { filename: "u/#{task_b.id}/" }]    # both present
+    ]
+
+    linked = []
+    run_moss_stats(unit, results) do
+      unit.stub(:create_moss_plagiarism_link, ->(t1, t2, _m, _w) { linked << [t1.id, t2.id] }) do
+        unit.update_moss_plagiarism_stats
+      end
+    end
+
+    assert_equal [[task_a.id, task_b.id]], linked, 'the valid pair is linked, the deleted-task pair is skipped'
+    assert_not td.reload.plagiarism_updated, 'the flag is cleared after a clean pass'
+  end
+
+  # If the results cannot be read at all the definition must stay flagged so the
+  # next scan retries it. It used to be un-flagged at the top of the loop, before
+  # the results were touched, so a mid-run failure lost the definition silently.
+  def test_moss_import_keeps_the_flag_when_results_cannot_be_read
+    unit = FactoryBot.create(:unit, with_students: false, stream_count: 0)
+    td = unit.task_definitions.first
+    td.update!(plagiarism_updated: true)
+
+    boom = Object.new
+    boom.define_singleton_method(:extract_results) { |*_args| raise 'moss unavailable' }
+
+    credentials = Object.new
+    credentials.define_singleton_method(:secret_key_moss) { 'test-moss-key' }
+
+    Doubtfire::Application.stub(:credentials, credentials) do
+      MossRuby.stub(:new, boom) do
+        assert_raises(RuntimeError) { unit.update_moss_plagiarism_stats }
+      end
+    end
+
+    assert td.reload.plagiarism_updated, 'the flag stays set so the scan is retried'
+  end
+
+  # A match that fails to link must be logged and skipped so the remaining matches
+  # still process, but the definition must stay flagged so it is retried rather than
+  # silently marked done.
+  def test_moss_import_retries_the_definition_when_a_match_fails
+    unit = FactoryBot.create(:unit, with_students: false, stream_count: 0)
+    td = unit.task_definitions.first
+    td.update!(plagiarism_updated: true, plagiarism_warn_pct: 10)
+
+    task_a = FactoryBot.create(:project, unit: unit).task_for_task_definition(td)
+    task_b = FactoryBot.create(:project, unit: unit).task_for_task_definition(td)
+
+    results = [
+      [{ filename: "u/#{task_a.id}/" }, { filename: "u/#{task_b.id}/" }],
+      [{ filename: "u/#{task_b.id}/" }, { filename: "u/#{task_a.id}/" }]
+    ]
+
+    attempts = 0
+    linker = lambda do |_t1, _t2, _match, _warn|
+      attempts += 1
+      raise 'link failed' if attempts == 1
+    end
+
+    run_moss_stats(unit, results) do
+      unit.stub(:create_moss_plagiarism_link, linker) do
+        unit.update_moss_plagiarism_stats # must not raise
+      end
+    end
+
+    assert_equal 2, attempts, 'the second match is still attempted after the first fails'
+    assert td.reload.plagiarism_updated, 'the flag stays set so the failed definition is retried'
+  end
+
+  # The JPlag report maps zip entries back to tasks. A comparison that points at a
+  # task destroyed since the scan used to raise RecordNotFound and abort the whole
+  # report; find_by returns nil so the guard skips it and the rest still link.
+  def test_jplag_report_skips_a_missing_task_and_keeps_processing
+    unit = FactoryBot.create(:unit, with_students: false, stream_count: 0)
+    td = unit.task_definitions.first
+
+    task_a = FactoryBot.create(:project, unit: unit).task_for_task_definition(td)
+    task_b = FactoryBot.create(:project, unit: unit).task_for_task_definition(td)
+    missing_id = Task.maximum(:id).to_i + 100_000
+
+    zip_path = build_jplag_report(
+      comparisons: [
+        { first: 'subC', second: 'subD', max: 0.8 }, # subD was deleted - processed first
+        { first: 'subA', second: 'subB', max: 0.9 }  # both present - must still be reached
+      ],
+      files: { 'subA' => task_a.id, 'subB' => task_b.id, 'subC' => task_a.id, 'subD' => missing_id }
+    )
+
+    linked = []
+    unit.stub(:create_jplag_plagiarism_link, ->(t1, t2, _warn, _max) { linked << [t1.id, t2.id] }) do
+      assert_nothing_raised do
+        unit.send(:process_jplag_plagiarism_report, zip_path, 25, false)
+      end
+    end
+
+    assert_equal [[task_a.id, task_b.id]], linked, 'the present pair links, the deleted-task pair is skipped'
+  ensure
+    File.delete(zip_path) if zip_path && File.exist?(zip_path)
+  end
+
+  private
+
+  # Builds a minimal JPlag report zip: a topComparisons.json plus one files/<sub>/<task_id>/
+  # entry per submission, which is how process_jplag_plagiarism_report maps a comparison
+  # back to its task ids.
+  def build_jplag_report(comparisons:, files:)
+    path = Rails.root.join('tmp', "jplag-report-#{SecureRandom.hex(4)}.zip").to_s
+    FileUtils.mkdir_p(File.dirname(path))
+    top = comparisons.map do |c|
+      { 'firstSubmission' => c[:first], 'secondSubmission' => c[:second], 'similarities' => { 'MAX' => c[:max] } }
+    end
+    Zip::File.open(path, Zip::File::CREATE) do |zip|
+      zip.get_output_stream('topComparisons.json') { |f| f.write(top.to_json) }
+      files.each do |submission, task_id|
+        zip.get_output_stream("files/#{submission}/#{task_id}/src.java") { |f| f.write('// code') }
+      end
+    end
+    path
+  end
+
+  # Runs the block with credentials and MossRuby stubbed so update_moss_plagiarism_stats
+  # reads the given results without a real MOSS key or network call.
+  def run_moss_stats(_unit, results)
+    fake_moss = Object.new
+    fake_moss.define_singleton_method(:extract_results) { |*_args| results }
+
+    credentials = Object.new
+    credentials.define_singleton_method(:secret_key_moss) { 'test-moss-key' }
+
+    Doubtfire::Application.stub(:credentials, credentials) do
+      MossRuby.stub(:new, fake_moss) do
+        yield
+      end
+    end
   end
 end

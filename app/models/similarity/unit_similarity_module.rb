@@ -25,9 +25,9 @@ module UnitSimilarityModule
       logger.info "Checking plagiarsm for unit #{code} - #{name} (id=#{id})"
 
       task_definitions.each do |td|
-        next if td.moss_language.nil? || td.upload_requirements.nil? || td.upload_requirements.select { |upreq| upreq['type'] == 'code' && upreq['tii_check'] }.empty?
+        next if td.similarity_language.nil? || td.upload_requirements.nil? || td.upload_requirements.select { |upreq| upreq['type'] == 'code' && upreq['tii_check'] }.empty?
 
-        type_data = td.moss_language.split
+        type_data = td.similarity_language.split
         next if type_data.nil? || (type_data.length != 2) || (type_data[0] != 'moss')
 
         # Is there anything to check?
@@ -51,7 +51,7 @@ module UnitSimilarityModule
         logger.debug 'Contacting MOSS for new checks'
 
         # Create the MossRuby object
-        moss_key = Doubtfire::Application.secrets.secret_key_moss
+        moss_key = Doubtfire::Application.credentials.secret_key_moss
         raise "No moss key set. Check ENV['DF_SECRET_KEY_MOSS'] first." if moss_key.nil?
 
         moss = MossRuby.new(moss_key)
@@ -98,16 +98,84 @@ module UnitSimilarityModule
     self
   end
 
-  def update_plagiarism_stats
-    moss_key = Doubtfire::Application.secrets.secret_key_moss
+  # Pass tasks on to plagarism detection software and setup links between students
+  def check_jplag_similarity(force: false)
+    # Get each task...
+    return unless active
+
+    # need pwd to restore after cding into submission folder (so the files do not have full path)
+    pwd = FileUtils.pwd
+    completed_all_checks = true
+
+    # Unit codes are editable and may contain path or shell metacharacters. Keep
+    # the transient workspace derived only from database integer identifiers.
+    root_work_dir = Rails.root.join('tmp', 'jplag', "unit-#{id.to_i}")
+
+    begin
+      logger.info "Checking plagiarsm for unit #{code} - #{name} (id=#{id})"
+
+      task_definitions.each do |td|
+        next if td.similarity_language.nil? || td.upload_requirements.nil? || td.upload_requirements.select { |upreq| upreq['type'] == 'code' && upreq['tii_check'] }.empty?
+
+        # Is there anything to check?
+        logger.debug "Checking plagiarism for #{td.name} (id=#{td.id})"
+        tasks = tasks_for_definition(td)
+        tasks_with_files = tasks.select(&:has_pdf)
+
+        # Skip if no files changed
+        next unless tasks_with_files.count > 1 &&
+                    (
+                      # NOTE: `last_plagarism_scan` is currently tracked for each Unit, not each Task Definition
+                      tasks.where('tasks.file_uploaded_at > ?', last_plagarism_scan).select(&:has_pdf).count > 0 ||
+                      td.updated_at > last_plagarism_scan ||
+                      force
+                    )
+
+        # Ensure work directory for the unit is created
+        FileUtils.mkdir_p(root_work_dir)
+
+        # Init work directory for each task definition
+        tasks_dir = root_work_dir.join(td.id.to_i.to_s)
+        FileUtils.mkdir_p(tasks_dir)
+
+        # There are new tasks, check these with JPLAG
+        report_path = FileHelper.task_jplag_report_path(self, td)
+        begin
+          run_jplag_on_done_files(td, tasks_dir, tasks_with_files, report_path)
+          warn_pct = td.plagiarism_warn_pct || 50
+          logger.debug "Warn PCT: #{warn_pct}"
+
+          # Remove any existing plagiarism links that are below the threshold, in case it has been updated since the last analysis
+          JplagTaskSimilarity.joins(:task)
+                             .where("pct < ? AND tasks.task_definition_id = ?", warn_pct, td.id)
+                             .delete_all
+
+          process_jplag_plagiarism_report(report_path, warn_pct, td.group_set)
+        rescue StandardError => e
+          completed_all_checks = false
+          logger.error "Failed to check JPlag similarity for task #{td.name} (id=#{td.id}). Error: #{e.message}"
+        end
+      end
+      if completed_all_checks
+        self.last_plagarism_scan = Time.zone.now
+        save!
+      end
+    ensure
+      FileUtils.chdir(pwd) if FileUtils.pwd != pwd
+      logger.info "Deleting JPlag work directory for unit #{id}: #{root_work_dir}"
+      FileUtils.rm_rf(root_work_dir)
+    end
+
+    self
+  end
+
+  def update_moss_plagiarism_stats
+    moss_key = Doubtfire::Application.credentials.secret_key_moss
     raise "No moss key set. Check ENV['DF_SECRET_KEY_MOSS'] first." if moss_key.nil?
 
     moss = MossRuby.new(moss_key)
 
     task_definitions.where(plagiarism_updated: true).find_each do |td|
-      td.plagiarism_updated = false
-      td.save
-
       # Get results
       url = td.plagiarism_report_url
       logger.debug "Processing MOSS results #{url}"
@@ -116,13 +184,18 @@ module UnitSimilarityModule
 
       results = moss.extract_results(url, warn_pct, ->(line) { puts line })
 
+      # Track whether every match linked cleanly. A match that fails is logged and
+      # skipped so the rest still process, but the definition is left flagged for
+      # the next scan instead of being silently marked done.
+      completed = true
+
       # Use results
       results.each do |match|
         task_id1 = %r{.*/(\d+)/$}.match(match[0][:filename])[1]
         task_id2 = %r{.*/(\d+)/$}.match(match[1][:filename])[1]
 
-        t1 = Task.find(task_id1)
-        t2 = Task.find(task_id2)
+        t1 = Task.find_by(id: task_id1)
+        t2 = Task.find_by(id: task_id2)
 
         if t1.nil? || t2.nil?
           logger.error "Could not find tasks #{task_id1} or #{task_id2} for plagiarism stats check!"
@@ -135,13 +208,29 @@ module UnitSimilarityModule
 
           g1_tasks.each do |gt1|
             g2_tasks.each do |gt2|
-              create_plagiarism_link(gt1, gt2, match, warn_pct)
+              create_moss_plagiarism_link(gt1, gt2, match, warn_pct)
             end
           end
 
         else # just link the individuals...
-          create_plagiarism_link(t1, t2, match, warn_pct)
+          create_moss_plagiarism_link(t1, t2, match, warn_pct)
         end
+      rescue StandardError => e
+        # One bad match must not abort the rest of the import for this definition,
+        # but the definition must be retried, so remember that it did not complete.
+        completed = false
+        logger.error "Failed to process MOSS match for task definition #{td.id}: #{e.message}"
+        next
+      end
+
+      # Clear the flag only after a clean pass, and only while the report we just
+      # processed is still the current one. A concurrent scan that produced a newer
+      # report writes a new url and re-flags, so matching on url leaves that newer
+      # flag intact, and a partial failure is retried rather than dropped.
+      if completed
+        # rubocop:disable Rails/SkipsModelValidations
+        TaskDefinition.where(id: td.id, plagiarism_report_url: url).update_all(plagiarism_updated: false)
+        # rubocop:enable Rails/SkipsModelValidations
       end
     end
 
@@ -153,7 +242,218 @@ module UnitSimilarityModule
 
   private
 
-  def create_plagiarism_link(task1, task2, match, warn_pct)
+  # Extract all done files related to a task definition matching a pattern into a given directory.
+  # Returns an array of files
+  # def add_done_files_for_plagiarism_check_of(task_definition, tmp_path, tasks_with_files)
+  #   # get each code file for each task
+  #   task_definition.upload_requirements.each_with_index do |upreq, idx|
+  #     # only check code files marked for similarity checks
+  #     next unless upreq['type'] == 'code' && upreq['tii_check']
+  #     pattern = task_definition.glob_for_upload_requirement(idx)
+  #     tasks_with_files.each do |t|
+  #       t.extract_file_from_done(tmp_path, pattern, ->(_task, to_path, name) { File.join(to_path.to_s, t.student.username.to_s, name.to_s) })
+  #     end
+  #   end
+  #   self
+  # end
+
+  # JPLAG Function - extracts "done" files for each task and packages them into a directory for JPLAG to run on
+  def run_jplag_on_done_files(task_definition, tasks_dir, tasks_with_files, report_path)
+    similarity_pct = task_definition.plagiarism_warn_pct
+    return if similarity_pct.nil?
+
+    # Pass every derived path as its own argv entry. Do not put unit, task, or
+    # report data through a shell in the API container or the JPlag container.
+    results_dir = File.dirname(report_path).to_s
+    system('docker', 'exec', '-i', 'jplag', 'mkdir', '-p', results_dir) ||
+      raise('Failed to create JPlag results directory')
+
+    # rm -f is already successful when the old report is absent.
+    system('docker', 'exec', '-i', 'jplag', 'rm', '-f', report_path.to_s) ||
+      raise('Failed to remove previous JPlag report')
+
+    # Extract task resources for base code
+    use_base_code = false
+    if task_definition.has_task_resources? && task_definition.use_resources_for_jplag_base_code
+      use_base_code = true
+      path = task_definition.task_resources
+
+      Zip::File.open(path) do |zip_file|
+        zip_file.each do |entry|
+          dest = File.join(tasks_dir, 'base', entry.name)
+          FileUtils.mkdir_p(File.dirname(dest))
+          entry.extract(dest) { true }
+        end
+      end
+    end
+
+    # get each code file for each task
+    task_definition.upload_requirements.each_with_index do |upreq, idx|
+      # only check code files marked for similarity checks
+      next unless upreq['type'] == 'code' && upreq['tii_check']
+
+      pattern = task_definition.glob_for_upload_requirement(idx)
+
+      # Name to save submission file (used in JPlag report)
+      file_name = task_definition.upload_requirements[idx]['name'].to_s
+      file_name = file_name.squish.tr(" ", "_").tr("-", "_").camelize(:upper)
+
+      tasks_with_files.each do |t|
+        # "name" is {taskId}/{filename}, so it will create a subdir with the task id, but we use this later when processing the report
+        t.extract_file_from_done(tasks_dir, pattern, lambda { |task, to_path, name|
+          names = name.split("/")
+          if names.count >= 2
+            # "name" will include the upload req name, eg. "401/000-code.cpp"
+            file_extension = File.extname(names[1])
+
+            # Strip out file_extension from the upload requirement name since we'll append it manually
+            file_name = file_name.gsub(file_extension, "")
+
+            File.join(to_path.to_s, 'submissions', t.student.username.to_s, task.id.to_s, "#{idx}-#{file_name}#{file_extension}")
+          else
+            # "name" is simply the directory of the task, eg. "401/"
+            File.join(to_path.to_s, 'submissions', t.student.username.to_s, name.to_s)
+          end
+        })
+      end
+    end
+
+    logger.info "Starting JPLAG container to run on #{tasks_dir}"
+    tasks_dir_in_container = Pathname.new('/').join(tasks_dir.relative_path_from(Rails.root)).to_s
+    file_lang = task_definition.similarity_language.to_s
+
+    # Convert pct to decimal
+    similarity_threshold = similarity_pct.to_f / 100
+
+    min_tokens = Doubtfire::Application.config.jplag_min_tokens.to_i
+    skip_cluster_check = Doubtfire::Application.config.jplag_skip_cluster_check
+
+    max_shown_comparisons = Doubtfire::Application.config.jplag_max_shown_comparisons
+    max_shown_comparisons = 2500 if max_shown_comparisons.nil?
+
+    # Run JPLAG on the extracted files. JPlag container should already be in the /jplag/ workdir.
+    docker_command = [
+      'docker', 'exec', '-i', 'jplag',
+      'java', '-jar', 'jplag-jar-with-dependencies.jar',
+      '--skip-version-check',
+      File.join(tasks_dir_in_container, 'submissions')
+    ]
+    docker_command << "--base-code=#{File.join(tasks_dir_in_container, 'base')}" if use_base_code
+    docker_command.push(
+      '-l', file_lang,
+      "--similarity-threshold=#{similarity_threshold}",
+      "--shown-comparisons=#{max_shown_comparisons}"
+    )
+    docker_command << "--min-tokens=#{min_tokens}" if min_tokens.positive?
+    docker_command << '--cluster-skip' if skip_cluster_check
+    docker_command.push(
+      '-M', 'RUN',
+      '-r', report_path.to_s.delete_suffix('.jplag'),
+      '--overwrite'
+    )
+
+    logger.debug "Executing command argv: #{docker_command.inspect}"
+    system(*docker_command) || raise('Failed to run JPlag similarity check')
+
+    self
+  ensure
+    # Each unit has its own root work directory. Only remove this task
+    # definition's extracted files here: another unit may be running in
+    # parallel under tmp/jplag and its workspace must remain untouched.
+    logger.info "Deleting JPlag task work directory: #{tasks_dir}"
+    FileUtils.rm_rf(tasks_dir)
+  end
+
+  def process_jplag_plagiarism_report(path, warn_pct, is_group)
+    # Extract top comparisons json from report zip
+    # Note: overview.json has been replaced by topComparisons.json since JPlag v6.2.0
+    Zip::File.open(path) do |zip_file|
+      top_comparisons_file = zip_file.find_entry('topComparisons.json')
+      raise "topComparisons.json not found in jplag report" if top_comparisons_file.nil?
+
+      # Read the contents of topComparisons.json
+      content = top_comparisons_file.get_input_stream.read
+      # Parse the JSON into a Ruby hash
+      data = JSON.parse(content)
+
+      # Iterate over the top comparisons array and collect the required fields
+      top_comparisons = data.map do |comparison|
+        {
+          first_submission: comparison['firstSubmission'],
+          second_submission: comparison['secondSubmission'],
+          max_similarity: comparison['similarities']['MAX'] * 100
+        }
+      end
+
+      # Save the results to the database
+      top_comparisons.each do |comparison|
+        task1_id = nil
+        task2_id = nil
+        zip_file.each do |entry|
+          if entry.name =~ %r{\Afiles/#{comparison[:first_submission]}/}
+            task1_id = entry.name.split('/')[2].to_i
+          elsif entry.name =~ %r{\Afiles/#{comparison[:second_submission]}/}
+            task2_id = entry.name.split('/')[2].to_i
+          end
+        end
+        first_submission = Task.find_by(id: task1_id) if task1_id
+        second_submission = Task.find_by(id: task2_id) if task2_id
+
+        if first_submission.nil? || second_submission.nil?
+          logger.error "Could not find tasks #{comparison[:first_submission]} or #{comparison[:second_submission]} for plagiarism stats check!"
+          next
+        end
+
+        if is_group # its a group task
+          g1_tasks = first_submission.group_submission.tasks
+          g2_tasks = second_submission.group_submission.tasks
+          g1_tasks.each do |gt1|
+            g2_tasks.each do |gt2|
+              next if gt1.student == gt2.student
+              create_jplag_plagiarism_link(gt1, gt2, warn_pct, comparison[:max_similarity])
+            end
+          end
+        else # just link the individuals...
+          create_jplag_plagiarism_link(first_submission, second_submission, warn_pct, comparison[:max_similarity])
+        end
+      end
+
+      self
+    end
+  end
+
+  def create_jplag_plagiarism_link(task1, task2, warn_pct, max_similarity)
+    # Create a new plagiarism link between the two tasks
+    plk1 = JplagTaskSimilarity.where(task_id: task1.id, other_task_id: task2.id).first
+    plk2 = JplagTaskSimilarity.where(task_id: task2.id, other_task_id: task1.id).first
+    if plk1.nil? || plk2.nil?
+      # Delete old links between tasks
+      plk1&.destroy ## will delete its pair
+      plk2&.destroy
+      plk1 = JplagTaskSimilarity.create do |plm|
+        plm.task = task1
+        plm.other_task = task2
+        plm.pct = max_similarity
+        plm.flagged = plm.pct >= warn_pct
+      end
+      plk2 = JplagTaskSimilarity.create do |plm|
+        plm.task = task2
+        plm.other_task = task1
+        plm.pct = max_similarity
+        plm.flagged = plm.pct >= warn_pct
+      end
+    else
+      # Flag is larger than warn pct and larger than previous pct
+      plk1.flagged = max_similarity >= warn_pct && max_similarity >= plk1.pct
+      plk2.flagged = max_similarity >= warn_pct && max_similarity >= plk2.pct
+      plk1.pct = max_similarity
+      plk2.pct = max_similarity
+    end
+    plk1.save!
+    plk2.save!
+  end
+
+  def create_moss_plagiarism_link(task1, task2, match, warn_pct)
     plk1 = MossTaskSimilarity.where(task_id: task1.id, other_task_id: task2.id).first
     plk2 = MossTaskSimilarity.where(task_id: task2.id, other_task_id: task1.id).first
 
@@ -201,7 +501,7 @@ module UnitSimilarityModule
   # Returns an array of files
   #
   def add_done_files_for_plagiarism_check_of(task_definition, tmp_path, to_check, tasks_with_files)
-    type_data = task_definition.moss_language.split
+    type_data = task_definition.similarity_language.split
     return if type_data.nil? || (type_data.length != 2) || (type_data[0] != 'moss')
 
     # get each code file for each task

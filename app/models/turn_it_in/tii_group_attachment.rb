@@ -9,7 +9,7 @@ class TiiGroupAttachment < ApplicationRecord
 
   before_destroy :delete_attachment
 
-  enum status: {
+  enum :status, {
     created: 0,
     has_id: 1,
     uploaded: 2,
@@ -53,7 +53,7 @@ class TiiGroupAttachment < ApplicationRecord
   private
 
   def delete_attachment
-    return unless group_attachment_id.present?
+    return if group_attachment_id.blank?
 
     TiiActionDeleteGroupAttachment.create(
       entity: nil,

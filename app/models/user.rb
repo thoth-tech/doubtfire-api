@@ -19,6 +19,9 @@ class User < ApplicationRecord
 
   include UserTiiModule
 
+  before_save :stamp_theme_preference_updated_at, if: :will_save_change_to_theme_preference?
+  after_update :move_files_on_username_change, if: :saved_change_to_username?
+
   ###
   # Authentication
   ###
@@ -92,33 +95,51 @@ class User < ApplicationRecord
   # Force-generates a new authentication token, regardless of whether or not
   # it is actually expired
   #
-  def generate_authentication_token!(remember = false)
+  def generate_authentication_token!(remember: false, expiry: nil, token_type: :general, force_new: true)
     # Ensure this user is saved... so it has an id
     self.save unless self.persisted?
-    AuthToken.generate(self, remember)
+    expiry_duration =
+      if token_type.to_sym == :refresh_token
+        Doubtfire::Application.config.refresh_token_expiry
+      else
+        Doubtfire::Application.config.access_token_expiry
+      end
+    expiry ||= Time.zone.now + expiry_duration
+
+    # Reuse tokens for up to 75% of their configured lifetime, then rotate early.
+    token_reuse_duration = expiry_duration * 0.75
+
+    # Get a recent token, or create a new one
+    token = self.auth_tokens.where(token_type: token_type).last unless force_new
+    if token.nil? || token.auth_token_expiry <= Time.zone.now || token.created_at <= Time.zone.now - token_reuse_duration
+      token = AuthToken.generate(self, remember, expiry, token_type)
+    end
+
+    token
   end
 
   #
   # Generate an authentication token that will expire in 30 seconds
   #
   def generate_temporary_authentication_token!
-    # Ensure this user is saved... so it has an id
-    self.save unless self.persisted?
-    AuthToken.generate(self, false, Time.zone.now + 30.seconds)
+    generate_authentication_token!(expiry: Time.zone.now + 30.seconds, token_type: :login)
   end
 
   #
-  # Returns whether the authentication token has expired
+  # Generate an authentication token for scorm asset retrieval
   #
-  def authentication_token_expired?
-    auth_token_expiry.nil? || auth_token_expiry <= Time.zone.now
+  def generate_scorm_authentication_token!
+    generate_authentication_token!(token_type: :scorm)
   end
 
   #
   # Returns authentication of the user
   #
-  def token_for_text?(a_token)
-    self.auth_tokens.each do |token|
+  def token_for_text?(a_token, token_type)
+    tokens_to_check = self.auth_tokens
+    tokens_to_check = tokens_to_check.where(token_type: token_type) if token_type.present?
+
+    tokens_to_check.each do |token|
       if a_token == token.authentication_token
         return token
       end
@@ -132,10 +153,22 @@ class User < ApplicationRecord
 
   # Model associations
   belongs_to  :role, optional: false # Foreign Key
-  has_many    :unit_roles, dependent: :destroy
-  has_many    :projects, dependent: :destroy
-  has_many    :auth_tokens, dependent: :destroy
-  has_one     :webcal, dependent: :destroy
+  has_many    :unit_roles, dependent: :destroy, inverse_of: :user
+  has_many    :projects, dependent: :restrict_with_exception, inverse_of: :user
+  has_many    :engagements, dependent: :restrict_with_exception, inverse_of: :user
+  has_many    :engagement_comments, dependent: :restrict_with_exception, inverse_of: :user
+  has_many    :auth_tokens, dependent: :destroy, inverse_of: :user
+  has_many    :consumed_lti_tokens, dependent: :destroy, inverse_of: :user
+  has_many    :user_oauth_tokens, dependent: :destroy, inverse_of: :user
+  has_many    :user_oauth_states, dependent: :destroy, inverse_of: :user
+  has_one     :webcal, dependent: :destroy, inverse_of: :user
+  has_many    :chip_usage, dependent: :destroy, inverse_of: :tutor, class_name: 'Feedback::ChipUsage'
+
+  has_many    :marking_sessions, dependent: :destroy
+
+  # Notifications feature
+  has_many    :notifications, dependent: :destroy, inverse_of: :user
+  has_many    :push_subscriptions, dependent: :destroy, inverse_of: :user
 
   # Model validations/constraints
   validates :first_name,  presence: true
@@ -144,6 +177,7 @@ class User < ApplicationRecord
   validates :username,    presence: true, uniqueness: { case_sensitive: false }
   validates :email,       presence: true, uniqueness: { case_sensitive: false }, format: { with: /\A([^@\s]+)@((?:[-a-z0-9]+\.)+[a-z]{2,})\z/i }
   validates :student_id,  uniqueness: true, allow_nil: true
+  validates :theme_preference, inclusion: { in: %w[light dark system] }, allow_nil: true
   validate :can_change_to_role?, if: :will_save_change_to_role_id?
 
   # Queries
@@ -301,7 +335,14 @@ class User < ApplicationRecord
       :get_teaching_periods,
 
       :admin_overseer,
-      :use_overseer
+      :use_overseer,
+
+      :get_feedback_chips,
+      :create_feedback_chips, # create global feedback chips
+      :get_los,
+      :update_glos,
+
+      :get_scorm_token
     ]
 
     # What can auditors do with users?
@@ -315,11 +356,14 @@ class User < ApplicationRecord
       :audit_units,
 
       :get_teaching_periods,
-      :use_overseer
+      :use_overseer,
+      :get_scorm_token,
+      :get_feedback_chips
     ]
 
     # What can convenors do with users?
     convenor_role_permissions = [
+      :get_all_units,
       :promote_user,
       :list_users,
       :create_user,
@@ -332,20 +376,30 @@ class User < ApplicationRecord
       :convene_units,
       :get_staff_list,
       :get_teaching_periods,
-      :use_overseer
+      :use_overseer,
+      :get_scorm_token,
+
+      :get_feedback_chips,
+      :get_los,
+      :update_glos
     ]
 
     # What can tutors do with users?
     tutor_role_permissions = [
       :get_unit_roles,
       :download_unit_csv,
-      :get_teaching_periods
+      :get_teaching_periods,
+      :get_scorm_token,
+
+      :get_feedback_chips,
+      :get_los,
+      :update_glos
     ]
 
     # What can students do with users?
     student_role_permissions = [
-      :get_teaching_periods
-
+      :get_teaching_periods,
+      :get_scorm_token
     ]
 
     # Return the permissions hash
@@ -396,6 +450,40 @@ class User < ApplicationRecord
     "#{fn} #{sn}"
   end
 
+  def move_files_on_username_change
+    old_username = saved_change_to_username[0]
+
+    # Move all files to the new username
+    projects.find_each do |project|
+      # Move the task files
+      old_path = FileHelper.project_work_root(project, username: old_username)
+      new_path = FileHelper.project_work_root(project, username: username)
+
+      FileUtils.mv(old_path, new_path) if File.exist?(old_path)
+      # rubocop:disable Rails/SkipsModelValidations
+      project.tasks.where('portfolio_evidence IS NOT NULL').update_all("portfolio_evidence = REPLACE(portfolio_evidence, '#{FileHelper.sanitized_path(old_username)}', '#{FileHelper.sanitized_path(username)}')")
+      # rubocop:enable Rails/SkipsModelValidations
+
+      # Now move submission history files
+      old_path = FileHelper.project_submission_history_dir(project, username: old_username)
+      new_path = FileHelper.project_submission_history_dir(project, username: username)
+
+      FileUtils.mv(old_path, new_path) if File.exist?(old_path)
+
+      # Now move the portfolio folder
+      old_path = FileHelper.student_portfolio_dir(project.unit, old_username, create: false)
+      new_path = FileHelper.student_portfolio_dir(project.unit, username, create: false)
+
+      FileUtils.mv(old_path, new_path) if File.exist?(old_path)
+
+      # Lastly move the portfolio file
+      old_path = "#{new_path}/#{old_username}-portfolio.pdf"
+      new_path = "#{new_path}/#{username}-portfolio.pdf"
+
+      FileUtils.mv(old_path, new_path) if File.exist?(old_path)
+    end
+  end
+
   def self.export_to_csv
     exportables = csv_columns.map { |col| col == 'role' ? 'role_id' : col }
     CSV.generate do |row|
@@ -442,7 +530,7 @@ class User < ApplicationRecord
     CSV.parse(data,
               headers: true,
               header_converters: [->(i) { i.nil? ? '' : i }, :downcase, ->(hdr) { hdr.strip.tr(' ', '_') unless hdr.nil? }],
-              converters: [->(body) { body.encode!('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') unless body.nil? }]).each do |row|
+              converters: [->(body) { body&.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '') }]).each do |row|
       next if row[0] =~ /(email)|(username)/
 
       begin
@@ -461,7 +549,7 @@ class User < ApplicationRecord
 
         pass_checks = true
         %w(username email role first_name).each do |col|
-          next unless row[col].nil? || row[col].empty?
+          next if row[col].present?
 
           errors << { row: row, message: "The #{col} cannot be blank or empty" }
           pass_checks = false
@@ -518,5 +606,18 @@ class User < ApplicationRecord
       ignored: ignored,
       errors: errors
     }
+  end
+
+  def get_marking_sessions(unit, start_date: nil, end_date: nil, timezone: nil)
+    unit_role = unit.unit_role_for(self)
+    unless unit_role.nil?
+      unit_role.get_marking_sessions(start_date: start_date, end_date: end_date, timezone: timezone)
+    end
+  end
+
+  private
+
+  def stamp_theme_preference_updated_at
+    self.theme_preference_updated_at = theme_preference.nil? ? nil : Time.current
   end
 end

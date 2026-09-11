@@ -1,0 +1,20 @@
+<p>Hi <%= @user.name %>,</p>
+
+<p><%= @notification.message %></p>
+
+<p>
+  Your extension request has been assessed.
+  Open the task in <%= @doubtfire_product_name %> to review the current task details.
+</p>
+
+<% if @notification.link.present? %>
+  <p>
+    <a href="<%= @doubtfire_host %><%= @notification.link %>">
+      Open the task
+    </a>
+  </p>
+<% end %>
+
+<p>
+  This notification is sent when an extension request is assessed.
+</p>

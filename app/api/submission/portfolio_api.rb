@@ -34,6 +34,14 @@ module Submission
         error!({ error: "'#{file[:filename]}': #{file_result[:msg]}" }, 403)
       end
 
+      max_file_size = Doubtfire::Application.config.max_file_size.to_i
+      max_file_size = 10_000_000 if max_file_size <= 0
+      size_in_mb = max_file_size / 1_000_000
+
+      if File.size(file[:tempfile].path) > max_file_size
+        error!({ error: "'#{file[:filename]}' exceeds the #{size_in_mb}MB file limit." }, 413)
+      end
+
       # Move file into place
       result = project.move_to_portfolio(file, name, kind) # returns details of file
 
@@ -55,6 +63,10 @@ module Submission
 
       # Remove file or portfolio?
       if params[:idx].nil? && params[:name].nil? && params[:kind].nil?
+        project.update!({
+                          portfolio_submission_date: nil,
+                          portfolio_production_date: nil
+                        })
         project.remove_portfolio # returns details of file
       elsif !(params[:idx].nil? || params[:name].nil? || params[:kind].nil?)
         idx = params[:idx]
@@ -81,15 +93,14 @@ module Submission
       evidence_loc = project.portfolio_path
 
       if evidence_loc.nil? || File.exist?(evidence_loc) == false
-        evidence_loc = Rails.root.join('public', 'resources', 'FileNotFound.pdf')
-        filename = "FileNotFound.pdf"
+        evidence_loc = Rails.root.join('public/resources/FileNotFound.pdf')
+        filename = 'FileNotFound.pdf'
       else
         filename = "#{project.unit.code}-#{project.student.username}-portfolio.pdf"
       end
 
       if params[:as_attachment]
         header['Content-Disposition'] = "attachment; filename=#{filename}"
-        header['Access-Control-Expose-Headers'] = 'Content-Disposition'
       end
 
       # Set download headers...

@@ -15,13 +15,15 @@ Doubtfire::Application.configure do
 
   # Enable/disable caching. By default caching is disabled.
   # Run rails dev:cache to toggle caching.
-  if ENV['CACHE'] == 'true' || Rails.root.join('tmp', 'caching-dev.txt').exist?
+  if ENV['CACHE'] == 'true' || Rails.root.join('tmp/caching-dev.txt').exist?
     skip_first = true
     ActiveSupport::Reloader.to_prepare do
       if skip_first
         skip_first = false
       else
+        # rubocop:disable Rails/Output
         puts "CLEARING CACHE"
+        # rubocop:enable Rails/Output
         Rails.cache.clear
       end
     end
@@ -45,7 +47,7 @@ Doubtfire::Application.configure do
 
   # Ensure cache is cleared on reload
   unless Rails.application.config.cache_classes
-    Rails.autoloaders.main.on_unload do |klass, _abspath|
+    Rails.autoloaders.main.on_unload do |_klass, _abspath|
       Rails.cache.clear
     end
   end
@@ -58,9 +60,28 @@ Doubtfire::Application.configure do
 
   config.action_mailer.perform_caching = false
 
-  # Tell Action Mailer not to deliver emails to the real world.
-  # Write them to file instead (under doubtfire-api/tmp/mails)
-  config.action_mailer.delivery_method = :file
+  # Never deliver email to the real world in development.
+  #
+  # With docker (the normal case), DF_SMTP_ADDRESS points at the mailpit
+  # container and every email shows up in a web inbox at http://localhost:8025.
+  # Mailpit accepts everything and forwards nothing.
+  #
+  # Without it, mail is written to a file instead. Under docker that file lands
+  # on the host at doubtfire-deploy/data/tmp/mails/, NOT in this repository,
+  # because development/docker-compose.yml mounts ../data/tmp over /doubtfire/tmp
+  # and Rails.root in the container is /doubtfire. Looking for it under
+  # doubtfire-api/tmp/mails shows an empty folder and makes email look broken.
+  #
+  # See doubtfire-deploy/RUNNING-LOCALLY.md.
+  if ENV['DF_SMTP_ADDRESS'].present?
+    config.action_mailer.delivery_method = :smtp
+    config.action_mailer.smtp_settings = {
+      address: ENV['DF_SMTP_ADDRESS'],
+      port: ENV.fetch('DF_SMTP_PORT', 1025).to_i
+    }
+  else
+    config.action_mailer.delivery_method = :file
+  end
 
   # Print deprecation notices to the Rails logger.
   config.active_support.deprecation = :log
@@ -104,7 +125,7 @@ Doubtfire::Application.configure do
   # pdfgen log verbosity
   config.pdfgen_quiet = false
 
-  config.active_record.encryption.key_derivation_salt = ENV['DF_ENCRYPTION_KEY_DERIVATION_SALT'] || 'U9jurHMfZbMpzlbDTMe5OSAhUJYHla9Z'
-  config.active_record.encryption.deterministic_key = ENV['DF_ENCRYPTION_DETERMINISTIC_KEY'] || 'zYtzYUlLFaWdvdUO5eIINRT6ZKDddcgx'
-  config.active_record.encryption.primary_key = ENV['DF_ENCRYPTION_PRIMARY_KEY'] || '92zoF7RJaQ01JEExOgHbP9bRWldNQUz5'
+  config.active_record.encryption.key_derivation_salt = Doubtfire::Application.fetch_credential_or_env(:active_record_encryption, :key_derivation_salt, env_key: 'DF_ENCRYPTION_KEY_DERIVATION_SALT', default: 'U9jurHMfZbMpzlbDTMe5OSAhUJYHla9Z')
+  config.active_record.encryption.deterministic_key = Doubtfire::Application.fetch_credential_or_env(:active_record_encryption, :deterministic_key, env_key: 'DF_ENCRYPTION_DETERMINISTIC_KEY', default: 'zYtzYUlLFaWdvdUO5eIINRT6ZKDddcgx')
+  config.active_record.encryption.primary_key = Doubtfire::Application.fetch_credential_or_env(:active_record_encryption, :primary_key, env_key: 'DF_ENCRYPTION_PRIMARY_KEY', default: '92zoF7RJaQ01JEExOgHbP9bRWldNQUz5')
 end

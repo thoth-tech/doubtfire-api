@@ -10,8 +10,9 @@
 # Ignore locally installed gems
 /vendor/bundle/
 
-# Ignore the bin folder made with the app:update:bin task
-/bin
+# Ignore generated binstubs except the Rails launcher required by Rails/Puma restart.
+/bin/*
+!/bin/rails
 
 # Ignore the default SQLite database.
 /db/*.sqlite3
@@ -31,9 +32,17 @@ student-work/
 .DS_Store
 .env
 .env*
+!.env.example
+/config/credentials/*.yml.enc
+/config/credentials/*.key
+/config/master.key
 
 # IDE configs
 .idea/
 .byebug_history
 coverage/
 _history
+
+# Institution specific config
+config/*_setting.rb
+!config/no_institution_setting.rb

@@ -72,7 +72,8 @@ class TasksApi < Grape::API
         task_definition_id: task.task_definition_id,
         status: TaskStatus.id_to_key(task.task_status_id),
         due_date: task.due_date,
-        extensions: task.extensions
+        extensions: task.extensions,
+        scorm_extensions: task.scorm_extensions
       }
     end
 
@@ -108,6 +109,46 @@ class TasksApi < Grape::API
     present true, Grape::Presenters::Presenter
   end
 
+  desc 'Update the planned date for a task - when date flexibility is allowed'
+  params do
+    requires :id, type: Integer, desc: 'The project id to locate'
+    requires :task_definition_id, type: Integer, desc: 'The id of the task definition of the task to update in this project'
+    requires :extensions, type: Integer, desc: 'The number of weeks to adjust the original planned date by'
+  end
+  put '/projects/:id/task_def_id/:task_definition_id/plan' do
+    project = Project.find(params[:id])
+    task_definition = project.unit.task_definitions.find(params[:task_definition_id])
+
+    # check the user can put this task
+    if authorise? current_user, project, :make_submission
+      # Check unit allows planned date changes
+      unless project.unit.allow_flexible_dates
+        error!({ error: 'This unit does not allow you to adjust due dates.' }, 403)
+      end
+
+      task = project.task_for_task_definition(task_definition)
+
+      # update the planned date
+      task.extensions = params[:extensions]
+      task.save!
+
+      comment = TaskComment.create(
+        task: task,
+        user: current_user,
+        comment: "Planned date adjusted to #{task.due_date.strftime('%d %b')}.",
+        content_type: :plan,
+        recipient: project.student,
+        extension_weeks: params[:extensions]
+      )
+
+      comment.mark_as_read(project.tutor_for(task_definition))
+
+      present task, with: Entities::TaskEntity, include_other_projects: true, update_only: true
+    else
+      error!({ error: "You are not permitted to adjust the plan." }, 403)
+    end
+  end
+
   desc 'Update a task using its related project and task definition'
   params do
     # requires :id, type: Integer, desc: 'The project id to locate'
@@ -116,6 +157,8 @@ class TasksApi < Grape::API
     optional :include_in_portfolio, type: Boolean, desc: 'Indicate if this task should be in the portfolio'
     optional :grade, type: Integer, desc: 'Grade value if task is a graded task (required if task definition is a graded task)'
     optional :quality_pts, type: Integer, desc: 'Quality points value if task has quality assessment'
+    optional :discussed, type: Boolean, desc: 'Mark task as discussed'
+    optional :trigger_recursive_fix, desc: 'If marking fix and resubmit, recursively update preqreuisite submissions to fix'
   end
   put '/projects/:id/task_def_id/:task_definition_id' do
     project = Project.find(params[:id])
@@ -125,7 +168,35 @@ class TasksApi < Grape::API
 
     # check the user can put this task
     if authorise? current_user, project, :make_submission
+      # Only staff who can assess this task may write its grade. This is checked
+      # before anything below writes, so a refused request leaves the task alone.
+      if !grade.nil? && !authorise?(current_user, project, :assess)
+        error!({ error: 'You are not permitted to assess this task' }, 403)
+      end
+
       task = project.task_for_task_definition(task_definition)
+
+      # A tutor can both mark and unmark a task as discussed in class. Sending
+      # discussed:false used to still add a "Discussed in class" comment, the
+      # opposite of what it asks, and that comment type cannot be removed through
+      # the UI. So false now removes all discussed markers instead.
+      # The mark is added here so a same-request complete trigger below can see it;
+      # a removal is deferred to the end so a later refused trigger or grade does
+      # not leave the comment destroyed and the request still failing.
+      remove_discussed = false
+      if !params[:discussed].nil? && authorise?(current_user, project, :assess)
+        if params[:discussed]
+          task.add_discussed_comment(current_user)
+        elsif task.task_definition.requires_discussion &&
+              (task.task_status == TaskStatus.complete || params[:trigger] == 'complete')
+          # Removing the mark would leave a discussion-required task complete
+          # without the evidence the model demands. Refuse before deleting
+          # anything.
+          error!({ error: 'Cannot remove the discussed mark from a task that requires discussion while it is complete. Change its status first.' }, 403)
+        else
+          remove_discussed = true
+        end
+      end
 
       # if trigger supplied...
       unless params[:trigger].nil?
@@ -134,15 +205,56 @@ class TasksApi < Grape::API
           error!({ error: 'Cannot set this task status to ready to mark without uploading documents.' }, 403)
         end
 
+        if params[:trigger] == 'assess_in_portfolio' && !authorise?(current_user, project, :assess)
+          # Prevent students from upading status if task definition doesn't enable it
+          if !task_definition.assess_in_portfolio_only
+            error!({ error: 'Cannot set this task status to assess in portfolio if task definition doesnt allow it.' }, 403)
+          elsif needs_upload_docs
+            # Prevent students from updating status without uploading files
+            error!({ error: 'Cannot set this task status to assess in portfolio without uploading documents.' }, 403)
+          end
+        end
+
         if task.group_task? && !task.group
           error!({ error: "This task requires a group. Ensure you are in a group for the unit's #{task.task_definition.group_set.name}" }, 403)
         end
 
-        logger.info "#{current_user.username} assessing task #{task.id} to #{params[:trigger]}"
-        result = task.trigger_transition(trigger: params[:trigger], by_user: current_user, quality: params[:quality_pts])
-        if result.nil? && task.task_definition.restrict_status_updates
-          error!({ error: 'This task can only be updated by your tutor.' }, 403)
+        if task.task_definition.assess_in_portfolio_only && params[:trigger] == 'complete'
+          error!({ error: 'This task can only be assessed in portfolio.' }, 403)
         end
+
+        if task.task_definition.requires_discussion && params[:trigger] == 'complete' && !task.has_discussed_in_class_comment?
+          error!({ error: 'This task must be discussed in class before it can be marked complete.' }, 403)
+        end
+
+        logger.info "#{current_user.username} assessing task #{task.id} to #{params[:trigger]}"
+        result = task.trigger_transition(
+          trigger: params[:trigger],
+          by_user: current_user,
+          quality: params[:quality_pts],
+          recursive_fix: params[:trigger_recursive_fix],
+          check_feedback: true
+        )
+        # trigger_transition returns nil for every refusal, and most of its early
+        # returns leave errors empty. Both guards below used to need something
+        # extra on top of that, so a refused change fell through to the 200 at the
+        # end of the handler and the client showed it as accepted.
+        if result.nil?
+          if task.errors.any?
+            error!({ error: task.errors.full_messages.to_sentence }, 403)
+          elsif task.task_definition.restrict_status_updates
+            error!({ error: 'This task can only be updated by your tutor.' }, 403)
+          else
+            error!({ error: 'This status change is not allowed for this task.' }, 403)
+          end
+        end
+        SessionTracker.record_assessment_activity(
+          action: "assessing",
+          user: current_user,
+          project: project,
+          ip_address: request.ip,
+          task: task
+        )
       end
 
       # if grade was supplied
@@ -157,10 +269,28 @@ class TasksApi < Grape::API
         task.save
       end
 
+      # The status change and grade have been applied without error, so it is now
+      # safe to remove the discussed mark that was requested with discussed:false.
+      task.remove_discussed_comment if remove_discussed
+
       present task, with: Entities::TaskEntity, include_other_projects: true, update_only: true
     else
       error!({ error: "Couldn't find Task with id=#{params[:id]}" }, 403)
     end
+  end
+
+  desc 'Check in a student for a specific task.'
+  post '/projects/:id/task_def_id/:task_definition_id/check_in' do
+    project = Project.find(params[:id])
+
+    unless authorise?(current_user, project, :assess)
+      error!({ error: 'You do not have permission to assess this task.' }, 403)
+    end
+
+    task_definition = project.unit.task_definitions.find(params[:task_definition_id])
+    task = project.task_for_task_definition(task_definition)
+
+    task.add_checked_in_comment(current_user)
   end
 
   desc 'Get the submission details of a task, indicating if it has a pdf to view'
@@ -174,27 +304,46 @@ class TasksApi < Grape::API
     task_definition = project.unit.task_definitions.find(params[:task_definition_id])
 
     # check the user can put this task
-    error!(error: 'You do not have permission to read submissions for this project.') unless authorise? current_user, project, :get_submission
+    error!({ error: 'You do not have permission to read submissions for this project.' }, 403) unless authorise? current_user, project, :get_submission
 
     # ensure there can be a pdf...
     needs_upload_docs = !task_definition.upload_requirements.empty?
 
-    # check if we actually have this task... if not must be false.
-    if needs_upload_docs && project.has_task_for_task_definition?(task_definition)
-      task = project.task_for_task_definition(task_definition)
+    task = nil
+    unit_role = project.unit.unit_role_for(current_user)
 
-      # return the details as json
-      result = {
-        has_pdf: task.has_pdf,
-        submission_date: task.submission_date,
-        processing_pdf: task.processing_pdf?
-      }
-    else
-      result = {
-        has_pdf: false,
-        processing_pdf: false
-      }
+    # check if we actually have this task... if not must be false.
+    if project.has_task_for_task_definition?(task_definition)
+      task = project.task_for_task_definition(task_definition)
     end
+
+    result = if needs_upload_docs && task
+               # return the details as json
+               {
+                 has_pdf: task.has_pdf,
+                 submission_date: task.submission_date,
+                 processing_pdf: task.processing_pdf?,
+                 task_status: task.task_status.status_key
+               }
+             else
+               {
+                 has_pdf: false,
+                 processing_pdf: false
+               }
+             end
+
+    # Expose task claim to staff only
+    if unit_role
+      result[:claimed_by_unit_role_id] = task&.active_overflow_task_claim&.claimed_by_unit_role_id
+    end
+
+    SessionTracker.record_assessment_activity(
+      action: 'get-submission-details',
+      user: current_user,
+      project: project,
+      ip_address: request.ip,
+      task: task
+    )
 
     present result, with: Grape::Presenters::Presenter
   end
@@ -210,21 +359,27 @@ class TasksApi < Grape::API
     task_definition = project.unit.task_definitions.find(params[:task_definition_id])
 
     # check the user can put this task
-    error!(error: 'You do not have permission to read submissions for this project.') unless authorise? current_user, project, :get_submission
+    error!({ error: 'You do not have permission to read submissions for this project.' }, 403) unless authorise? current_user, project, :get_submission
 
     # Get the actual task...
     task = project.task_for_task_definition(task_definition)
+    SessionTracker.record_assessment_activity(
+      action: 'get-submission-files',
+      user: current_user,
+      project: project,
+      ip_address: request.ip,
+      task: task
+    )
 
     # Find the file
     file_loc = FileHelper.zip_file_path_for_done_task(task)
 
     if file_loc.nil? || !File.exist?(file_loc)
-      file_loc = Rails.root.join('public', 'resources', 'FileNotFound.pdf')
+      file_loc = Rails.root.join('public/resources/FileNotFound.pdf')
       header['Content-Disposition'] = 'attachment; filename=FileNotFound.pdf'
     else
       header['Content-Disposition'] = "attachment; filename=#{project.student.username}-#{task.task_definition.abbreviation}.zip"
     end
-    header['Access-Control-Expose-Headers'] = 'Content-Disposition'
 
     # Set download headers...
     content_type 'application/octet-stream'
@@ -232,4 +387,196 @@ class TasksApi < Grape::API
     # Return the file data
     stream_file file_loc
   end
+
+  desc 'Update the target dates for a task - when date flexibility is allowed'
+  params do
+    requires :id, type: Integer, desc: 'The project id to locate'
+    requires :task_definition_id, type: Integer, desc: 'The id of the task definition of the task to update in this project'
+    requires :target_start_date, type: Date, desc: 'Target date to start the task'
+    requires :target_due_date, type: Date, desc: 'Target date to submit the task'
+  end
+  put '/projects/:id/task_def_id/:task_definition_id/target_dates' do
+    project = Project.find(params[:id])
+    task_definition = project.unit.task_definitions.find(params[:task_definition_id])
+
+    # check the user can put this task
+    if authorise? current_user, project, :make_submission
+      # Check unit allows planned date changes
+      unless project.unit.allow_flexible_dates
+        error!({ error: 'This unit does not allow you to adjust due dates.' }, 403)
+      end
+
+      task = project.task_for_task_definition(task_definition)
+
+      if task.target_start_date == params[:target_start_date] && task.target_due_date == params[:target_due_date]
+        present task, with: Entities::TaskEntity, include_other_projects: true, update_only: true
+        return
+      end
+
+      task.update!(
+        target_start_date: params[:target_start_date],
+        target_due_date: params[:target_due_date]
+      )
+
+      comment_text = if params[:target_start_date].present? && params[:target_due_date].present?
+                       "Planned date adjusted: #{task.target_start_date.strftime('%d %b')} - #{task.target_due_date.strftime('%d %b')}."
+                     else
+                       "Planned date reset: #{task_definition.start_date.strftime('%d %b')} - #{task_definition.target_date.strftime('%d %b')}."
+                     end
+
+      comment = TaskComment.create(
+        task: task,
+        user: current_user,
+        comment: comment_text,
+        content_type: :plan,
+        recipient: project.student
+      )
+
+      comment.mark_as_read(project.tutor_for(task_definition))
+
+      present task, with: Entities::TaskEntity, include_other_projects: true, update_only: true
+    else
+      error!({ error: "You are not permitted to adjust the plan." }, 403)
+    end
+  end
+
+  desc 'Update the target dates for a task - when date flexibility is allowed'
+  params do
+    requires :id, type: Integer, desc: 'The project id to locate'
+  end
+  put '/projects/:id/reset_target_dates' do
+    project = Project.find(params[:id])
+
+    # check the user can put this task
+    if authorise? current_user, project, :make_submission
+      # Check unit allows planned date changes
+      unless project.unit.allow_flexible_dates
+        error!({ error: 'This unit does not allow you to adjust due dates.' }, 403)
+      end
+
+      project.tasks.each do |task|
+        next if task.target_start_date.nil? && task.target_due_date.nil?
+
+        task.update!(
+          target_start_date: nil,
+          target_due_date: nil
+        )
+
+        comment_text = "Planned date reset: #{task.task_definition.start_date.strftime('%d %b')} - #{task.task_definition.target_date.strftime('%d %b')}."
+        comment = TaskComment.create(
+          task: task,
+          user: current_user,
+          comment: comment_text,
+          content_type: :plan,
+          recipient: project.student
+        )
+
+        comment.mark_as_read(project.tutor_for(task.task_definition))
+      end
+
+      present project, with: Entities::ProjectEntity, user: current_user, for_student: true, in_project: true
+
+    else
+      error!({ error: "You are not permitted to adjust the plan." }, 403)
+    end
+  end
+
+  desc 'Request a feedback review (creates an escalation ModeratedTask)'
+  params do
+    requires :id, type: Integer, desc: 'The project id'
+    requires :task_definition_id, type: Integer, desc: 'The id of the task definition for the task to review'
+  end
+  post '/projects/:id/task_def_id/:task_definition_id/feedback_review' do
+    project = Project.find(params[:id])
+
+    unless authorise?(current_user, project, :make_submission)
+      error!({ error: 'You do not have permission to request a feedback review for this project.' }, 403)
+    end
+
+    if project.escalation_attempts_remaining <= 0
+      error!({ error: 'You can not escalate any more tasks.' }, 403)
+    end
+
+    task_definition = project.unit.task_definitions.find(params[:task_definition_id])
+    task = project.task_for_task_definition(task_definition)
+
+    existing = ModeratedTask.find_by(task: task)
+
+    if existing&.moderation_type == "escalation"
+      error!({ error: "A feedback review has already been requested for this task." }, 409)
+    end
+
+    existing&.destroy!
+
+    moderated_task = ModeratedTask.create!(
+      task: task,
+      task_definition: task_definition,
+      moderation_type: :escalation,
+      state: :open
+    )
+
+    unless moderated_task.valid?
+      error!({ error: "Failed to request a feedback review for this task" }, 400)
+    end
+
+    task.add_feedback_review_request_comment(current_user)
+
+    true
+  end
+
+  desc 'Claim a task from the overflow queue'
+  params do
+    requires :id, type: Integer, desc: 'The project id'
+    requires :task_definition_id, type: Integer, desc: 'The id of the task definition for the task to review'
+  end
+  post '/projects/:id/task_def_id/:task_definition_id/claim_overflow_task' do
+    project = Project.find(params[:id])
+
+    unit = project.unit
+
+    my_unit_role = unit.unit_role_for(current_user)
+    unless my_unit_role
+      error!({ error: "Not a part of this unit" }, 400)
+    end
+
+    unless my_unit_role.can_mark_overflow_tasks?
+      error!({ error: "Not allowed to claim task" }, 400)
+    end
+
+    task_definition = unit.task_definitions.find(params[:task_definition_id])
+    task = project.task_for_task_definition(task_definition)
+
+    task_claim = task.active_overflow_task_claim
+    if task_claim
+      error!({ error: "This task has already been claimed by another tutor" }, 409)
+    end
+
+    claimed_at = Time.zone.now
+    original_tutor = task.tutor
+
+    ActiveRecord::Base.transaction do
+      task.overflow_task_claim&.destroy!
+
+      OverflowTaskClaim.create!(
+        task: task,
+        claimed_by_unit_role: my_unit_role
+      )
+
+      OverflowTaskClaimLog.create!(
+        unit: unit,
+        task: task,
+        claimed_by_unit_role: my_unit_role,
+        claimed_by_user: current_user,
+        original_tutor_user: original_tutor,
+        student_user: project.student,
+        days_awaiting_feedback: task.days_awaiting_feedback(claimed_at),
+        claimed_at: claimed_at
+      )
+    end
+
+    logger.info "Overflow task claim: {\"user_id\": #{current_user.id},\"task_id\": #{task.id}, \"timestamp\": \"#{claimed_at}\", \"original_tutor_user_id\": #{original_tutor ? original_tutor.id : -1}}"
+
+    true
+  end
+
 end

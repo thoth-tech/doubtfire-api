@@ -9,21 +9,27 @@ class UnitsTest < ActiveSupport::TestCase
     Rails.application
   end
 
-  def assert_users_model_response(actual_user, expected_user)
-    keys = %w(id student_id email first_name last_name username nickname receive_task_notifications
-           receive_portfolio_notifications receive_feedback_notifications opt_in_to_research has_run_first_time_setup)
+  def assert_users_model_response(response_data, user_model, keys = nil)
+    if keys.nil?
+      keys = %w[id student_id email first_name last_name username nickname receive_task_notifications
+                receive_portfolio_notifications receive_feedback_notifications display_peer_progress
+                opt_in_to_research has_run_first_time_setup]
+      assert_not response_data.key?('theme_preference')
+      assert_not response_data.key?('theme_preference_updated_at')
+    end
 
-    assert_json_matches_model(expected_user, actual_user, keys)
+    assert_json_matches_model(user_model, response_data, keys)
   end
 
   def create_user
     {
-        first_name: 'Akash',
-        last_name: 'Agarwal',
-        email: 'blah@blah.com',
-        username: 'akash',
-        nickname: 'akash',
-        system_role: 'Admin'
+      first_name: 'Akash',
+      last_name: 'Agarwal',
+      email: 'blah@blah.com',
+      username: 'akash',
+      nickname: 'akash',
+      system_role: 'Admin',
+      student_id: 'zz123456zz'
     }
   end
 
@@ -47,7 +53,7 @@ class UnitsTest < ActiveSupport::TestCase
     assert_equal expected_data.count, last_response_body.count
 
     # What are the keys we expect in the data that match the model - so we can check these
-    response_keys = %w(first_name last_name email student_id nickname receive_task_notifications receive_portfolio_notifications receive_feedback_notifications opt_in_to_research has_run_first_time_setup)
+    response_keys = %w[first_name last_name email student_id nickname receive_task_notifications receive_portfolio_notifications receive_feedback_notifications display_peer_progress opt_in_to_research has_run_first_time_setup]
 
     # Loop through all of the responses
     last_response_body.each do | data |
@@ -55,6 +61,8 @@ class UnitsTest < ActiveSupport::TestCase
       user = User.find(data['id'])
       # Match json with object
       assert_json_matches_model(user, data, response_keys)
+      assert_not data.key?('theme_preference')
+      assert_not data.key?('theme_preference_updated_at')
     end
   end
 
@@ -65,18 +73,20 @@ class UnitsTest < ActiveSupport::TestCase
     # Add username and auth_token to Header
     add_auth_header_for(user: User.first)
 
-    # perform the GET 
+    # perform the GET
     get "/api/users/#{expected_user.id}"
     returned_user = last_response_body
 
     # Check if the call succeeds
     assert_equal 200, last_response.status
-    
+
     # Check the returned details match as expected
-    response_keys = %w(first_name last_name email student_id nickname receive_task_notifications receive_portfolio_notifications receive_feedback_notifications opt_in_to_research has_run_first_time_setup)
+    response_keys = %w(first_name last_name email student_id nickname receive_task_notifications receive_portfolio_notifications receive_feedback_notifications display_peer_progress opt_in_to_research has_run_first_time_setup)
     assert_json_matches_model(expected_user, returned_user, response_keys)
+    assert_not returned_user.key?('theme_preference')
+    assert_not returned_user.key?('theme_preference_updated_at')
   end
-  
+
   def test_get_convenors
 
     # Add username and auth_token to Header
@@ -84,6 +94,10 @@ class UnitsTest < ActiveSupport::TestCase
 
     get '/api/users/convenors'
     assert_equal 200, last_response.status
+    last_response_body.each do |user|
+      assert_not user.key?('theme_preference')
+      assert_not user.key?('theme_preference_updated_at')
+    end
   end
 
   def test_get_tutors
@@ -93,6 +107,10 @@ class UnitsTest < ActiveSupport::TestCase
 
     get '/api/users/tutors'
     assert_equal 200, last_response.status
+    last_response_body.each do |user|
+      assert_not user.key?('theme_preference')
+      assert_not user.key?('theme_preference_updated_at')
+    end
   end
 
   def test_get_no_token
@@ -121,7 +139,7 @@ class UnitsTest < ActiveSupport::TestCase
     pre_count = User.all.length
 
     data_to_post = {
-        user: create_user
+      user: create_user
     }
 
     # Add username and auth_token to Header
@@ -131,6 +149,7 @@ class UnitsTest < ActiveSupport::TestCase
 
     assert_equal pre_count + 1, User.all.length
     assert_users_model_response last_response_body, User.last
+    assert User.last.display_peer_progress?
     assert_equal 201, last_response.status
   end
 
@@ -138,7 +157,7 @@ class UnitsTest < ActiveSupport::TestCase
     pre_count = User.all.length
 
     data_to_post = {
-        user: create_user
+      user: create_user
     }
 
     # Add username and auth_token to Header
@@ -231,19 +250,19 @@ class UnitsTest < ActiveSupport::TestCase
     user2 = create_user
 
     user.collect do |key, value|
-      next if key == :nickname # Nickname can be empty
+      next if [:nickname, :student_id].include? key # can be empty
       user2[key] = ''
       data_to_post = {
-          user: user2
+        user: user2
       }
 
       # Add username and auth_token to Header
       add_auth_header_for(user: User.first)
 
       post_json '/api/users', data_to_post
+      assert_equal (key == :system_role ? 403 : 400), last_response.status, last_response_body
       # Successful assertion of same length again means no record was created
-      assert_equal pre_count, User.all.length
-      assert_equal (if key == :system_role then 403 else 400 end), last_response.status
+      assert_equal pre_count, User.all.length, last_response_body
       user2[key] = value
     end
   end
@@ -306,15 +325,15 @@ class UnitsTest < ActiveSupport::TestCase
     user[:email] = 'different@email.com'
 
     data_to_put = {
-        user: user
+      user: user
     }
 
     # Add username and auth_token to Header
     add_auth_header_for(user: User.first)
 
     put_json '/api/users/2', data_to_put
-    assert_users_model_response User.find_by(email: 'different@email.com').as_json, user.as_json
     assert_equal 200, last_response.status
+    assert_users_model_response last_response_body, user.reload
   end
 
   def test_put_update_user_existing_email
@@ -330,6 +349,139 @@ class UnitsTest < ActiveSupport::TestCase
 
     put_json '/api/users/2', data_to_put
     assert_equal 400, last_response.status
+  end
+
+  def test_put_update_peer_progress_display_preference
+    user = User.second
+    add_auth_header_for(user: User.first)
+
+    put_json "/api/users/#{user.id}", {
+      user: { display_peer_progress: false }
+    }
+
+    assert_equal 200, last_response.status
+    assert_equal false, last_response_body['display_peer_progress']
+    assert_not user.reload.display_peer_progress?
+
+    put_json "/api/users/#{user.id}", {
+      user: { display_peer_progress: true }
+    }
+
+    assert_equal 200, last_response.status
+    assert_equal true, last_response_body['display_peer_progress']
+    assert user.reload.display_peer_progress?
+  end
+
+  def test_theme_preference_is_nullable_until_the_user_chooses
+    user = User.first
+    user.update!(theme_preference: nil)
+    add_auth_header_for(user: user)
+
+    get "/api/users/#{user.id}"
+
+    assert_equal 200, last_response.status
+    assert last_response_body.key?('theme_preference')
+    assert last_response_body.key?('theme_preference_updated_at')
+    assert_nil last_response_body['theme_preference']
+    assert_nil last_response_body['theme_preference_updated_at']
+  end
+
+  def test_put_update_theme_preference_stamps_and_serializes_its_timestamp
+    user = User.first
+    user.update!(theme_preference: nil)
+    add_auth_header_for(user: user)
+    chosen_at = Time.zone.parse('2026-08-30 10:00:00 UTC')
+
+    travel_to chosen_at do
+      put_json "/api/users/#{user.id}", {
+        user: { theme_preference: 'dark' }
+      }
+    end
+
+    assert_equal 200, last_response.status
+    assert_equal 'dark', last_response_body['theme_preference']
+    assert_equal chosen_at, Time.iso8601(last_response_body['theme_preference_updated_at'])
+    assert_equal chosen_at, user.reload.theme_preference_updated_at
+  end
+
+  def test_put_same_theme_preference_refreshes_the_sync_timestamp
+    user = User.first
+    first_choice_at = Time.zone.parse('2026-08-30 10:00:00 UTC')
+    travel_to first_choice_at do
+      user.update!(theme_preference: 'dark')
+    end
+    add_auth_header_for(user: user)
+
+    synchronization_at = first_choice_at + 2.hours
+    travel_to synchronization_at do
+      put_json "/api/users/#{user.id}", {
+        user: { theme_preference: 'dark' }
+      }
+    end
+
+    assert_equal 200, last_response.status
+    assert_equal 'dark', last_response_body['theme_preference']
+    assert_equal synchronization_at, Time.iso8601(last_response_body['theme_preference_updated_at'])
+    assert_equal synchronization_at, user.reload.theme_preference_updated_at
+  end
+
+  def test_put_clear_theme_preference_restores_the_never_chosen_state
+    user = User.first
+    user.update!(theme_preference: 'dark')
+    add_auth_header_for(user: user)
+
+    put_json "/api/users/#{user.id}", {
+      user: { theme_preference: nil }
+    }
+
+    assert_equal 200, last_response.status
+    assert last_response_body.key?('theme_preference')
+    assert last_response_body.key?('theme_preference_updated_at')
+    assert_nil last_response_body['theme_preference']
+    assert_nil last_response_body['theme_preference_updated_at']
+    assert_nil user.reload.theme_preference
+    assert_nil user.theme_preference_updated_at
+  end
+
+  def test_non_self_update_ignores_theme_preference_and_omits_it_from_response
+    current_user = User.first
+    other_user = User.second
+    original_choice_at = Time.zone.parse('2026-08-30 10:00:00 UTC')
+    travel_to original_choice_at do
+      other_user.update!(theme_preference: 'dark')
+    end
+    add_auth_header_for(user: current_user)
+
+    put_json "/api/users/#{other_user.id}", {
+      user: {
+        nickname: 'Updated by administrator',
+        theme_preference: 'light'
+      }
+    }
+
+    assert_equal 200, last_response.status
+    assert_equal 'Updated by administrator', other_user.reload.nickname
+    assert_equal 'dark', other_user.theme_preference
+    assert_equal original_choice_at, other_user.theme_preference_updated_at
+    assert_not last_response_body.key?('theme_preference')
+    assert_not last_response_body.key?('theme_preference_updated_at')
+  end
+
+  def test_put_invalid_theme_preference_keeps_the_existing_choice_and_timestamp
+    user = User.first
+    chosen_at = Time.zone.parse('2026-08-30 10:00:00 UTC')
+    travel_to chosen_at do
+      user.update!(theme_preference: 'dark')
+    end
+    add_auth_header_for(user: user)
+
+    put_json "/api/users/#{user.id}", {
+      user: { theme_preference: 'sepia' }
+    }
+
+    assert_equal 400, last_response.status
+    assert_equal 'dark', user.reload.theme_preference
+    assert_equal chosen_at, user.theme_preference_updated_at
   end
 
   def test_put_update_user_invalid_email
