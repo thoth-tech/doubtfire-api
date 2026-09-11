@@ -1,60 +1,110 @@
 namespace :db do
-  desc "Generate feedback chips"
+  desc 'Generate feedback chips'
   task generate_feedback_chips: [:skip_prod, :environment] do
     require 'faker'
+
     units = Unit.limit(5)
     task_definitions = TaskDefinition.limit(5)
-    created_outcome_ids = []
+
+    # Only hang dummy chips under the outcomes this task creates. Iterating
+    # LearningOutcome.all would attach Faker chips to every real, convenor
+    # authored outcome on the box.
+    created_outcomes = []
+
     units.each do |unit|
-      created_outcome_ids.concat(
-        FactoryBot.create_list(:learning_outcome, 3, context_type: 'Unit', context_id: unit.id).map(&:id)
+      created_outcomes.concat(
+        FactoryBot.create_list(
+          :learning_outcome,
+          3,
+          context_type: 'Unit',
+          context_id: unit.id
+        )
       )
     end
+
     task_definitions.each do |task_definition|
-      created_outcome_ids.concat(
-        FactoryBot.create_list(:learning_outcome, 3, context_type: 'TaskDefinition', context_id: task_definition.id).map(&:id)
+      created_outcomes.concat(
+        FactoryBot.create_list(
+          :learning_outcome,
+          3,
+          context_type: 'TaskDefinition',
+          context_id: task_definition.id
+        )
       )
     end
-    LearningOutcome.where(id: created_outcome_ids).find_each do |lo|
 
-      # create 4 top level group chips
-      group_chips = FactoryBot.create_list(:feedback_group_chip, 2, learning_outcome_id: lo.id)
-      nested_group_chips = FactoryBot.create_list(:feedback_group_chip, 2, learning_outcome_id: lo.id)
+    created_outcomes.each do |lo|
+      # Create 2 top-level group chips.
+      group_chips = FactoryBot.create_list(
+        :feedback_group_chip,
+        2,
+        learning_outcome_id: lo.id
+      )
 
-      # create 2 template chips for each group chip
+      nested_group_chips = FactoryBot.create_list(
+        :feedback_group_chip,
+        2,
+        learning_outcome_id: lo.id
+      )
+
+      # Create 2 template chips for each group chip.
       group_chips.each do |group_chip|
-        FactoryBot.create_list(:feedback_template_chip, 2, parent_chip_id: group_chip.id, learning_outcome_id: lo.id)
+        FactoryBot.create_list(
+          :feedback_template_chip,
+          2,
+          parent_chip_id: group_chip.id,
+          learning_outcome_id: lo.id
+        )
       end
 
-      # create 2 group chips for each nested group chip
+      # Create 2 group chips for each nested group chip.
       nested_group_chips.each do |nested_group_chip|
-        double_nested_group_chips = FactoryBot.create_list(:feedback_group_chip, 2, parent_chip_id: nested_group_chip.id, learning_outcome_id: lo.id)
-        # create 2 template chips for each double nested group chip
+        double_nested_group_chips = FactoryBot.create_list(
+          :feedback_group_chip,
+          2,
+          parent_chip_id: nested_group_chip.id,
+          learning_outcome_id: lo.id
+        )
+
+        # Create 2 template chips for each double nested group chip.
         double_nested_group_chips.each do |double_nested_group_chip|
-          FactoryBot.create_list(:feedback_template_chip, 2, parent_chip_id: double_nested_group_chip.id, learning_outcome_id: lo.id)
+          FactoryBot.create_list(
+            :feedback_template_chip,
+            2,
+            parent_chip_id: double_nested_group_chip.id,
+            learning_outcome_id: lo.id
+          )
         end
       end
     end
 
-    puts "Dummy data generated"
+    puts 'Dummy data generated'
   end
 
-  desc "Check generated data"
+  desc 'Check generated data'
   task print_dummy_data: :environment do
     puts "Printing all testing data...\n\n"
 
-    puts "Feedback Group Chips:"
-    Feedback::FeedbackGroupChip.all.find_each do |chip|
-      puts "Feedback Group Chip: #{chip.id} (#{chip.chip_text}), Parent Chip Id: #{chip.parent_chip_id}, Learning Outcome: #{chip.learning_outcome_id}"
+    puts 'Feedback Group Chips:'
+    Feedback::FeedbackGroupChip.find_each do |chip|
+      puts(
+        "Feedback Group Chip: #{chip.id} (#{chip.chip_text}), " \
+        "Parent Chip Id: #{chip.parent_chip_id}, " \
+        "Learning Outcome: #{chip.learning_outcome_id}"
+      )
     end
 
-    puts "Feedback Template Chips:"
-    Feedback::FeedbackTemplateChip.all.find_each do |chip|
-      puts "Feedback Template Chip: #{chip.id} (#{chip.chip_text}), Parent Chip Id: #{chip.parent_chip_id}, Learning Outcome: #{chip.learning_outcome_id}"
+    puts 'Feedback Template Chips:'
+    Feedback::FeedbackTemplateChip.find_each do |chip|
+      puts(
+        "Feedback Template Chip: #{chip.id} (#{chip.chip_text}), " \
+        "Parent Chip Id: #{chip.parent_chip_id}, " \
+        "Learning Outcome: #{chip.learning_outcome_id}"
+      )
     end
 
     puts "Feedback Template Chips: #{Feedback::FeedbackTemplateChip.count}"
     puts "Feedback Group Chips: #{Feedback::FeedbackGroupChip.count}"
-    puts "Dummy data printed"
+    puts 'Dummy data printed'
   end
 end
