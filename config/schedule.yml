@@ -1,3 +1,6 @@
+# Schedules are owned by Sidekiq-cron and .ci-setup/crontab:
+# Sidekiq-cron owns in-process scheduled jobs.
+# .ci-setup/crontab owns the container's rake schedule.
 # config/schedule.yml
 
 register_webhooks:
