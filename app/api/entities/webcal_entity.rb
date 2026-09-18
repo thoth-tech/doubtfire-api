@@ -3,6 +3,7 @@ module Entities
     expose :id, expose_nil: false
     expose :guid, expose_nil: false
     expose :include_start_dates, expose_nil: false
+    expose :include_learning_sessions, expose_nil: false
 
     expose :enabled do |webcal, options|
       webcal.present?

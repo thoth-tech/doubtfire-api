@@ -203,7 +203,12 @@ class OverseerStepsApi < Grape::API
 
     unit = project.unit
 
-    overseer_assessment = OverseerAssessment.find(params[:id])
+    # Look the assessment up through the project and task definition in the url, so that
+    # an id from outside the authorised project raises RecordNotFound and returns a 404.
+    overseer_assessment = OverseerAssessment.joins(:task)
+                                            .where(tasks: { project_id: project.id, task_definition_id: params[:task_def_id] })
+                                            .find(params[:id])
+
     present overseer_assessment.overseer_step_results, with: Entities::OverseerStepResultEntity, my_role: unit.role_for(current_user)
   end
 end

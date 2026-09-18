@@ -1,0 +1,13 @@
+Hi <%= @user.first_name %>,
+
+<%= @notification.message %>
+
+Open the task to see where they are up to:
+<% if @notification.link.present? -%>
+<%= @doubtfire_host %><%= @notification.link %>
+<% end -%>
+
+The student's work and comments are not included in this email.
+
+You can manage your notification preferences here:
+<%= @unsubscribe_url %>

@@ -71,30 +71,54 @@ class LtiApi < Grape::API
       error!({ error: "Missing required fields:  #{missing.join(', ')}" }, 400)
     end
 
-    # if current_user.role_id != Role.student_id
-    #   return status 204
-    # end
+    # The token names the person the launch was issued for, and its roles decide
+    # what that person gets. Apply it to that person, and only while that person
+    # is the one holding the session.
+    unless lti_member_is?(member, current_user)
+      error!({ error: 'This LTI token was not issued for the signed in user.' }, 403)
+    end
 
-    # role = unit.role_for(current_user)
-    # if !role.nil? && role != Role.student
-    #   # error!({ error: 'Failed to enrol, user is already staff.' }, 400)
-    #   return status 204
-    # end
+    subject = current_user
 
     unit_role = Doubtfire::Application.config.institution_settings.should_employ_lti_member(member)
-    unless unit_role.nil?
-      unit.employ_staff(current_user, unit_role)
+    enrol_member = Doubtfire::Application.config.institution_settings.should_enrol_lti_member(member)
+
+    project = nil
+    consumed = ConsumedLtiToken.find_by(jti: token['jti'])
+
+    if consumed.present?
+      # The web client carries the one launch token for the whole session and
+      # calls this route on every mount of the dashboard, so the subject
+      # presenting their own token again is not a replay. The token is spent
+      # either way, so nothing is applied a second time.
+      unless consumed.spent_by?(subject)
+        error!({ error: 'This LTI token has already been used.' }, 403)
+      end
+
+      project = unit.projects.find_by(user_id: subject.id) if enrol_member
+    else
+      begin
+        ActiveRecord::Base.transaction do
+          # Spend the token before anything is applied. A concurrent replay
+          # loses on the unique index and rolls the whole enrolment back.
+          ConsumedLtiToken.consume!(token, user: subject)
+
+          unit.employ_staff(subject, unit_role) unless unit_role.nil?
+
+          # TODO: which campus?
+          project = unit.enrol_student(subject, nil) if enrol_member
+        end
+      rescue ConsumedLtiToken::AlreadyUsed
+        error!({ error: 'This LTI token has already been used.' }, 403)
+      end
     end
 
-    unless Doubtfire::Application.config.institution_settings.should_enrol_lti_member(member)
+    if project.nil?
       # error!({ error: 'User can not be enrolled into this unit.' }, 404)
-      return status 204
+      status 204
+    else
+      present project, with: Entities::ProjectEntity, user: subject, for_student: true, in_project: true
     end
-
-    # TODO: which campus?
-    project = unit.enrol_student(current_user, nil)
-
-    present project, with: Entities::ProjectEntity, user: current_user, for_student: true, in_project: true
   end
 
   desc 'Enrol a list of students into a linked Lti unit'

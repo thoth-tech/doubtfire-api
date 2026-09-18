@@ -6,6 +6,7 @@ module Feedback
     helpers MimeCheckHelpers
     helpers CsvHelper
     helpers FileHelper
+    helpers ContextModelHelpers
 
     before do
       authenticated?
@@ -17,8 +18,7 @@ module Feedback
       requires :context_id, type: Integer, desc: 'The ID of the context'
     end
     get '/:context_type_plural/:context_id/feedback_chips' do
-      context_type = params[:context_type_plural].singularize.camelize
-      context_model = context_type.classify.constantize.find(params[:context_id])
+      context_model = context_model_for(params[:context_type_plural], params[:context_id])
 
       unless authorise? current_user, context_model, :get_feedback_chips
         error!({ error: 'You are not authorised to view feedback chips in this context.' }, 403)
@@ -137,16 +137,21 @@ module Feedback
       nil
     end
 
-    desc 'Track usage of a feedback template chip by a tutor'
+    desc 'Track usage of a feedback template chip by the current user'
     params do
       requires :id, type: Integer, desc: 'The ID of the feedback template chip'
-      requires :tutor_id, type: Integer, desc: 'The ID of the tutor'
     end
     post '/feedback_template_chip/:id/track_usage' do
       chip = FeedbackTemplateChip.find(params[:id])
-      tutor = Tutor.find(params[:tutor_id])
 
-      chip.track_usage_by_tutor(tutor)
+      unless authorise? current_user, chip, :track_chip_usage
+        error!({ error: 'You are not authorised to track feedback chip usage.' }, 403)
+      end
+
+      # Always record usage against the caller. Accepting a tutor id from the
+      # request would let any tutor log usage for any user, and looking that
+      # user up would reveal which user ids exist.
+      chip.track_usage_by(current_user)
       nil
     end
 
@@ -157,8 +162,7 @@ module Feedback
     end
     get '/:context_type_plural/:context_id/outcomes/:id/feedback_chips/csv' do
       # find context model dynamically
-      context_type = params[:context_type_plural].singularize.camelize
-      context_model = context_type.classify.constantize.find(params[:context_id])
+      context_model = context_model_for(params[:context_type_plural], params[:context_id])
       learning_outcome = LearningOutcome.find(params[:id])
 
       unless authorise? current_user, context_model, :create_feedback_chips
@@ -182,8 +186,7 @@ module Feedback
     end
     get '/:context_type_plural/:context_id/feedback_chips/csv' do
       include_tlos = params[:includes_tlos] || false
-      context_type = params[:context_type_plural].singularize.camelize
-      context_model = context_type.classify.constantize.find(params[:context_id])
+      context_model = context_model_for(params[:context_type_plural], params[:context_id])
 
       unless authorise? current_user, context_model, :create_feedback_chips
         error!({ error: 'You are not authorised to download feedback chips in this context.' }, 403)
@@ -210,8 +213,7 @@ module Feedback
       # check mime is correct before uploading
       ensure_csv!(params[:file][:tempfile])
 
-      context_type = params[:context_type_plural].singularize.camelize
-      context_model = context_type.classify.constantize.find(params[:context_id])
+      context_model = context_model_for(params[:context_type_plural], params[:context_id])
 
       # find context model dynamically
       learning_outcome = context_model.learning_outcomes.find(params[:id])
@@ -234,8 +236,8 @@ module Feedback
       # check mime is correct before uploading
       ensure_csv!(params[:file][:tempfile])
 
-      context_type = params[:context_type_plural].singularize.camelize
-      context_model = context_type.classify.constantize.find(params[:context_id])
+      context_type = context_type_for(params[:context_type_plural])
+      context_model = context_model_for(params[:context_type_plural], params[:context_id])
 
       unless authorise? current_user, context_model, :create_feedback_chips
         error!({ error: "Not authorised to upload CSV of feedback chips for #{context_type}" }, 403)

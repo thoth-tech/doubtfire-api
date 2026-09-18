@@ -4,6 +4,7 @@ The following evidence you submitted to <%= @doubtfire_product_name %> is now pr
 
 <% @tasks.each do |task| %>
   * <%= task.task_definition.abbreviation %> - <%=task.task_definition.name%>
+    <%= @doubtfire_host %>/projects/<%= @project.id %>/dashboard/<%= ERB::Util.url_encode(task.task_definition.abbreviation) %>
 <% end %>
 
 Cheers,

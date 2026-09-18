@@ -182,6 +182,8 @@ class WebcalTest < ActiveSupport::TestCase
 
   test 'Includes webcal reminders correctly' do
     cal = @webcal.to_ical
+    assert_includes cal.to_ical, 'X-PUBLISHED-TTL;VALUE=DURATION:PT4H'
+    assert_includes cal.to_ical, 'REFRESH-INTERVAL;VALUE=DURATION:PT4H'
     all_task_defs = @current_unit1.task_definitions + @current_unit2.task_definitions
 
     # Calls `fn` per task definition in `all_task_defs` with 2 args---the `TaskDefinition`, and the corresponding

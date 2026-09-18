@@ -1,0 +1,12 @@
+Hi <%= @user.name %>,
+
+<%= @notification.message %>
+
+The deadline is not included in this email. Open the task in <%= @doubtfire_product_name %> to see when it is due and what is left to do.
+<% if @notification.link.present? -%>
+
+Open the task: <%= @doubtfire_host %><%= @notification.link %>
+<% end -%>
+
+You are receiving this because your task notifications are turned on.
+You can turn these emails off at <%= @unsubscribe_url %>.

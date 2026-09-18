@@ -9,11 +9,34 @@ class TaskCommentsApi < Grape::API
     authenticated?
   end
 
+  helpers do
+    # A retry that overlaps its original request can miss the lookup at the
+    # start of the create endpoint and then lose the race at the unique index,
+    # at the uniqueness validation, or at add_text_comment's duplicate guard.
+    # In each case the comment already stored for this id is the answer.
+    def comment_for_client_request(task, client_request_id)
+      return nil if client_request_id.blank?
+
+      # Skip the request's query cache. It still holds the first lookup's
+      # miss, and the comment was stored since by the request this one raced.
+      TaskComment.uncached do
+        task.comments.find_by(user_id: current_user.id, client_request_id: client_request_id)
+      end
+    end
+
+    def lost_client_request_race?(error)
+      error.is_a?(ActiveRecord::RecordNotUnique) ||
+        (error.is_a?(ActiveRecord::RecordInvalid) && error.record.errors.of_kind?(:client_request_id, :taken))
+    end
+  end
+
   desc 'Add a new comment to a task'
   params do
     optional :comment, type: String, desc: 'The comment text to add to the task'
     optional :attachment, type: File, desc: 'Image, sound, PDF or video comment file'
     optional :reply_to_id, type: Integer, desc: 'The comment to which this comment is replying'
+    optional :client_request_id, type: String, regexp: /\A[0-9a-f-]{1,64}\z/i,
+                                 desc: 'Stable client-generated identifier used to make attachment retries idempotent'
   end
   post '/projects/:project_id/task_def_id/:task_definition_id/comments' do
     project = Project.find(params[:project_id])
@@ -26,6 +49,7 @@ class TaskCommentsApi < Grape::API
     text_comment = params[:comment]
     attached_file = params[:attachment]
     reply_to_id = params[:reply_to_id]
+    client_request_id = params[:client_request_id]
 
     task = project.task_for_task_definition(task_definition)
     if task.active_overflow_task_claim
@@ -35,9 +59,15 @@ class TaskCommentsApi < Grape::API
       end
     end
 
-    if attached_file.present?
-      error!({ error: "Attachment is empty." }) if File.size?(attached_file["tempfile"].path).blank?
-      error!({ error: "Attachment exceeds the maximum attachment size of 30MB." }) unless File.size?(attached_file["tempfile"].path) < 30_000_000
+    existing_result = if client_request_id.present?
+                        task.comments.find_by(user_id: current_user.id, client_request_id: client_request_id)
+                      end
+
+    if attached_file.present? && existing_result.blank?
+      error!({ error: 'Attachment is empty.' }, 400) if File.size?(attached_file['tempfile'].path).blank?
+      unless File.size?(attached_file['tempfile'].path) < 30_000_000
+        error!({ error: 'Attachment exceeds the maximum attachment size of 30MB.' }, 413)
+      end
     end
 
     type_string = content_type.to_s
@@ -48,18 +78,42 @@ class TaskCommentsApi < Grape::API
       error!(error: 'Original comment is not in this task.') if task.all_comments.find(reply_to_id).blank?
     end
 
-    logger.info("#{current_user.username} - added comment for task #{task.id} (#{task_definition.abbreviation})")
+    logger.info("user_id=#{current_user.id} added comment for task #{task.id} (#{task_definition.abbreviation})")
 
-    if attached_file.blank?
+    if existing_result.present?
+      result = existing_result
+    elsif attached_file.blank?
       error!({ error: 'Comment text is empty, unable to add new comment' }, 403) if text_comment.blank?
-      result = task.add_text_comment(current_user, text_comment, reply_to_id)
+      begin
+        result = task.add_text_comment(current_user, text_comment, reply_to_id, client_request_id)
+      rescue ActiveRecord::RecordNotUnique, ActiveRecord::RecordInvalid => e
+        raise unless lost_client_request_race?(e)
+
+        result = comment_for_client_request(task, client_request_id)
+        raise if result.blank?
+      end
+      result ||= comment_for_client_request(task, client_request_id)
     else
       file_result = FileHelper.accept_file(attached_file, 'comment attachment - TaskComment', 'comment_attachment')
       unless file_result[:accepted]
-        error!({ error: "File is not an accptable format: #{file_result[:msg]}" }, 403)
+        error!({ error: "File is not an acceptable format: #{file_result[:msg]}" }, 403)
       end
 
-      result = task.add_comment_with_attachment(current_user, attached_file, reply_to_id)
+      begin
+        result = task.add_comment_with_attachment(
+          current_user,
+          attached_file,
+          reply_to_id,
+          text_comment,
+          client_request_id
+        )
+      rescue ActiveRecord::RecordNotUnique, ActiveRecord::RecordInvalid => e
+        raise unless lost_client_request_race?(e)
+
+        result = comment_for_client_request(task, client_request_id)
+        raise if result.blank?
+      end
+      error!({ error: 'File is not an acceptable comment attachment format.' }, 403) if result.nil?
     end
 
     if result.nil?
@@ -93,9 +147,12 @@ class TaskCommentsApi < Grape::API
     if project.has_task_for_task_definition? task_definition
       task = project.task_for_task_definition(task_definition)
 
-      comment = task.comments.find(params[:id])
+      # all_comments spans the group's shared submission, so a group member can open
+      # an attachment posted by another member. It stays bounded by this caller's own
+      # project via the :get check above, matching the delete and update endpoints.
+      comment = task.all_comments.find(params[:id])
 
-      error!({ error: 'No attachment for this comment.' }, 404) unless %w(audio image pdf).include? comment.content_type
+      error!({ error: 'No attachment for this comment.' }, 404) unless comment.attachment?
 
       error!({ error: 'File missing' }, 404) unless File.exist? comment.attachment_path
 
@@ -105,8 +162,11 @@ class TaskCommentsApi < Grape::API
       env['api.format'] = :binary
 
       # mark as attachment
-      if params[:as_attachment]
-        header['Content-Disposition'] = "attachment; filename=#{comment.attachment_file_name}"
+      if params[:as_attachment] || comment.content_type == 'document'
+        header['Content-Disposition'] = ActionDispatch::Http::ContentDisposition.format(
+          disposition: 'attachment',
+          filename: comment.attachment_file_name
+        )
       end
 
       SessionTracker.record_assessment_activity(
@@ -265,7 +325,9 @@ class TaskCommentsApi < Grape::API
 
     task = project.task_for_task_definition(task_definition)
 
-    task_comment = task.comments.find(params[:id])
+    # Group task feedback is shared across every task in the same group
+    # submission, matching the collection returned by the comments endpoint.
+    task_comment = task.all_comments.find(params[:id])
     task_comment.mark_as_unread(current_user)
 
     SessionTracker.record_assessment_activity(

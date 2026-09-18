@@ -135,23 +135,26 @@ class Group < ApplicationRecord
 
       if group_set.keep_groups_in_same_class && has_active_group_members?
         projects.each do |proj|
-          # We need to remove members to break the circular dependency and switch tutorial
-          remove_member(proj)
+          # These membership changes are temporary while moving tutorial,
+          # so they must not generate leave/join notifications.
+          remove_member(proj, notify: false)
 
           te = proj.enrol_in tutorial
           unless te.valid?
             raise "Unable to move group as #{proj.student.name} could not switch tutorial."
           end
 
-          add_member(proj)
+          add_member(proj, notify: false)
         end
       end
       self.save!
     end
   end
 
-  def add_member(project)
+  def add_member(project, notify: true)
     gm = project.group_membership_for_groupset(group_set)
+
+    membership_changed = gm.nil? || !gm.active? || gm.group_id != id
 
     if gm.nil?
       gm = GroupMembership.create(group: self, project: project)
@@ -164,16 +167,41 @@ class Group < ApplicationRecord
     gm.active = true
     gm.save!
 
+    notify_group_membership_change(project, 'added to') if notify && membership_changed
+
     gm
   end
 
-  def remove_member(project)
+  def remove_member(project, notify: true)
     gm = group_memberships.where(project: project).first
+    was_active = gm.active?
+
     gm.active = false
-    gm.save
+    saved = gm.save
+
+    notify_group_membership_change(project, 'removed from') if notify && saved && was_active
+
     self
   end
 
+  def notify_group_membership_change(project, change)
+    student = project.student
+    return if student.blank?
+
+    NotificationService.notify(
+      user: student,
+      type: 'general',
+      event: 'group_membership_changed',
+      message: "You have been #{change} group #{name} in #{unit.code}.",
+      link: "/projects/#{project.id}/groups"
+    )
+  rescue StandardError => e
+    logger.error(
+      "Failed to raise group_membership_changed notification for project #{project.id}: #{e.message}"
+    )
+  end
+
+  private :notify_group_membership_change
   #
   # check if the project is the same as the current submission
   #

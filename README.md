@@ -23,6 +23,17 @@ Doubtfire is a feedback-driven learning support system.
 
 See [Doubtfire Deploy](https://github.com/doubtfire-lms/doubtfire-deploy) for instructions on deploying, and contributing, to the Doubtfire project.
 
+The legacy root `docker-compose.yml` defaults to local database authentication.
+Optional AAF development must use a dedicated non-production registration
+supplied through an ignored `.env` file copied from `.env.example`. Any AAF
+secret ever committed to Git must be treated as compromised and rotated by its
+identity owner.
+
+Image publication is coordinated from the exact API/web revisions pinned by
+`doubtfire-deploy` and its `production/publish-release.sh` release gate. The
+legacy API image workflow is intentionally build-only and cannot publish a
+tagged image independently of the cross-repository handover checks.
+
 ## Environment variables
 
 Doubtfire requires multiple environment variables that help define settings about the Doubtfire instance running. Whilst these will default to other values, you may want to override them in production.
@@ -35,6 +46,7 @@ Doubtfire requires multiple environment variables that help define settings abou
 | `DF_ARCHIVE_DIR`               | The directory to move archived unit files to, and access from.                                                                                                                                                                                                              | `DF_STUDENT_WORK_DIR/archive`  |
 | `DF_INSTITUTION_NAME`          | The name of your institution running Doubtfire.                                                                                                                                                                                                                             | _Doubtfire University_         |
 | `DF_INSTITUTION_EMAIL_DOMAIN`  | The email domain from which emails are sent to and from in your institution.                                                                                                                                                                                                | `doubtfire.com`                |
+| `DF_INSTITUTION_EMAIL_SENDER`  | The SMTP-authorised From address used for event-notification email. It may include a display name.                                                                                                                                                                           | `noreply@doubtfire.local`      |
 | `DF_INSTITUTION_HOST`          | The host running the Doubtfire instance.                                                                                                                                                                                                                                    | `localhost:3000`               |
 | `DF_COOKIE_DOMAIN`             | The domain to be associated with secure cookies.                                                                                                                                                                                                                            | Attempts to read from host     |
 | `DF_INSTITUTION_PRODUCT_NAME`  | The name of the product (i.e. Doubtfire) at your institution.                                                                                                                                                                                                               | _Doubtfire_                    |
@@ -49,8 +61,9 @@ Doubtfire requires multiple environment variables that help define settings abou
 | `DF_INSTITUTION_PLAGIARISM`    | A statement clarifying the terms plagiarism and collusion.                                                                                                                                                                                                                  | Default statement provided     |
 | `DF_INSTITUTION_SETTINGS_RB`   | The path of the institution specific settings rb code - used to map student imports from institutional exports to a format understood by Doubtfire.                                                                                                                         | No default                     |
 | `DF_FFMPEG_PATH`               | The path of to the ffmpeg binary for audio processing.                                                                                                                                                                                                                      | ffmpeg                         |
-| `DF_REDIS_CACHE_URL`           | The redis URL for rails used for development and production, ignored in the test env.                                                                                                                                                                                       | `redis://localhost:6379/0`     |
+| `DF_REDIS_CACHE_URL`           | The preferred shared Redis URL for Rails caching and authentication throttling. Production and staging must set this or `DF_REDIS_SIDEKIQ_URL`; it is ignored in the test environment.                                                                                      | No production default          |
 | `DF_REDIS_SIDEKIQ_URL`         | The redis URL for sidekiq. A working redis server is **mandatory** for sidekiq in all environments.                                                                                                                                                                         | `redis://localhost:6379/1`     |
+| `DF_IMPORT_STUDENTS_WEEKS_BEFORE`| How many weeks before a teaching period starts to import students. Deprecated alias: `DF_IMPORT_STUDENTS_WEEKS_BEFPRE`. | `1`                             |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
 | **Turn It In Integration**     |                                                                                                                                                                                                                                                                             |                                |
 | `TII_ENABLED`                  | Whether or not Turn It In integration is enabled.                                                                                                                                                                                                                           | 0 / false                      |
@@ -140,6 +153,13 @@ To run unit tests, execute:
 
 ```bash
 $ rake test
+```
+
+Code coverage is disabled during normal test runs to keep feedback fast. To
+generate the SimpleCov report explicitly, run:
+
+```bash
+$ COVERAGE=true rake test
 ```
 
 Unit tests are located in the `test` directory, where **model** tests are under

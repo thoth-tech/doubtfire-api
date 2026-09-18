@@ -117,7 +117,8 @@ class ExecuteCommunicationSetJob
         project_id: project.id,
         username: project.user&.username,
         previous_target_grade: previous_target_grade,
-        target_grade: action.target_grade
+        target_grade: action.target_grade,
+        executed_at: Time.current
       }
     end
   end
@@ -150,16 +151,39 @@ class ExecuteCommunicationSetJob
       subject = render_template(action.subject, project, unit, rule, projects.length)
       body = render_template(action.body, project, unit, rule, projects.length)
 
-      CommunicationsMailer.communication_email(
-        to: formatted_email(recipient),
-        from: sender,
-        subject: subject,
-        body: body,
-        recipient: recipient,
-        sender: sender_user_for(unit),
-        unit: unit,
-        rule: rule
-      ).deliver_now
+      begin
+        CommunicationsMailer.communication_email(
+          to: formatted_email(recipient),
+          from: sender,
+          subject: subject,
+          body: body,
+          recipient: recipient,
+          sender: sender_user_for(unit),
+          unit: unit,
+          rule: rule
+        ).deliver_now
+      rescue StandardError => e
+        # One unroutable address used to take the whole run down. The job then
+        # retried from the top and re-mailed everybody it had already reached,
+        # because nothing here records who has been sent to. Record the failure
+        # against the one recipient and carry on. StandardError and not
+        # Exception, so an Interrupt or a SIGTERM still stops the job.
+        logger.error(
+          "ExecuteCommunicationSetJob delivery failed for project #{project.id} " \
+          "<#{recipient.email}>: #{e.class} #{e.message}"
+        )
+
+        next {
+          action_id: action.id,
+          action_type: action.type,
+          status: 'failed',
+          project_id: project.id,
+          username: recipient.username,
+          recipient_email: recipient.email,
+          reason: e.message,
+          executed_at: Time.current
+        }
+      end
 
       {
         action_id: action.id,
@@ -167,7 +191,8 @@ class ExecuteCommunicationSetJob
         status: 'sent',
         project_id: project.id,
         username: recipient.username,
-        recipient_email: recipient.email
+        recipient_email: recipient.email,
+        executed_at: Time.current
       }
     end
   end
@@ -209,7 +234,8 @@ class ExecuteCommunicationSetJob
           project_id: project.id,
           username: project.user&.username,
           recipient_email: recipient.email,
-          recipient_username: recipient.username
+          recipient_username: recipient.username,
+          executed_at: Time.current
         }
       end
     end
@@ -277,7 +303,8 @@ class ExecuteCommunicationSetJob
         username: project.user&.username,
         task_definition_id: task_definition.id,
         task_definition_name: task_definition.name,
-        comment_id: comment.id
+        comment_id: comment.id,
+        executed_at: Time.current
       }
     end
   end
@@ -294,7 +321,7 @@ class ExecuteCommunicationSetJob
       }]
     end
 
-    recipients = unit.convenors.includes(:user).map(&:user).select { |user| user&.email.present? }.uniq(&:id)
+    recipients = User.joins(:unit_roles).where(unit_roles: { unit_id: unit.id, role_id: Role.convenor_id }).distinct.where.not(email: [nil, '']).to_a
 
     if recipients.empty?
       return [{
@@ -349,7 +376,7 @@ class ExecuteCommunicationSetJob
     end
 
     if action.email_convenors
-      recipients.concat(unit.convenors.includes(:user).map(&:user))
+      recipients.concat(User.joins(:unit_roles).where(unit_roles: { unit_id: unit.id, role_id: Role.convenor_id }).distinct.to_a)
     end
 
     recipients.select { |recipient| recipient&.email.present? }.uniq(&:id)
@@ -448,6 +475,8 @@ class ExecuteCommunicationSetJob
                   elsif result[:status] == 'commented'
                     task_definition = TaskDefinition.find_by(id: result[:task_definition_id])
                     "Added comment to #{task_definition_label(task_definition)}"
+                  elsif result[:status] == 'failed'
+                    "Failed to send email to #{result[:recipient_email]}: #{result[:reason]}"
                   elsif result[:recipient_email].present?
                     "Sent email to #{result[:recipient_email]}"
                   else
@@ -465,7 +494,7 @@ class ExecuteCommunicationSetJob
           # target_grade_name(result[:previous_target_grade]),
           # target_grade_name(result[:target_grade]),
           result[:recipient_email],
-          Time.current.iso8601
+          result[:executed_at]&.iso8601
         ]
       end
     end

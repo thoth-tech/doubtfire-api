@@ -1,0 +1,17 @@
+<p>Hi <%= @user.name %>,</p>
+
+<p><%= @notification.message %></p>
+
+<p>
+  The new due date is not included in this email. Open the task in
+  <%= @doubtfire_product_name %> to see it.
+</p>
+
+<% if @notification.link.present? %>
+  <p><a href="<%= @doubtfire_host %><%= @notification.link %>">Open the task</a></p>
+<% end %>
+
+<p>
+  You are receiving this because your task notifications are turned on.
+  You can change that at <a href="<%= @unsubscribe_url %>">your profile</a>.
+</p>

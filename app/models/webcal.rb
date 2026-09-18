@@ -147,14 +147,50 @@ class Webcal < ApplicationRecord
       end
     end
 
+    add_learning_sessions_to_calendar(ical) if include_learning_sessions?
+
     # Specify refresh interval.
-    refresh_interval = Icalendar::Values::Duration.new('1D')
+    refresh_interval = Icalendar::Values::Duration.new('PT4H')
     # https://docs.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxcical/1fc7b244-ecd1-4d28-ac0c-2bb4df855a1f
     ical.append_custom_property('X-PUBLISHED-TTL', refresh_interval)
     # https://tools.ietf.org/html/rfc7986#section-5.7
     ical.append_custom_property('REFRESH-INTERVAL', refresh_interval)
 
     ical
+  end
+
+  # Learning sessions have an independent scope: a unit does not need task
+  # definitions to have a HelpHub. Re-check enrolment every time the URL refreshes.
+  def learning_sessions
+    UnitLearningSession.joins(unit: :projects).includes(:unit)
+                       .where(published: true, projects: { user_id: user_id, enrolled: true }, units: { active: true })
+                       .where('? BETWEEN units.start_date AND units.end_date', Time.zone.today)
+                       .where.not(unit_id: webcal_unit_exclusions.select(:unit_id)).distinct
+  end
+
+  def add_learning_sessions_to_calendar(ical)
+    learning_sessions.each do |session|
+      session.occurrences(from: 30.days.ago, to: 6.months.from_now).each do |occurrence|
+        ical.event do |event|
+          event.uid = "ontrack-session-#{occurrence[:occurrence_id]}"
+          event.summary = "#{session.unit.code}: #{session.title}"
+          event.dtstart = Icalendar::Values::DateTime.new(occurrence[:start_at].utc)
+          event.dtend = Icalendar::Values::DateTime.new(occurrence[:end_at].utc)
+          event.dtstamp = Icalendar::Values::DateTime.new(session.updated_at.utc)
+          event.last_modified = Icalendar::Values::DateTime.new(session.updated_at.utc)
+          event.sequence = session.lock_version
+          event.status = session.cancelled? ? 'CANCELLED' : 'CONFIRMED'
+          event.location = session.location if session.location.present?
+          event.description = session.cancelled? ? 'This session has been cancelled.' : 'Join details for your OnTrack unit session.'
+          unless session.cancelled? || session.join_url.blank?
+            event.url = session.join_url
+            event.description = "Join: #{session.join_url}"
+          end
+          event.append_custom_property('X-DOUBTFIRE-UNIT', session.unit_id.to_s)
+          event.append_custom_property('X-DOUBTFIRE-SESSION', session.id.to_s)
+        end
+      end
+    end
   end
 
   #

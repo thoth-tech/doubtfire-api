@@ -1,0 +1,11 @@
+Hi <%= @user.name %>,
+
+<%= @notification.message %>
+
+The new status is not included in this email. Open the task in <%= @doubtfire_product_name %> to see it.
+<% if @notification.link.present? -%>
+
+Open the task: <%= @doubtfire_host %><%= @notification.link %>
+<% end -%>
+
+You can turn these emails off at <%= @unsubscribe_url %>.

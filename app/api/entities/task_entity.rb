@@ -32,6 +32,7 @@ module Entities
     expose :similarity_flag, unless: :update_only
 
     expose :num_new_comments, unless: :update_only
+    expose :has_feedback, unless: :update_only
 
     # Attributes only included in "update only"
 

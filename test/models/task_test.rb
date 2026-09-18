@@ -344,18 +344,21 @@ class TaskTest < ActiveSupport::TestCase
 
     project = unit.active_projects.first
 
+    task = project.task_for_task_definition(td)
+    clear_submission(task)
+
     add_auth_header_for user: unit.main_convenor_user
 
     post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission", data_to_post
 
-    assert_equal 201, last_response.status
+    assert_equal 201, last_response.status, last_response_body
 
-    task = project.task_for_task_definition(td)
     task.move_files_to_in_process(FileHelper.student_work_dir(:new))
 
     assert File.exist? "#{Doubtfire::Application.config.student_work_dir}/in_process/#{task.id}/000-image.jpg"
-
-    td.destroy
+  ensure
+    clear_submission(task) if task
+    td&.destroy
   end
 
   def test_pdf_creation_with_jpg
@@ -647,155 +650,7 @@ class TaskTest < ActiveSupport::TestCase
     unit.destroy!
   end
 
-  def test_code_submission_with_long_lines
-    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
-    td = TaskDefinition.new({
-        unit_id: unit.id,
-        tutorial_stream: unit.tutorial_streams.first,
-        name: 'Task with super ling lines in code submission',
-        description: 'Code task',
-        weighting: 4,
-        target_grade: 0,
-        start_date: unit.start_date + 1.week,
-        target_date: unit.start_date + 2.weeks,
-        abbreviation: 'Long',
-        restrict_status_updates: false,
-        upload_requirements: [ { "key" => 'file0', "name" => 'long.py', "type" => 'code' } ],
-        plagiarism_warn_pct: 0.8,
-        is_graded: false,
-        max_quality_pts: 0
-      })
-    td.save!
-
-    data_to_post = {
-      trigger: 'ready_for_feedback'
-    }
-
-    data_to_post = with_file('test_files/submissions/long.py', 'application/json', data_to_post)
-
-    project = unit.active_projects.first
-
-    add_auth_header_for user: unit.main_convenor_user
-
-    post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission", data_to_post
-
-    assert_equal 201, last_response.status, last_response_body
-
-    # test submission generation
-    task = project.task_for_task_definition(td)
-    assert task.convert_submission_to_pdf(log_to_stdout: true)
-    path = task.zip_file_path_for_done_task
-    assert path
-    assert File.exist? path
-    assert File.exist? task.final_pdf_path
-
-    # ensure the notice is included when rendered files are truncated
-    reader = PDF::Reader.new(task.final_pdf_path)
-    assert reader.pages[1].text.include? "This file has additional line breaks applied"
-
-    # submit a normal file and ensure the notice is not included in the PDF
-    data_to_post = {
-      trigger: 'ready_for_feedback'
-    }
-
-    data_to_post = with_file('test_files/submissions/normal.py', 'application/json', data_to_post)
-    project = unit.active_projects.first
-    add_auth_header_for user: unit.main_convenor_user
-    post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission", data_to_post
-    assert_equal 201, last_response.status, last_response_body
-
-    # test submission generation
-    task = project.task_for_task_definition(td)
-    assert task.convert_submission_to_pdf(log_to_stdout: true)
-    path = task.zip_file_path_for_done_task
-    assert path
-    assert File.exist? path
-    assert File.exist? task.final_pdf_path
-
-    # ensure the notice is not included
-    reader = PDF::Reader.new(task.final_pdf_path)
-    assert_not reader.pages[1].text.include? "This file has additional line breaks applied"
-
-    td.destroy
-    assert_not File.exist? path
-    unit.destroy!
-  end
-
-  def test_code_submission_with_long_lines
-    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
-    td = TaskDefinition.new({
-        unit_id: unit.id,
-        tutorial_stream: unit.tutorial_streams.first,
-        name: 'Task with super ling lines in code submission',
-        description: 'Code task',
-        weighting: 4,
-        target_grade: 0,
-        start_date: unit.start_date + 1.week,
-        target_date: unit.start_date + 2.weeks,
-        abbreviation: 'Long',
-        restrict_status_updates: false,
-        upload_requirements: [ { "key" => 'file0', "name" => 'long.py', "type" => 'code' } ],
-        plagiarism_warn_pct: 0.8,
-        is_graded: false,
-        max_quality_pts: 0
-      })
-    td.save!
-
-    data_to_post = {
-      trigger: 'ready_for_feedback'
-    }
-
-    data_to_post = with_file('test_files/submissions/long.py', 'application/json', data_to_post)
-
-    project = unit.active_projects.first
-
-    add_auth_header_for user: unit.main_convenor_user
-
-    post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission", data_to_post
-
-    assert_equal 201, last_response.status, last_response_body
-
-    # test submission generation
-    task = project.task_for_task_definition(td)
-    assert task.convert_submission_to_pdf(log_to_stdout: true)
-    path = task.zip_file_path_for_done_task
-    assert path
-    assert File.exist? path
-    assert File.exist? task.final_pdf_path
-
-    # ensure the notice is included when rendered files are truncated
-    reader = PDF::Reader.new(task.final_pdf_path)
-    assert reader.pages[1].text.include? "This file has additional line breaks applied"
-
-    # submit a normal file and ensure the notice is not included in the PDF
-    data_to_post = {
-      trigger: 'ready_for_feedback'
-    }
-
-    data_to_post = with_file('test_files/submissions/normal.py', 'application/json', data_to_post)
-    project = unit.active_projects.first
-    add_auth_header_for user: unit.main_convenor_user
-    post "/api/projects/#{project.id}/task_def_id/#{td.id}/submission", data_to_post
-    assert_equal 201, last_response.status, last_response_body
-
-    # test submission generation
-    task = project.task_for_task_definition(td)
-    assert task.convert_submission_to_pdf(log_to_stdout: true)
-    path = task.zip_file_path_for_done_task
-    assert path
-    assert File.exist? path
-    assert File.exist? task.final_pdf_path
-
-    # ensure the notice is not included
-    reader = PDF::Reader.new(task.final_pdf_path)
-    assert_not reader.pages[1].text.include? "This file has additional line breaks applied"
-
-    td.destroy
-    assert_not File.exist? path
-    unit.destroy!
-  end
-
-  def test_code_submission_with_long_lines
+  def test_code_submission_pdf_adds_line_break_notice_only_for_long_lines
     unit = FactoryBot.create(:unit, student_count: 1, task_count: 0)
     td = TaskDefinition.new({
         unit_id: unit.id,
@@ -976,7 +831,10 @@ class TaskTest < ActiveSupport::TestCase
     rescue StandardError => e
       task.reload
 
-      assert_equal 2, task.comments.count
+      # The status comment for the move to fix, the automatic resubmission
+      # extension that comes with it, and the automated comment about the failure
+      assert_equal 3, task.comments.count
+      assert_equal 1, task.comments.where(type: 'ExtensionComment').count
       assert task.comments.last.comment.starts_with?('**Automated Comment**:')
       assert task.comments.last.comment.include?(e.message.to_s)
 
@@ -1763,5 +1621,439 @@ class TaskTest < ActiveSupport::TestCase
     assert_equal TaskStatus.fix_and_resubmit, task2.task_status, "Dependent task should have automatically moved to Fix and Resubmit"
     assert_equal TaskStatus.complete, task3.task_status, "Task not Ready for Feedback should not be affected"
     assert_equal TaskStatus.ready_for_feedback, task4.task_status # Task 4 has no prerequsite links
+  end
+
+  #
+  # Build a unit with a single task, for the automatic resubmission extension
+  # tests below. An overdue target date is the case that mattered, because a
+  # task that is already late stays inside the one week window after it has
+  # been extended, so every repeat of the assessment used to add another week.
+  #
+  def create_task_for_resubmission_extension(weeks_on_resubmit: 1, target_date: Time.zone.now + 2.days)
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 0, start_date: Time.zone.now - 6.weeks, end_date: Time.zone.now + 10.weeks)
+    unit.allow_student_extension_requests = true
+    unit.extension_weeks_on_resubmit_request = weeks_on_resubmit
+    unit.save!
+
+    td = TaskDefinition.new({
+                              unit_id: unit.id,
+                              tutorial_stream: unit.tutorial_streams.first,
+                              name: 'Resubmission task',
+                              description: 'Resubmission task',
+                              weighting: 4,
+                              target_grade: 0,
+                              start_date: unit.start_date,
+                              target_date: target_date,
+                              abbreviation: 'RESUB',
+                              restrict_status_updates: false,
+                              upload_requirements: [ ],
+                              plagiarism_warn_pct: 0.8,
+                              is_graded: false,
+                              max_quality_pts: 0
+                            })
+    td.save!
+
+    project = unit.active_projects.first
+    [unit, td, project.task_for_task_definition(td)]
+  end
+
+  # Assessing the same submission again must not move the deadline again.
+  def test_resubmission_extension_granted_once_per_round
+    unit, _td, task = create_task_for_resubmission_extension(target_date: Time.zone.now - 3.weeks)
+    tutor = unit.main_convenor_user
+
+    task.assess(TaskStatus.fix_and_resubmit, tutor)
+    assert_equal 1, task.reload.extensions, 'The first fix should grant the resubmission extension'
+
+    first_due_date = task.due_date
+
+    task.assess(TaskStatus.fix_and_resubmit, tutor)
+    assert_equal 1, task.reload.extensions, 'Assessing the same submission again must not extend again'
+    assert_equal first_due_date, task.due_date, 'The effective deadline must not move on a repeated assessment'
+
+    task.assess(TaskStatus.discuss, tutor)
+    assert_equal 1, task.reload.extensions, 'Another resubmission status in the same round must not extend again'
+    assert_equal first_due_date, task.due_date
+
+    unit.destroy!
+  end
+
+  # A new submission starts a new round of feedback, which earns its own
+  # extension. That is the rule the unit has today and it is unchanged.
+  def test_resubmission_extension_returns_after_a_new_submission
+    unit, _td, task = create_task_for_resubmission_extension
+    tutor = unit.main_convenor_user
+    student = unit.active_projects.first.student
+
+    task.assess(TaskStatus.fix_and_resubmit, tutor)
+    assert_equal 1, task.reload.extensions
+
+    # A week later the student resubmits and is sent back to fix it again
+    travel_to Time.zone.now + 8.days do
+      task.submit(student)
+      task.assess(TaskStatus.fix_and_resubmit, tutor)
+      assert_equal 2, task.reload.extensions, 'A new submission earns a new resubmission extension'
+    end
+
+    unit.destroy!
+  end
+
+  # The extension has to say why it happened and what triggered it.
+  def test_resubmission_extension_records_its_reason
+    unit, _td, task = create_task_for_resubmission_extension
+    tutor = unit.main_convenor_user
+
+    task.assess(TaskStatus.fix_and_resubmit, tutor)
+    task.reload
+
+    extension = task.resubmission_extension_comment
+    assert_not_nil extension, 'The automatic extension should be recorded against the task'
+    assert_equal 'ExtensionComment', extension.type
+    assert_equal 1, extension.extension_weeks
+    assert extension.extension_granted, 'The recorded extension should be marked as granted'
+    assert_equal TaskStatus.fix_and_resubmit, extension.task_status, 'The status that triggered the extension should be recorded'
+    assert_equal tutor, extension.assessor
+    assert extension.assessed?
+    assert extension.comment.present?, 'The extension should explain itself to the student'
+    assert extension.extension_response.include?(task.due_date.strftime('%a %b %e')), 'The response should name the new deadline'
+
+    serialized = extension.serialize(tutor)
+    assert serialized[:resubmission_extension], 'The interface needs to know OnTrack worked this extension out itself'
+    assert_equal :fix_and_resubmit, serialized[:source_status]
+
+    unit.destroy!
+  end
+
+  # A larger extension granted later must survive a repeated assessment.
+  def test_resubmission_extension_does_not_shorten_a_later_extension
+    unit, _td, task = create_task_for_resubmission_extension(target_date: Time.zone.now - 3.weeks)
+    tutor = unit.main_convenor_user
+
+    task.assess(TaskStatus.fix_and_resubmit, tutor)
+    assert_equal 1, task.reload.extensions
+
+    assert task.grant_extension(tutor, 2), 'A tutor should be able to grant a further extension'
+    assert_equal 3, task.reload.extensions
+    later_due_date = task.due_date
+
+    task.assess(TaskStatus.fix_and_resubmit, tutor)
+    task.reload
+    assert_equal 3, task.extensions, 'A later extension must not be lost, and must not be added to'
+    assert_equal later_due_date, task.due_date
+
+    unit.destroy!
+  end
+
+  # The recursive fix of dependent tasks runs an assessment on each of them.
+  # Replaying it must not extend those tasks a second time.
+  def test_recursive_fix_does_not_extend_dependent_tasks_twice
+    unit = FactoryBot.create(:unit, student_count: 1, task_count: 2)
+    unit.extension_weeks_on_resubmit_request = 1
+    unit.save!
+
+    tutor = FactoryBot.create(:user, :tutor)
+    unit.employ_staff(tutor, Role.tutor)
+
+    td1 = unit.task_definitions.first
+    td2 = unit.task_definitions.second
+
+    [td1, td2].each do |td|
+      td.update!(start_date: Time.zone.now - 6.weeks, target_date: Time.zone.now - 3.weeks, due_date: Time.zone.now + 8.weeks, target_grade: 0)
+    end
+
+    TaskPrerequisite.create!(
+      task_definition: td2,
+      prerequisite: td1,
+      task_status_id: TaskStatus.ready_for_feedback.id
+    )
+
+    project = unit.active_projects.first
+    task1 = project.task_for_task_definition(td1)
+    task2 = project.task_for_task_definition(td2)
+
+    task1.update!(task_status: TaskStatus.ready_for_feedback)
+    task2.update!(task_status: TaskStatus.ready_for_feedback)
+
+    task1.assess(TaskStatus.fix_and_resubmit, tutor, Time.zone.now, true)
+    assert_equal 1, task1.reload.extensions, 'The assessed task should be extended once'
+    assert_equal 1, task2.reload.extensions, 'The dependent task should be extended once'
+
+    # Replay the same event. The dependent task is put back to ready for
+    # feedback so the recursion reaches it again, as a duplicate event would.
+    task2.update!(task_status: TaskStatus.ready_for_feedback)
+    task1.assess(TaskStatus.fix_and_resubmit, tutor, Time.zone.now, true)
+
+    assert_equal 1, task1.reload.extensions, 'The assessed task must not be extended twice'
+    assert_equal 1, task2.reload.extensions, 'The dependent task must not be extended twice'
+
+    unit.destroy!
+  end
+
+  # The window is measured from the assessment being processed, not from the
+  # wall clock, so replaying an old event gives the answer it gave then.
+  def test_resubmission_extension_window_uses_the_assessment_time
+    unit, _td, task = create_task_for_resubmission_extension
+    tutor = unit.main_convenor_user
+
+    assert task.resubmission_extension_window_open?(Time.zone.now), 'The deadline is two days away, so the window is open now'
+    assert_not task.resubmission_extension_window_open?(Time.zone.now - 3.weeks), 'Three weeks ago the deadline was not close'
+
+    task.assess(TaskStatus.fix_and_resubmit, tutor, Time.zone.now - 3.weeks)
+    assert_equal 0, task.reload.extensions, 'An assessment made when the deadline was far away should not extend it'
+
+    unit.destroy!
+  end
+
+  #
+  # Melbourne puts its clocks back at 03:00 on Sunday 5 April 2026 and forward
+  # at 02:00 on Sunday 4 October 2026, so 2 April and 8 October are +11:00 while
+  # 9 April and 1 October are +10:00. Those are the four dates the tests below
+  # use.
+  #
+  # Every one of them leaves the application zone alone on purpose. Nothing in
+  # config/ sets config.time_zone, so that zone is UTC, and the whole point of
+  # the fix is that the deadline maths no longer depends on it. The zone comes
+  # off the campus the student is enrolled at.
+  #
+
+  # The last moment of a given day, anywhere on earth. Fixed offset, so it never
+  # observes daylight saving itself.
+  def end_of_day_anywhere_on_earth(year, month, day)
+    Time.new(year, month, day, 23, 59, 59, '-12:00')
+  end
+
+  # Put the campuses these tasks belong to onto a real Australian zone, then put
+  # them back so nothing else in the suite sees the change.
+  def with_campus_timezone(zone_name, *tasks)
+    campuses = tasks.map { |task| task.project.campus }.compact.uniq
+    previous = campuses.map { |campus| [campus, campus.read_attribute(:timezone)] }
+
+    campuses.each { |campus| campus.update!(timezone: zone_name) }
+    yield
+  ensure
+    previous.each { |campus, was| campus.update!(timezone: was) }
+  end
+
+  # A deadline set at the same time of day on either side of a daylight saving
+  # change has to land on the day it was set for, and two of them a week apart
+  # have to stay a week apart.
+  #
+  # This used to read the day, month and year straight off the deadline as it
+  # was loaded, which meant reading them in UTC. 10:30 in Melbourne is the
+  # previous day in UTC through summer and the same day through winter, so the
+  # effective deadline jumped a whole day at the boundary.
+  def test_effective_deadline_does_not_drift_across_a_daylight_saving_boundary
+    melbourne = ActiveSupport::TimeZone['Australia/Melbourne']
+    unit, td, task = create_task_for_resubmission_extension
+
+    with_campus_timezone('Australia/Melbourne', task) do
+      # The week the clocks go back, then the week they go forward
+      [[[2026, 4, 2], [2026, 4, 9]], [[2026, 10, 1], [2026, 10, 8]]].each do |first, second|
+        deadlines = [first, second].map do |year, month, day|
+          td.update!(target_date: melbourne.local(year, month, day, 10, 30, 0))
+          task.reload.effective_deadline
+        end
+
+        assert_equal end_of_day_anywhere_on_earth(*first), deadlines.first,
+                     "A task due at 10:30 in Melbourne on #{first.join('-')} runs to the end of that day, not the one before"
+        assert_equal end_of_day_anywhere_on_earth(*second), deadlines.second,
+                     "A task due at 10:30 in Melbourne on #{second.join('-')} runs to the end of that day, not the one before"
+        assert_equal 7.days.to_i, (deadlines.second - deadlines.first).to_i,
+                     'Two deadlines a week apart on the campus calendar stay a week apart when the clocks change between them'
+      end
+    end
+
+    unit.destroy!
+  end
+
+  # Seven days has to mean seven days on the campus calendar. The week Melbourne
+  # moves onto daylight saving is 167 real hours long and the week it moves off
+  # is 169, so counting a flat 168 moves the edge of the window by an hour.
+  #
+  # The assessment time is handed in the way Task#assess gets it. Nothing sets
+  # config.time_zone, so that is a UTC value, and the whole point is that the
+  # window is then measured on the campus clock rather than on that one. Feed
+  # this a Melbourne time instead and it passes either way, because adding a
+  # duration to a value that is already in the campus zone does the right thing
+  # on its own and the test proves nothing.
+  def test_resubmission_extension_window_keeps_its_wall_clock_across_a_daylight_saving_boundary
+    melbourne = ActiveSupport::TimeZone['Australia/Melbourne']
+    unit, _td, task = create_task_for_resubmission_extension
+
+    assert_equal 'UTC', Time.zone.name, 'This test is only meaningful while the application zone is not the campus zone'
+
+    with_campus_timezone('Australia/Melbourne', task) do
+      # Nine in the morning in Melbourne on the Thursday before the clocks go
+      # forward, arriving as the UTC instant the application would hand over
+      forward_from = melbourne.local(2026, 10, 1, 9, 0, 0).in_time_zone(Time.zone)
+      forward_to = task.resubmission_extension_window_end(forward_from)
+
+      assert_equal 'UTC', forward_from.time_zone.name
+      assert_equal melbourne.local(2026, 10, 8, 9, 0, 0), forward_to,
+                   'Seven days after nine in the morning is nine in the morning, in the week the clocks go forward'
+      assert_equal 167, ((forward_to - forward_from) / 3600.0).round,
+                   'That week is 167 real hours, so a flat 168 would push the edge of the window an hour late'
+
+      back_from = melbourne.local(2026, 4, 2, 9, 0, 0).in_time_zone(Time.zone)
+      back_to = task.resubmission_extension_window_end(back_from)
+
+      assert_equal 'UTC', back_from.time_zone.name
+      assert_equal melbourne.local(2026, 4, 9, 9, 0, 0), back_to,
+                   'Seven days after nine in the morning is nine in the morning, in the week the clocks go back'
+      assert_equal 169, ((back_to - back_from) / 3600.0).round,
+                   'That week is 169 real hours, so a flat 168 would pull the edge of the window an hour early'
+    end
+
+    unit.destroy!
+  end
+
+  # The whole thing end to end, over the weekend the clocks actually change. A
+  # task due Monday 5 October 2026, sent back on Thursday 1 October, has to come
+  # out due Monday 12 October. Not Sunday the 11th, and not an hour either side
+  # of the end of the 12th.
+  def test_resubmission_extension_lands_on_the_right_day_across_a_daylight_saving_boundary
+    melbourne = ActiveSupport::TimeZone['Australia/Melbourne']
+    unit, td, task = create_task_for_resubmission_extension
+    tutor = unit.main_convenor_user
+
+    with_campus_timezone('Australia/Melbourne', task) do
+      td.update!(target_date: melbourne.local(2026, 10, 5, 10, 30, 0))
+      task.reload
+
+      assert_equal end_of_day_anywhere_on_earth(2026, 10, 5), task.effective_deadline
+
+      # Melbourne moves onto daylight saving on the Sunday in between
+      task.assess(TaskStatus.fix_and_resubmit, tutor, melbourne.local(2026, 10, 1, 9, 0, 0))
+      task.reload
+
+      assert_equal 1, task.extensions, 'A task due in four days should get the one week the unit grants'
+      assert_equal end_of_day_anywhere_on_earth(2026, 10, 12), task.effective_deadline,
+                   'One week after Monday the 5th is Monday the 12th, and the clock change must not make it the 11th'
+      assert_equal Date.new(2026, 10, 12), task.due_date.to_date
+
+      # And the guard still holds on the far side of the change
+      task.assess(TaskStatus.fix_and_resubmit, tutor, melbourne.local(2026, 10, 6, 9, 0, 0))
+      task.reload
+
+      assert_equal 1, task.extensions, 'Reassessing the same submission after the clocks change must not extend it again'
+      assert_equal end_of_day_anywhere_on_earth(2026, 10, 12), task.effective_deadline
+    end
+
+    unit.destroy!
+  end
+
+  # "Automatic" already meant something else on ExtensionComment - a request a
+  # student made that the unit approved without a person weighing it up. The
+  # extension OnTrack works out for itself is a different thing and answers to a
+  # different name, so a reader cannot take one for the other.
+  def test_a_student_request_is_not_reported_as_a_resubmission_extension
+    unit, _td, task = create_task_for_resubmission_extension(target_date: Time.zone.now - 3.weeks)
+    convenor = unit.main_convenor_user
+    student = unit.active_projects.first.student
+
+    requested = task.apply_for_extension(student, 'I have been unwell all week', 1)
+    task.reload
+
+    assert requested.assessed?, 'The unit approves requests inside the deadline without asking anyone'
+    assert requested.extension_granted
+    assert_not requested.resubmission_extension?, 'A student asking for time is not something OnTrack worked out itself'
+    assert_not requested.serialize(convenor)[:resubmission_extension]
+    assert_nil requested.serialize(convenor)[:source_status]
+
+    task.assess(TaskStatus.fix_and_resubmit, convenor)
+    task.reload
+    worked_out = task.resubmission_extension_comment
+
+    assert_not_nil worked_out, 'Sending the task back near the deadline should still earn its own extension'
+    assert worked_out.resubmission_extension?, 'That one carries the status that triggered it'
+    assert_equal :fix_and_resubmit, worked_out.serialize(convenor)[:source_status]
+    assert_equal 2, task.extensions, 'The two are counted separately'
+
+    unit.destroy!
+  end
+
+  # The extension only applies when the deadline is close.
+  def test_no_resubmission_extension_when_the_deadline_is_far_away
+    unit, _td, task = create_task_for_resubmission_extension(target_date: Time.zone.now + 4.weeks)
+    tutor = unit.main_convenor_user
+
+    task.assess(TaskStatus.fix_and_resubmit, tutor)
+    assert_equal 0, task.reload.extensions, 'A task due in four weeks should not be extended'
+    assert_nil task.resubmission_extension_comment
+
+    unit.destroy!
+  end
+
+  # Units that turn the automatic extension off must not get one.
+  def test_no_resubmission_extension_when_the_unit_grants_zero_weeks
+    unit, _td, task = create_task_for_resubmission_extension(weeks_on_resubmit: 0)
+    tutor = unit.main_convenor_user
+
+    task.assess(TaskStatus.fix_and_resubmit, tutor)
+    assert_equal 0, task.reload.extensions
+    assert_nil task.resubmission_extension_comment
+
+    unit.destroy!
+  end
+
+  # A failed archive write must not destroy the previously accepted submission.
+  # compress_new_to_done used to delete the done zip before rebuilding it, so a
+  # raise part way through the build left the task with no readable submission at
+  # all. The stub below stands in for any failure while writing the new archive.
+  def test_compress_new_to_done_keeps_the_previous_zip_when_the_write_fails
+    unit = Unit.first
+    td = TaskDefinition.new(
+      unit_id: unit.id,
+      tutorial_stream: unit.tutorial_streams.first,
+      name: 'Atomic done zip',
+      description: 'atomic done zip',
+      weighting: 4,
+      target_grade: 0,
+      start_date: unit.start_date + 1.week,
+      target_date: unit.start_date + 2.weeks,
+      abbreviation: 'TaskAtomicDoneZip',
+      restrict_status_updates: false,
+      upload_requirements: [{ 'key' => 'file0', 'name' => 'A Document', 'type' => 'document' }],
+      plagiarism_warn_pct: 0.8,
+      is_graded: false,
+      max_quality_pts: 0
+    )
+    td.save!
+
+    task = unit.active_projects.first.task_for_task_definition(td)
+    done_zip = task.zip_file_path_for_done_task
+
+    place_one_document = lambda do
+      new_dir = task.student_work_dir(:new, true)
+      FileUtils.cp(test_file_path('submissions/1.2P.pdf'), "#{new_dir}000-document.pdf")
+    end
+
+    # First, a real submission so there is a previously accepted zip on disk.
+    place_one_document.call
+    assert task.compress_new_to_done, 'the first compress should succeed'
+    assert File.exist?(done_zip), 'the done zip should exist after a successful compress'
+    original_bytes = File.binread(done_zip)
+    assert(Zip::File.open(done_zip) { |z| z.entries.any? }, 'the done zip should be a readable archive')
+    assert_empty Dir.glob("#{done_zip}.tmp-*"), 'a successful compress must not leave a temporary archive'
+
+    # Now a second submission whose archive write fails part way through. The stub
+    # creates the temporary archive first, then raises, so it also exercises the
+    # cleanup of the half-written temp file.
+    place_one_document.call
+    partial_write = lambda do |path, *_rest|
+      File.binwrite(path, 'partial archive bytes')
+      raise 'simulated failure while writing the new archive'
+    end
+    Zip::File.stub(:open, partial_write) do
+      assert_raises(RuntimeError) { task.compress_new_to_done }
+    end
+
+    # The previously accepted submission must be untouched, not deleted or corrupted.
+    assert File.exist?(done_zip), 'the previous done zip must survive a failed write'
+    assert_equal original_bytes, File.binread(done_zip), 'the previous done zip must be byte-for-byte unchanged'
+    assert(Zip::File.open(done_zip) { |z| z.entries.any? }, 'the previous done zip must still be readable')
+    assert_empty Dir.glob("#{done_zip}.tmp-*"), 'the failed write must not leak a temporary archive'
+
+    td.destroy
   end
 end

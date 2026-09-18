@@ -44,10 +44,19 @@
   <div class="main">
     <h1><%= @doubtfire_product_name %> Notification</h1>
 
+    <p>Hi <%= @recipient&.nickname.presence || @recipient&.first_name %>,</p>
+
     <% @body_paragraphs.each do |paragraph| %>
       <p><%= paragraph %></p>
     <% end %>
 
+    <p>
+      Cheers, <br />
+      The <%= @doubtfire_product_name %> Team on behalf of <%= @sender&.name %>
+    </p>
   </div>
+  <footer class="footer">
+    <a href="<%= @unsubscribe_url %>">Unsubscribe</a> | Generated with <%= @doubtfire_product_name %>
+  </footer>
 </body>
 </html>

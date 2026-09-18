@@ -154,8 +154,7 @@ class DeakinInstitutionSettings
 
       activityData.each do |activity|
         # Make sure units match
-        subject_match = /.*?(?=_)/.match(activity["subject_code"])
-        unit_code = subject_match.nil? ? nil : subject_match[0]
+        unit_code = value_before_delimiter(activity['subject_code'], '_')
         unless unit_code == unit.code
           logger.error "Failed to sync #{unit.code} - response had unit code #{enrolmentData['unitCode']}"
           return
@@ -185,11 +184,15 @@ class DeakinInstitutionSettings
     end
   end
 
+  def value_before_delimiter(value, delimiter)
+    string = value.to_s
+    delimiter_index = string.index(delimiter)
+    string[0...delimiter_index] unless delimiter_index.nil?
+  end
+
   def fetch_star_row(row, unit)
-    email_match = /(.*)(?=@)/.match(row["email_address"])
-    subject_match = /.*?(?=_)/.match(row["subject_code"])
-    username = email_match.nil? ? nil : email_match[0]
-    unit_code = subject_match.nil? ? nil : subject_match[0]
+    username = value_before_delimiter(row['email_address'], '@')
+    unit_code = value_before_delimiter(row['subject_code'], '_')
 
     tutorial_code = fetch_tutorial unit, row
 

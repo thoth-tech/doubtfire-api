@@ -152,9 +152,9 @@ namespace :db do
 
           # 1 to 3
           case rand(1..100)
-          when 0..60
-            task.assess tatus.working_on_it, tutor, Time.zone.now
-          when 60..75
+          when 1..60
+            task.assess TaskStatus.working_on_it, tutor, Time.zone.now
+          when 61..75
             task.assess TaskStatus.need_help, tutor, Time.zone.now
 
             pdf_path = task.final_pdf_path

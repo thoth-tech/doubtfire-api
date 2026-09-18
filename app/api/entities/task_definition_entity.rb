@@ -39,6 +39,7 @@ module Entities
     expose :restrict_status_updates, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :group_set_id, expose_nil: false
     expose :has_task_sheet?, as: :has_task_sheet
+    expose :task_sheet_filename
     expose :has_task_resources?, as: :has_task_resources
     expose :has_task_assessment_resources?, as: :has_task_assessment_resources, if: ->(unit, options) { staff?(options[:my_role]) }
     expose :has_task_assessment_script?, as: :has_task_assessment_script, if: ->(unit, options) { staff?(options[:my_role]) }

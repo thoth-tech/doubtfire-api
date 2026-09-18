@@ -4,6 +4,7 @@ I have checked your tasks and provided some feedback. Login and check the status
 
 <% @tasks.each do |task| %>
   * <%= task.task_definition.abbreviation %> - <%=task.task_definition.name%> <%= task.is_last_comment_by?(@tutor) ? ' - with comments' : ''%>
+    <%= @doubtfire_host %>/projects/<%= @project.id %>/dashboard/<%= ERB::Util.url_encode(task.task_definition.abbreviation) %>
 <% end %>
 
 Cheers,

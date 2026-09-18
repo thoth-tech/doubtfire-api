@@ -5,11 +5,12 @@ class ConvenorContactMailer < ApplicationMailer
     institution_email_domain = Doubtfire::Application.config.institution[:email_domain]
     admin_emails = User.admins.map(&:email)
     user_email = "#{user.username}@#{institution_email_domain}"
-    mail to: admin_emails,
-         from: user_email,
-         subject: "[#{@doubtfire_product_name}] Please add #{user.username} to #{unit.name}",
-         body: "The following user wishes to be added to #{unit.name} on " \
-               "#{@doubtfire_product_name}:\n\nUsername: #{user.username}\nEmail: #{user_email}\n" \
-               "Name: #{user.name}"
+    mail({
+      to: admin_emails,
+      subject: "[#{@doubtfire_product_name}] Please add #{user.username} to #{unit.name}",
+      body: "The following user wishes to be added to #{unit.name} on " \
+            "#{@doubtfire_product_name}:\n\nUsername: #{user.username}\nEmail: #{user_email}\n" \
+            "Name: #{user.name}"
+    }.merge(outbound_sender_headers(development_from: user_email, reply_to: user_email)))
   end
 end

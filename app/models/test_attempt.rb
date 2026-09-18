@@ -59,6 +59,8 @@ class TestAttempt < ApplicationRecord
 
   # fields that must be synced from cmi data whenever it's updated
   # t.boolean :completion_status, default: false
+
+  # staff owned, and no longer synced from cmi data. See cmi_datamodel= below.
   # t.boolean :success_status, default: false
   # t.float :score_scaled, default: 0
 
@@ -96,10 +98,19 @@ class TestAttempt < ApplicationRecord
     end
 
     # IMPORTANT: always sync any model attributes with cmi values here to ensure consistency!
-    # attributes derived from cmi keys: completion_status, success_status, score_scaled
+    # attributes derived from cmi keys: completion_status
     self.completion_status = new_data['cmi.completion_status'] == 'completed'
-    self.success_status = new_data['cmi.success_status'] == 'passed'
-    self.score_scaled = new_data['cmi.score.scaled']
+
+    # success_status and score_scaled are deliberately no longer derived here.
+    # The datamodel is posted by the scorm package running in the student's own
+    # browser, and this setter is only reachable through the :update_attempt arm
+    # of PATCH test_attempts/:id, which only students hold. Deriving the pass and
+    # the score from that blob let a student decide their own result, which is
+    # what the route already refuses when it is asked for directly.
+    # override_success_status is now the only writer of success_status and the
+    # route gates it on :override_success_status. Nothing writes score_scaled, so
+    # it keeps its 0.0 column default. The datamodel is still stored exactly as
+    # it was posted, so the package keeps its runtime state and can resume.
 
     write_attribute(:cmi_datamodel, new_data.to_json)
   end

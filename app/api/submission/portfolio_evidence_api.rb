@@ -53,6 +53,16 @@ module Submission
         error!({ error: "This task requires a group submission. Ensure you are in a group for the unit's #{task_definition.group_set.name}" }, 403)
       end
 
+      # A finished task stops accepting new student uploads. Without this the
+      # upload lands, submission_date and file_uploaded_at are rewritten and the
+      # assessed pdf is deleted and regenerated, while only the status transition
+      # is skipped. Staff are still allowed through on purpose, because a tutor
+      # sometimes has to upload on a student's behalf when a file is corrupt or
+      # went to the wrong task.
+      if task.task_submission_closed? && !authorise?(current_user, project, :assess)
+        error!({ error: 'This task is closed for new submissions.' }, 403)
+      end
+
       # Check that prerequisite tasks are in the required minimum submitted state
       prerequisites = task_definition.task_prerequisites
       prerequisites.each do |prerequisite|
@@ -156,15 +166,49 @@ module Submission
       end
 
       task = project.task_for_task_definition(task_definition)
+      error!({ error: 'A submission for this task was not found.' }, 404) unless task
 
-      if task && PortfolioEvidence.recreate_task_pdf(task)
+      begin
+        task.regenerate_submission!(current_user)
         result = 'done'
-      else
-        result = 'false'
+      rescue ArgumentError => e
+        error!({ error: e.message }, 409)
+      rescue StandardError
+        error!({ error: 'The submitted files are not available to regenerate.' }, 422)
       end
 
       present :result, result, with: Grape::Presenters::Presenter
     end # put
+
+    desc 'Retry a failed or timed-out submission conversion'
+    post '/projects/:id/task_def_id/:task_definition_id/submission/retry' do
+      project = Project.find(params[:id])
+      task_definition = project.unit.task_definitions.find(params[:task_definition_id])
+
+      unless authorise? current_user, project, :reprocess_submission
+        error!({ error: "Not authorised to retry task '#{task_definition.name}'" }, 401)
+      end
+
+      task = project.task_for_task_definition(task_definition)
+      error!({ error: 'A submission for this task was not found.' }, 404) unless task
+
+      begin
+        task.retry_submission_processing!(current_user)
+      rescue ArgumentError => e
+        error!({ error: e.message }, 409)
+      rescue StandardError
+        error!({ error: 'The submitted files are not available to retry.' }, 422)
+      end
+
+      # For a group task the new state was written through other instances.
+      task.reload
+      present task.submission_processing_snapshot.merge(
+        submission_date: task.submission_date,
+        processing_error_code: task.submission_processing_error_code,
+        processing_attempts: task.submission_processing_attempts,
+        task_status: task.task_status.status_key
+      ), with: Grape::Presenters::Presenter
+    end
 
     desc 'Get the timestamps of the last 10 submissions of a task'
     get '/projects/:id/task_def_id/:task_definition_id/submissions/timestamps' do
@@ -187,35 +231,75 @@ module Submission
 
     desc 'Get all retained submission histories for a task'
     get '/projects/:id/task_def_id/:task_definition_id/submission_histories' do
-      project = Project.find(params[:id])
-      task_definition = project.unit.task_definitions.find(params[:task_definition_id])
+      project = Project.find_by(id: params[:id])
+      error!({ error: 'Submission history is not available' }, 404) unless project
 
-      unless authorise? current_user, project, :get_submission
-        error!({ error: "Not authorised to get submission history for task '#{task_definition.name}'" }, 401)
+      unless authorise?(current_user, project, :get_submission)
+        error!({ error: 'Submission history is not available' }, 404)
       end
 
-      task = project.task_for_task_definition(task_definition)
-      unless task
-        error!({ error: 'A submission for this task definition has never been created' }, 404)
+      task_definition = project.unit.task_definitions.find_by(id: params[:task_definition_id])
+      error!({ error: 'Submission history is not available' }, 404) unless task_definition
+
+      task = project.tasks.find_by(task_definition: task_definition)
+      error!({ error: 'Submission history is not available' }, 404) unless task
+
+      student_request = project.student == current_user
+
+      if student_request && !authorise?(current_user, task, :get_submission)
+        error!({ error: 'Submission history is not available' }, 404)
       end
 
-      present task.submission_histories.order(submission_timestamp: :desc),
-              with: Entities::SubmissionHistoryEntity
+      histories = task.submission_histories.order(submission_timestamp: :desc)
+
+      if student_request
+        student_histories = histories.each_with_index.map do |history, index|
+          {
+            id: history.id,
+            version_order: index + 1,
+            submission_timestamp: history.submission_timestamp,
+            status: history.has_submission_files? ? 'available' : 'unavailable'
+          }
+        end
+
+        status 202 if SubmissionHistory.pending?(task)
+        present student_histories
+      else
+        present histories, with: Entities::SubmissionHistoryEntity
+      end
     end
 
     desc 'Download a retained submission history archive'
     get '/projects/:id/task_def_id/:task_definition_id/submission_histories/:history_id/files' do
-      project = Project.find(params[:id])
-      task_definition = project.unit.task_definitions.find(params[:task_definition_id])
+      project = Project.find_by(id: params[:id])
+      error!({ error: 'Submission history is not available' }, 404) unless project
 
-      unless authorise? current_user, project.unit, :provide_feedback
-        error!({ error: "Not authorised to get submission history for task '#{task_definition.name}'" }, 401)
+      staff_access = authorise?(current_user, project.unit, :provide_feedback)
+      student_access =
+        project.student == current_user && authorise?(current_user, project, :get_submission)
+
+      unless staff_access || student_access
+        error!({ error: 'Submission history is not available' }, 404)
       end
 
-      task = project.task_for_task_definition(task_definition)
-      history = task&.submission_histories&.find_by(id: params[:history_id])
-      error!({ error: 'Submission history was not found' }, 404) unless history
-      error!({ error: 'Submission history files are not available' }, 404) unless history.has_submission_files?
+      task_definition = project.unit.task_definitions.find_by(id: params[:task_definition_id])
+      error!({ error: 'Submission history is not available' }, 404) unless task_definition
+
+      task = project.tasks.find_by(task_definition: task_definition)
+      error!({ error: 'Submission history is not available' }, 404) unless task
+
+      student_access &&= authorise?(current_user, task, :get_submission)
+
+      unless staff_access || student_access
+        error!({ error: 'Submission history is not available' }, 404)
+      end
+
+      history = task.submission_histories.find_by(id: params[:history_id])
+      error!({ error: 'Submission history is not available' }, 404) unless history
+
+      unless history.has_submission_files?
+        error!({ error: 'Submission history files are not available' }, 404)
+      end
 
       filename = "#{project.student.username}-#{task_definition.abbreviation}-#{history.submission_timestamp}.zip"
 

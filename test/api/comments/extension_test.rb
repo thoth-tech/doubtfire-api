@@ -9,14 +9,14 @@ class ExtensionTest < ActiveSupport::TestCase
     Rails.application
   end
 
-  def test_extension_application
+  def test_extension_request_accepts_valid_weeks_and_rejects_out_of_range_weeks
     unit = FactoryBot.create(:unit)
     project = unit.projects.first
     user = project.student
 
     td = TaskDefinition.new({
         unit_id: unit.id,
-        tutorial_stream: project.tutorial_enrolments.first.tutorial.tutorial_stream,
+        tutorial_stream: unit.tutorial_streams.first,
         name: 'status task change',
         description: 'status task change test',
         weighting: 4,
@@ -83,7 +83,7 @@ class ExtensionTest < ActiveSupport::TestCase
   end
 
   # Test that extension requests are not read by main tutor until they are assessed
-  def test_extension_application
+  def test_extension_request_remains_unread_by_main_tutor_until_assessed
     unit = FactoryBot.create(:unit, auto_apply_extension_before_deadline: false)
     project = unit.projects.first
     user = project.student

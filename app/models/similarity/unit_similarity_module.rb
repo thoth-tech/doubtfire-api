@@ -107,8 +107,9 @@ module UnitSimilarityModule
     pwd = FileUtils.pwd
     completed_all_checks = true
 
-    # making temp directory for unit - jplag
-    root_work_dir = Rails.root.join("tmp", "jplag", "#{code}-#{id}")
+    # Unit codes are editable and may contain path or shell metacharacters. Keep
+    # the transient workspace derived only from database integer identifiers.
+    root_work_dir = Rails.root.join('tmp', 'jplag', "unit-#{id.to_i}")
 
     begin
       logger.info "Checking plagiarsm for unit #{code} - #{name} (id=#{id})"
@@ -134,7 +135,7 @@ module UnitSimilarityModule
         FileUtils.mkdir_p(root_work_dir)
 
         # Init work directory for each task definition
-        tasks_dir = root_work_dir.join(td.id.to_s)
+        tasks_dir = root_work_dir.join(td.id.to_i.to_s)
         FileUtils.mkdir_p(tasks_dir)
 
         # There are new tasks, check these with JPLAG
@@ -161,6 +162,8 @@ module UnitSimilarityModule
       end
     ensure
       FileUtils.chdir(pwd) if FileUtils.pwd != pwd
+      logger.info "Deleting JPlag work directory for unit #{id}: #{root_work_dir}"
+      FileUtils.rm_rf(root_work_dir)
     end
 
     self
@@ -173,9 +176,6 @@ module UnitSimilarityModule
     moss = MossRuby.new(moss_key)
 
     task_definitions.where(plagiarism_updated: true).find_each do |td|
-      td.plagiarism_updated = false
-      td.save
-
       # Get results
       url = td.plagiarism_report_url
       logger.debug "Processing MOSS results #{url}"
@@ -184,13 +184,18 @@ module UnitSimilarityModule
 
       results = moss.extract_results(url, warn_pct, ->(line) { puts line })
 
+      # Track whether every match linked cleanly. A match that fails is logged and
+      # skipped so the rest still process, but the definition is left flagged for
+      # the next scan instead of being silently marked done.
+      completed = true
+
       # Use results
       results.each do |match|
         task_id1 = %r{.*/(\d+)/$}.match(match[0][:filename])[1]
         task_id2 = %r{.*/(\d+)/$}.match(match[1][:filename])[1]
 
-        t1 = Task.find(task_id1)
-        t2 = Task.find(task_id2)
+        t1 = Task.find_by(id: task_id1)
+        t2 = Task.find_by(id: task_id2)
 
         if t1.nil? || t2.nil?
           logger.error "Could not find tasks #{task_id1} or #{task_id2} for plagiarism stats check!"
@@ -210,6 +215,22 @@ module UnitSimilarityModule
         else # just link the individuals...
           create_moss_plagiarism_link(t1, t2, match, warn_pct)
         end
+      rescue StandardError => e
+        # One bad match must not abort the rest of the import for this definition,
+        # but the definition must be retried, so remember that it did not complete.
+        completed = false
+        logger.error "Failed to process MOSS match for task definition #{td.id}: #{e.message}"
+        next
+      end
+
+      # Clear the flag only after a clean pass, and only while the report we just
+      # processed is still the current one. A concurrent scan that produced a newer
+      # report writes a new url and re-flags, so matching on url leaves that newer
+      # flag intact, and a partial failure is retried rather than dropped.
+      if completed
+        # rubocop:disable Rails/SkipsModelValidations
+        TaskDefinition.where(id: td.id, plagiarism_report_url: url).update_all(plagiarism_updated: false)
+        # rubocop:enable Rails/SkipsModelValidations
       end
     end
 
@@ -241,12 +262,15 @@ module UnitSimilarityModule
     similarity_pct = task_definition.plagiarism_warn_pct
     return if similarity_pct.nil?
 
-    # Check if the directory exists and create it if it doesn't
-    results_dir = File.dirname(report_path)
-    system("docker exec -i jplag sh -c 'if [ ! -d \"#{results_dir}\" ]; then mkdir -p \"#{results_dir}\"; fi'") || raise('Failed to create JPlag results directory')
+    # Pass every derived path as its own argv entry. Do not put unit, task, or
+    # report data through a shell in the API container or the JPlag container.
+    results_dir = File.dirname(report_path).to_s
+    system('docker', 'exec', '-i', 'jplag', 'mkdir', '-p', results_dir) ||
+      raise('Failed to create JPlag results directory')
 
-    # Remove existing result file if it exists
-    system("docker exec -i jplag sh -c 'if [ -f \"#{report_path}\" ]; then rm \"#{report_path}\"; fi'") || raise('Failed to remove previous JPlag report')
+    # rm -f is already successful when the old report is absent.
+    system('docker', 'exec', '-i', 'jplag', 'rm', '-f', report_path.to_s) ||
+      raise('Failed to remove previous JPlag report')
 
     # Extract task resources for base code
     use_base_code = false
@@ -295,51 +319,49 @@ module UnitSimilarityModule
     end
 
     logger.info "Starting JPLAG container to run on #{tasks_dir}"
-    root_dir = Rails.root.to_s
-    tasks_dir_split = tasks_dir.to_s.split(root_dir)[1]
+    tasks_dir_in_container = Pathname.new('/').join(tasks_dir.relative_path_from(Rails.root)).to_s
     file_lang = task_definition.similarity_language.to_s
 
     # Convert pct to decimal
     similarity_threshold = similarity_pct.to_f / 100
 
     min_tokens = Doubtfire::Application.config.jplag_min_tokens.to_i
-    # If empty, let JPlag set the default per-language
-    min_token_string = min_tokens <= 0 ? "" : "--min-tokens=#{min_tokens}"
-
-    base_code_string = use_base_code ? "--base-code=#{tasks_dir_split}/base" : ""
-
     skip_cluster_check = Doubtfire::Application.config.jplag_skip_cluster_check
-    skip_cluster_string = skip_cluster_check ? '--cluster-skip' : ''
 
     max_shown_comparisons = Doubtfire::Application.config.jplag_max_shown_comparisons
     max_shown_comparisons = 2500 if max_shown_comparisons.nil?
 
     # Run JPLAG on the extracted files. JPlag container should already be in the /jplag/ workdir.
     docker_command = [
-      "docker exec -i jplag",
-      "java -jar jplag-jar-with-dependencies.jar",
-      "--skip-version-check",
-      "#{tasks_dir_split}/submissions",
-      base_code_string,
-      "-l #{file_lang}",
+      'docker', 'exec', '-i', 'jplag',
+      'java', '-jar', 'jplag-jar-with-dependencies.jar',
+      '--skip-version-check',
+      File.join(tasks_dir_in_container, 'submissions')
+    ]
+    docker_command << "--base-code=#{File.join(tasks_dir_in_container, 'base')}" if use_base_code
+    docker_command.push(
+      '-l', file_lang,
       "--similarity-threshold=#{similarity_threshold}",
-      "--shown-comparisons=#{max_shown_comparisons}",
-      min_token_string,
-      skip_cluster_string,
-      "-M RUN",
-      "-r #{report_path.delete_suffix('.jplag')}",
-      "--overwrite"
-    ].join(" ")
+      "--shown-comparisons=#{max_shown_comparisons}"
+    )
+    docker_command << "--min-tokens=#{min_tokens}" if min_tokens.positive?
+    docker_command << '--cluster-skip' if skip_cluster_check
+    docker_command.push(
+      '-M', 'RUN',
+      '-r', report_path.to_s.delete_suffix('.jplag'),
+      '--overwrite'
+    )
 
-    logger.debug "Executing command: #{docker_command}"
-    system(docker_command)
+    logger.debug "Executing command argv: #{docker_command.inspect}"
+    system(*docker_command) || raise('Failed to run JPlag similarity check')
 
-    # Delete the extracted code files from tmp
-    tmp_dir = Rails.root.join("tmp/jplag")
-    logger.info "Deleting files in: #{tmp_dir}"
-    logger.info "Files to delete: #{Dir.glob("#{tmp_dir}/*")}"
-    FileUtils.rm_rf(Dir.glob("#{tmp_dir}/*"))
     self
+  ensure
+    # Each unit has its own root work directory. Only remove this task
+    # definition's extracted files here: another unit may be running in
+    # parallel under tmp/jplag and its workspace must remain untouched.
+    logger.info "Deleting JPlag task work directory: #{tasks_dir}"
+    FileUtils.rm_rf(tasks_dir)
   end
 
   def process_jplag_plagiarism_report(path, warn_pct, is_group)
@@ -374,8 +396,8 @@ module UnitSimilarityModule
             task2_id = entry.name.split('/')[2].to_i
           end
         end
-        first_submission = Task.find(task1_id) if task1_id
-        second_submission = Task.find(task2_id) if task2_id
+        first_submission = Task.find_by(id: task1_id) if task1_id
+        second_submission = Task.find_by(id: task2_id) if task2_id
 
         if first_submission.nil? || second_submission.nil?
           logger.error "Could not find tasks #{comparison[:first_submission]} or #{comparison[:second_submission]} for plagiarism stats check!"

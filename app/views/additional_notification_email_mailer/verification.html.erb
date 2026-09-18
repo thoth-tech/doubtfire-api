@@ -1,0 +1,13 @@
+<p>Hello <%= @user.nickname.presence || @user.first_name %>,</p>
+
+<p>
+  Use the link below to verify that you own the additional email address requested in
+  <%= @product_name %>.
+</p>
+
+<p><a href="<%= @verification_url %>">Verify additional notification email</a></p>
+
+<p>
+  The link expires after 24 hours. If you did not request this, you can ignore this message.
+  No notification copies are sent to this address until verification succeeds.
+</p>
