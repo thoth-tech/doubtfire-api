@@ -24,6 +24,8 @@ staging:
   database: <%= Rails.application.credentials.dig(:database, :staging, :database) || ENV['DF_STAGING_DB_DATABASE'] %>
   username: <%= Rails.application.credentials.dig(:database, :staging, :username) || ENV['DF_STAGING_DB_USERNAME'] %>
   password: <%= Rails.application.credentials.dig(:database, :staging, :password) || ENV['DF_STAGING_DB_PASSWORD'] %>
+  encoding: utf8mb4
+  collation: utf8mb4_general_ci
 
 production:
   adapter:  <%= Rails.application.credentials.dig(:database, :production, :adapter) || ENV['DF_PRODUCTION_DB_ADAPTER'] %>
@@ -31,3 +33,5 @@ production:
   database: <%= Rails.application.credentials.dig(:database, :production, :database) || ENV['DF_PRODUCTION_DB_DATABASE'] %>
   username: <%= Rails.application.credentials.dig(:database, :production, :username) || ENV['DF_PRODUCTION_DB_USERNAME'] %>
   password: <%= Rails.application.credentials.dig(:database, :production, :password) || ENV['DF_PRODUCTION_DB_PASSWORD'] %>
+  encoding: utf8mb4
+  collation: utf8mb4_general_ci

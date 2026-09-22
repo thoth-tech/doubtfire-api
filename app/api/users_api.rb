@@ -1,6 +1,7 @@
 require 'grape'
 
 class UsersApi < Grape::API
+  helpers CollectionPaginationHelpers
   helpers AuthenticationHelpers
   helpers AuthorisationHelpers
   helpers MimeCheckHelpers
@@ -10,12 +11,17 @@ class UsersApi < Grape::API
   end
 
   desc 'Get the list of users'
+  params do
+    optional :page, type: Integer, values: 1..CollectionPaginationHelpers::MAX_PAGE, allow_blank: false
+    optional :per_page, type: Integer, values: 1..CollectionPaginationHelpers::MAX_PER_PAGE, allow_blank: false
+  end
   get '/users' do
     unless authorise? current_user, User, :list_users
       error!({ error: 'Cannot list users - not authorised' }, 403)
     end
 
-    present User.all.eager_load(:role), with: Entities::UserEntity
+    users = paginate_collection(User.eager_load(:role))
+    present users, with: Entities::UserEntity
   end
 
   desc 'Get user'
@@ -25,25 +31,37 @@ class UsersApi < Grape::API
       error!({ error: "Cannot find User with id #{params[:id]}" }, 403)
     end
 
-    present user, with: Entities::UserEntity
+    present user,
+            with: Entities::UserEntity,
+            theme_owner_id: current_user.id
   end
 
   desc 'Get convenors'
+  params do
+    optional :page, type: Integer, values: 1..CollectionPaginationHelpers::MAX_PAGE, allow_blank: false
+    optional :per_page, type: Integer, values: 1..CollectionPaginationHelpers::MAX_PER_PAGE, allow_blank: false
+  end
   get '/users/convenors' do
     unless authorise? current_user, User, :get_staff_list
       error!({ error: 'Cannot list convenors - not authorised' }, 403)
     end
 
-    present User.convenors, with: Entities::UserEntity
+    users = paginate_collection(User.convenors.eager_load(:role))
+    present users, with: Entities::UserEntity
   end
 
   desc 'Get tutors'
+  params do
+    optional :page, type: Integer, values: 1..CollectionPaginationHelpers::MAX_PAGE, allow_blank: false
+    optional :per_page, type: Integer, values: 1..CollectionPaginationHelpers::MAX_PER_PAGE, allow_blank: false
+  end
   get '/users/tutors' do
     unless authorise? current_user, User, :get_staff_list
       error!({ error: 'Cannot list tutors - not authorised' }, 403)
     end
 
-    present User.tutors.eager_load(:role), with: Entities::UserEntity
+    users = paginate_collection(User.tutors.eager_load(:role))
+    present users, with: Entities::UserEntity
   end
 
   desc 'Update a user'
@@ -59,22 +77,48 @@ class UsersApi < Grape::API
       optional :receive_task_notifications, type: Boolean, desc: 'Allow user to be sent task notifications'
       optional :receive_portfolio_notifications, type: Boolean, desc: 'Allow user to be sent portfolio notifications'
       optional :receive_feedback_notifications, type: Boolean, desc: 'Allow user to be sent feedback notifications'
+      optional :display_peer_progress, type: Boolean, desc: 'Display anonymous peer progress information'
       optional :opt_in_to_research, type: Boolean, desc: 'Allow user to opt in to research conducted by Doubtfire'
       optional :has_run_first_time_setup, type: Boolean, desc: 'Whether or not user has run first-time setup'
+      optional :theme_preference, type: String, desc: 'Theme preference for the user [light, dark, system]; null means never chosen'
     end
   end
   put '/users/:id' do
     change_self = (params[:id] == current_user.id)
 
-    params[:receive_portfolio_notifications] = true if params.key?(:receive_portfolio_notifications) && params[:receive_portfolio_notifications].nil?
-    params[:receive_portfolio_notifications] = true if params.key?(:receive_feedback_notifications) && params[:receive_feedback_notifications].nil?
-    params[:receive_portfolio_notifications] = true if params.key?(:receive_task_notifications) && params[:receive_task_notifications].nil?
+    # Default notification preferences to true when explicitly sent as null.
+    # (Previously this wrote the portfolio key three times and read the
+    # top-level params instead of the nested :user hash, so it never applied.)
+    %i[receive_task_notifications receive_portfolio_notifications receive_feedback_notifications].each do |pref|
+      params[:user][pref] = true if params[:user].key?(pref) && params[:user][pref].nil?
+    end
+    if params[:user].key?(:display_peer_progress) &&
+       params[:user][:display_peer_progress].nil?
+      params[:user][:display_peer_progress] = true
+    end
 
     # can only modify if current_user.id is same as :id provided
     # (i.e., user wants to update their own data) or if update_user token
     if change_self || (authorise? current_user, User, :update_user)
 
       user = User.eager_load(:role).find(params[:id])
+
+      # Identity asserted by SAML/AAF/LDAP is refreshed by the institution's
+      # sign-in/import path. It must not be forgeable through the profile API,
+      # including by an administrator. Student ids are also account data, not
+      # a self-service profile field. Local database-auth administrators retain
+      # the existing ability to maintain another account's identity.
+      if params[:user].key?(:email) &&
+         params[:user][:email].to_s != user.email.to_s &&
+         !AuthenticationHelpers.db_auth?
+        error!({ error: 'Sign-in email is managed by your institution and cannot be changed here.' }, 422)
+      end
+
+      if params[:user].key?(:student_id) &&
+         params[:user][:student_id].to_s != user.student_id.to_s &&
+         (change_self || !AuthenticationHelpers.db_auth?)
+        error!({ error: 'Student ID is managed account information and cannot be changed here.' }, 422)
+      end
 
       user_parameters = ActionController::Parameters.new(params)
                                                     .require(:user)
@@ -87,9 +131,16 @@ class UsersApi < Grape::API
                                                       :receive_task_notifications,
                                                       :receive_portfolio_notifications,
                                                       :receive_feedback_notifications,
+                                                      :display_peer_progress,
                                                       :opt_in_to_research,
-                                                      :has_run_first_time_setup
+                                                      :has_run_first_time_setup,
+                                                      :theme_preference
                                                     )
+
+      # Theme preference belongs only to the account itself. Keep authorised
+      # staff profile updates backward-compatible by ignoring this one private
+      # field instead of rejecting the rest of an otherwise valid update.
+      user_parameters.delete(:theme_preference) unless change_self
 
       user.role = Role.student if user.role.nil?
       old_role = user.role
@@ -115,13 +166,13 @@ class UsersApi < Grape::API
           error!({ error: "No such role name #{user_parameters[:role]}" }, 403)
         end
 
-        if old_role == Role.auditor
-          action - :promote_user
-        elsif new_role == Role.auditor
-          action = old_role == Role.student ? :promote_user : :demote_user
-        else
-          action = new_role.id > old_role.id ? :promote_user : :demote_user
-        end
+        action = if old_role == Role.auditor
+                   :promote_user
+                 elsif new_role == Role.auditor
+                   old_role == Role.student ? :promote_user : :demote_user
+                 else
+                   new_role.id > old_role.id ? :promote_user : :demote_user
+                 end
 
         # current user not authorised to peform action with new role?
         unless authorise? current_user, User, action, User.get_change_role_perm_fn, [old_role.to_sym, new_role.to_sym]
@@ -131,9 +182,18 @@ class UsersApi < Grape::API
         user_parameters[:role] = new_role
       end
 
+      # An explicit preference is a synchronization write, even when its value
+      # matches the stored value. Clients use this timestamp to reconcile a
+      # newer offline choice with the account copy.
+      if user_parameters.key?(:theme_preference)
+        user.theme_preference_updated_at = user_parameters[:theme_preference].nil? ? nil : Time.current
+      end
+
       # Update changes made to user
       user.update!(user_parameters)
-      present user, with: Entities::UserEntity
+      present user,
+              with: Entities::UserEntity,
+              theme_owner_id: current_user.id
     else
       error!({ error: "Cannot modify user with id=#{params[:id]} - not authorised" }, 403)
     end

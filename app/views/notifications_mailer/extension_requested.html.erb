@@ -1,0 +1,26 @@
+<p>Hi <%= @user.first_name %>,</p>
+
+<p><%= @notification.message %></p>
+
+<p>
+  Open the task in <%= @doubtfire_product_name %> to read the request and
+  grant or reject it. The reason the student gave is not included in this email.
+</p>
+
+<% if @notification.link.present? %>
+  <p>
+    <a href="<%= @doubtfire_host %><%= @notification.link %>">
+      Open the task
+    </a>
+  </p>
+<% end %>
+
+<p>
+  This notification is sent when a student asks for an extension that needs
+  someone to assess it.
+</p>
+
+<p>
+  You can manage your notification preferences in
+  <a href="<%= @unsubscribe_url %>">your profile</a>.
+</p>

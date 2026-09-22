@@ -16,6 +16,7 @@ class WebcalPublicApi < Grape::API
     # Serve the iCalendar with the correct MIME type.
     env['api.format'] = :txt
     content_type 'text/calendar'
+    header 'Cache-Control', 'private, no-store'
 
     # Serve ical.
     webcal.to_ical.to_ical

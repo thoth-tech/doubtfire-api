@@ -1,35 +1,41 @@
-# Description
+## Jira ticket
 
-Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context. List any dependencies that are required for this change.
+Ticket number or link:
 
-Fixes # (issue)
+## Summary
 
-## Type of change
+Briefly explain what you changed and why.
 
-Please delete options that are not relevant.
+## Target branch
 
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] This change requires a documentation update
+Which shared branch should this be merged into?
 
-# How Has This Been Tested?
+Example: `feature/email-notifications`
 
-Please describe the tests that you ran to verify your changes. Provide instructions so we can reproduce. Please also list any relevant details for your test configuration
+## Testing
 
-- [ ] Test A
-- [ ] Test B
+Explain how you tested the change.
 
-# Checklist:
+Include any useful commands, screenshots, logs, or test results.
 
-- [ ] My code follows the style guidelines of this project
-- [ ] I have performed a self-review of my own code
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have made corresponding changes to the documentation if appropriate
-- [ ] My changes generate no new warnings
-- [ ] I have added tests that prove my fix is effective or that my feature works
-- [ ] I have created or extended unit tests to address my new additions
-- [ ] New and existing unit tests pass locally with my changes
-- [ ] Any dependent changes have been merged and published in downstream modules
+## Security and privacy
 
-If you have any questions, please contact @macite or @jakerenzella.
+Does this change affect authentication, permissions, notifications, student data,
+secrets, personal information, or privacy?
+
+If there is no known impact, write: `No known security or privacy impact.`
+
+## Evidence
+
+Add any screenshots, test output, diagrams, or other evidence that will help the reviewer.
+
+## Checklist
+
+- [ ] I selected the correct base branch.
+- [ ] My changes match the assigned Jira ticket.
+- [ ] I kept the change within the agreed scope.
+- [ ] I tested my changes.
+- [ ] I did not include passwords, tokens, API keys, secrets, or real student data.
+- [ ] I updated relevant documentation, or no documentation change was needed.
+- [ ] I reviewed my own changes before requesting review.
+- [ ] This pull request is ready for review.

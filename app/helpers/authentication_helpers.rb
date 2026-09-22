@@ -1,4 +1,5 @@
 require 'onelogin/ruby-saml'
+require 'uri'
 
 #
 # The AuthenticationHelpers include functions to check if the user
@@ -31,7 +32,7 @@ module AuthenticationHelpers
     if user.present? && token.present?
       # has the tolken not expired?
       if token.auth_token_expiry > Time.zone.now
-        logger.info("Authenticated #{user.username} from #{request.ip}")
+        logger.info("Authenticated user_id=#{user.id} from #{request.ip}")
         :valid
       else
         # Token is timed out - destroy it and return error
@@ -40,7 +41,10 @@ module AuthenticationHelpers
         :token_expired
       end
     elsif token.present?
-      logger.info("Error logging in for #{user_param} / #{auth_param} from #{request.ip}")
+      # Never echo the presented credential. This branch is reached for invalid
+      # and expired tokens, which are exactly the values an attacker may try to
+      # force into application logs.
+      logger.info("Error logging in with an invalid one-time token from #{request.ip}")
       :error
     else
       :missing_details
@@ -51,6 +55,19 @@ module AuthenticationHelpers
   # Public functions
   #
   module_function
+
+  # Keep one-time sign-in credentials out of the query string. Query strings
+  # are routinely captured by reverse-proxy access logs, browser history, and
+  # telemetry. A URI fragment is not sent in the HTTP request; the web client
+  # consumes and removes it before initialising telemetry.
+  def frontend_sign_in_url(host:, auth_token:, username:)
+    callback_fragment = URI.encode_www_form(
+      authToken: auth_token,
+      username: username
+    )
+
+    "#{host.to_s.delete_suffix('/')}/sign_in##{callback_fragment}"
+  end
 
   def authenticated_via_refresh_token?
     auth_param = cookies['refresh_token']
@@ -220,7 +237,7 @@ module AuthenticationHelpers
       token = current_user.auth_tokens.where(token_type: :refresh_token).last
 
       # Generate a new token when the old one is absent or getting close to expiring
-      if token.nil? || token.auth_token_expiry <= Time.zone.now - 12.hours
+      if token.nil? || token.auth_token_expiry <= Time.zone.now + 12.hours
         token = current_user.generate_authentication_token!(token_type: :refresh_token)
       end
 

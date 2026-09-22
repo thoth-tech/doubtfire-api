@@ -3,6 +3,7 @@ require 'uri'
 
 class SentryTunnelMiddleware
   PATH = '/api/client-reports'.freeze
+  MAX_ENVELOPE_BYTES = 256 * 1024
 
   def initialize(app)
     @app = app
@@ -11,17 +12,37 @@ class SentryTunnelMiddleware
   def call(env)
     return @app.call(env) unless env['REQUEST_METHOD'] == 'POST' && env['PATH_INFO'] == PATH
 
-    forward_envelope(env)
+    return payload_too_large_response if declared_body_too_large?(env)
+
+    body = read_envelope(env)
+    return payload_too_large_response if body.bytesize > MAX_ENVELOPE_BYTES
+
+    forward_envelope(env, body)
     [204, {}, []]
   end
 
   private
 
-  def forward_envelope(env)
+  def declared_body_too_large?(env)
+    length = Integer(env['CONTENT_LENGTH'], exception: false)
+    length && length > MAX_ENVELOPE_BYTES
+  end
+
+  def read_envelope(env)
+    input = env.fetch('rack.input')
+    input.read(MAX_ENVELOPE_BYTES + 1).to_s
+  ensure
+    input.rewind if input.respond_to?(:rewind)
+  end
+
+  def payload_too_large_response
+    [413, { 'content-length' => '0' }, []]
+  end
+
+  def forward_envelope(env, body)
     envelope_url = sentry_envelope_url
     return if envelope_url.blank?
 
-    body = env['rack.input'].read
     return if body.blank?
 
     RestClient::Request.execute(
@@ -36,8 +57,6 @@ class SentryTunnelMiddleware
     Rails.logger.warn "Unable to forward Sentry envelope: #{e.class} #{e.response&.code}"
   rescue RestClient::Exception, SocketError, Timeout::Error => e
     Rails.logger.warn "Unable to forward Sentry envelope: #{e.class}"
-  ensure
-    env['rack.input'].rewind if env['rack.input'].respond_to?(:rewind)
   end
 
   def sentry_headers(env)

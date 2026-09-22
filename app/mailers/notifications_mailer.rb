@@ -5,6 +5,78 @@ class NotificationsMailer < ApplicationMailer
     @unsubscribe_url = "#{@doubtfire_host}/edit_profile"
   end
 
+  # Sends a single in-system notification as an email. Called by
+  # NotificationEmailJob, which lets delivery failures reach Sidekiq so they can
+  # be retried without blocking the request that created the notification.
+  def single_notification(notification)
+    add_general
+
+    @notification = notification
+    @user = notification.user
+
+    # Use the deployment's SMTP-authorised sender, with a development-safe
+    # fallback for older installations that have not configured one yet.
+    from_address = Doubtfire::Application.config.institution[:email_sender].presence || 'noreply@doubtfire.local'
+
+    email_with_name = address_with_name(@user)
+    subject = "#{@doubtfire_product_name}: #{SUBJECTS.fetch(notification.event, 'New notification')}"
+
+    # An event may ship its own pair of templates named after it, for example
+    # task_comment_created.html.erb and task_comment_created.text.erb. Events
+    # without them fall back to the generic single_notification pair.
+    #
+    # This is why a new event ticket only ever adds files and never edits this
+    # method: eight event tickets can run in parallel without touching each
+    # other's work.
+    mail(
+      to: email_with_name,
+      subject: subject,
+      template_name: event_template_name(notification.event),
+      **outbound_sender_headers(development_from: from_address)
+    )
+  end
+
+  # Delivers a second, independent message to a verified additional address.
+  # It is intentionally not a CC: neither destination learns the other address,
+  # and a failure here can be isolated from the primary institutional delivery.
+  def additional_notification_copy(notification, address)
+    add_general
+
+    @notification = notification
+    @user = notification.user
+
+    from_address = Doubtfire::Application.config.institution[:email_sender].presence || 'noreply@doubtfire.local'
+    subject = "#{@doubtfire_product_name}: #{SUBJECTS.fetch(notification.event, 'New notification')}"
+
+    mail(
+      to: address,
+      subject: subject,
+      template_name: event_template_name(notification.event),
+      **outbound_sender_headers(development_from: from_address)
+    )
+  end
+  SUBJECTS = {
+    'task_comment_created' => 'New task comment',
+    'task_status_changed' => 'Task status changed',
+    'task_due_soon' => 'Task due soon',
+    'task_due_date_changed' => 'Task due date changed',
+    'new_task_available' => 'New task available',
+    'task_submitted' => 'Task submitted',
+    'extension_assessed' => 'Extension request assessed',
+    'group_membership_changed' => 'Group membership changed',
+    'discussion_request_created' => 'New discussion request',
+    'portfolio_received' => 'Portfolio received',
+    'tutorial_changed' => 'Tutorial changed'
+  }.freeze
+
+  # The event's own template if it exists, otherwise the generic one.
+  def event_template_name(event)
+    return 'single_notification' if event.blank?
+    return 'single_notification' unless lookup_context.exists?(event, [self.class.mailer_name], false)
+
+    event
+  end
+
   def weekly_staff_summary(unit_role, summary_stats)
     return nil if unit_role.nil?
 
@@ -37,11 +109,15 @@ class NotificationsMailer < ApplicationMailer
     @convenor = @unit.main_convenor_user
     @summary_stats = summary_stats
 
-    email_with_name = %("#{@staff.name}" <#{@staff.email}>)
-    convenor_email = %("#{@convenor.name}" <#{@convenor.email}>)
+    email_with_name = address_with_name(@staff)
+    convenor_email = address_with_name(@convenor)
     subject = "#{@unit.name}: Weekly Summary"
 
-    mail(to: email_with_name, from: convenor_email, subject: subject)
+    mail(
+      { to: email_with_name, subject: subject }.merge(
+        outbound_sender_headers(development_from: convenor_email, reply_to: convenor_email)
+      )
+    )
   end
 
   def weekly_student_summary(project, summary_stats, did_revert_to_pass)
@@ -73,11 +149,15 @@ class NotificationsMailer < ApplicationMailer
     @soon_top = @top_tasks.select { |tt| tt[:reason] == :soon }
     @ahead_top = @top_tasks.select { |tt| tt[:reason] == :ahead }
 
-    email_with_name = %("#{@student.name}" <#{@student.email}>)
-    tutor_email = %("#{@tutor.name}" <#{@tutor.email}>)
+    email_with_name = address_with_name(@student)
+    tutor_email = address_with_name(@tutor)
     subject = "#{project.unit.name}: Weekly Summary"
 
-    mail(to: email_with_name, from: tutor_email, subject: subject)
+    mail(
+      { to: email_with_name, subject: subject }.merge(
+        outbound_sender_headers(development_from: tutor_email, reply_to: tutor_email)
+      )
+    )
   end
 
   def top_task_desc(tt)
@@ -112,4 +192,19 @@ class NotificationsMailer < ApplicationMailer
   helper_method :were_was
   helper_method :are_is
   helper_method :this_these
+
+  private
+
+  # Build the recipient or sender address through Mail so a display name that
+  # contains a quote or a comma cannot break out of the name and inject a second
+  # address, and strip control characters so a name cannot fold an extra header
+  # into the message. User#name comes from first_name/last_name, which are
+  # user-editable and validated for presence only, so the raw
+  # %("#{name}" <#{email}>) interpolation this replaces was header-injectable.
+  def address_with_name(user)
+    safe_name = user.name.to_s.gsub(/[[:cntrl:]]/, ' ').strip
+    address = Mail::Address.new(user.email.to_s)
+    address.display_name = safe_name
+    address.format
+  end
 end

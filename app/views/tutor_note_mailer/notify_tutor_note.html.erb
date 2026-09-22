@@ -88,7 +88,7 @@
         <strong>Student:</strong>
         <%= @task.project.user.name %><br/><br/>
 
-        <a href="<%= @doubtfire_host %>/projects/<%= @task.project.id %>/dashboard/<%= @task.task_definition.abbreviation %>?tutor=true">
+        <a href="<%= @doubtfire_host %>/units/<%= @task.project.unit_id %>/tasks/definition/<%= @task.project.user.id %>/<%= ERB::Util.url_encode(@task.task_definition.abbreviation) %>">
           View this task
         </a>
       </div>

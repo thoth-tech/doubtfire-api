@@ -5,6 +5,7 @@ Something went wrong with the processing of the following tasks. Please check wh
 The tasks with issues are:
 <% @tasks.each do |task| %>
   * <%= task.task_definition.abbreviation %> - <%=task.task_definition.name%>
+    <%= @doubtfire_host %>/projects/<%= @project.id %>/dashboard/<%= ERB::Util.url_encode(task.task_definition.abbreviation) %>
 <% end %>
 
 Cheers,

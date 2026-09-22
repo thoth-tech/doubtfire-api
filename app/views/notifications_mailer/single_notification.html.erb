@@ -1,0 +1,12 @@
+<p>Hi <%= @user.name %>,</p>
+
+<p><%= @notification.message %></p>
+
+<% if @notification.link.present? %>
+  <p><a href="<%= @doubtfire_host %><%= @notification.link %>">View in <%= @doubtfire_product_name %></a></p>
+<% end %>
+
+<p>
+  You are receiving this because your notification preferences allow it.
+  You can update them at <a href="<%= @unsubscribe_url %>">your profile</a>.
+</p>

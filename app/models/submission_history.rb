@@ -106,7 +106,7 @@ class SubmissionHistory < ApplicationRecord
     return false unless File.exist?(archive_file_name)
 
     Zip::File.open(archive_file_name) { |archive| submission_entries(archive).any? }
-  rescue Zip::Error
+  rescue Zip::Error, Errno::ENOENT, Errno::EACCES
     false
   end
 

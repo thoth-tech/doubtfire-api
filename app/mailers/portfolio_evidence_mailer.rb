@@ -18,7 +18,11 @@ class PortfolioEvidenceMailer < ApplicationMailer
     email_with_name = %("#{@student.name}" <#{@student.email}>)
     tutor_email = %("#{@tutor.name}" <#{@tutor.email}>)
     subject = "#{project.unit.code} #{project.unit.name}: Task submission processing failed"
-    mail(to: email_with_name, from: tutor_email, subject: subject)
+    mail(
+      { to: email_with_name, subject: subject }.merge(
+        outbound_sender_headers(development_from: tutor_email, reply_to: tutor_email)
+      )
+    )
   end
 
   def task_pdf_ready_message(project, tasks)
@@ -34,7 +38,11 @@ class PortfolioEvidenceMailer < ApplicationMailer
     email_with_name = %("#{@student.name}" <#{@student.email}>)
     tutor_email = %("#{@tutor.name}" <#{@tutor.email}>)
     subject = "#{project.unit.name}: Task PDFs ready to view"
-    mail(to: email_with_name, from: tutor_email, subject: subject)
+    mail(
+      { to: email_with_name, subject: subject }.merge(
+        outbound_sender_headers(development_from: tutor_email, reply_to: tutor_email)
+      )
+    )
   end
 
   def task_feedback_ready(project, tasks)
@@ -51,7 +59,11 @@ class PortfolioEvidenceMailer < ApplicationMailer
     email_with_name = %("#{@student.name}" <#{@student.email}>)
     tutor_email = %("#{@tutor.name}" <#{@tutor.email}>)
     subject = "#{project.unit.name}: Feedback ready to review"
-    mail(to: email_with_name, from: tutor_email, subject: subject)
+    mail(
+      { to: email_with_name, subject: subject }.merge(
+        outbound_sender_headers(development_from: tutor_email, reply_to: tutor_email)
+      )
+    )
   end
 
   def overseer_assessment_failed(project, tasks)
@@ -67,7 +79,11 @@ class PortfolioEvidenceMailer < ApplicationMailer
     email_with_name = %("#{@student.name}" <#{@student.email}>)
     tutor_email = %("#{@tutor.name}" <#{@tutor.email}>)
     subject = "#{project.unit.code} #{project.unit.name}: Automated feedback needs your attention"
-    mail(to: email_with_name, from: tutor_email, subject: subject)
+    mail(
+      { to: email_with_name, subject: subject }.merge(
+        outbound_sender_headers(development_from: tutor_email, reply_to: tutor_email)
+      )
+    )
   end
 
   def portfolio_ready(project)
@@ -82,7 +98,11 @@ class PortfolioEvidenceMailer < ApplicationMailer
     email_with_name = %("#{@student.name}" <#{@student.email}>)
     convenor_email = %("#{@convenor.name}" <#{@convenor.email}>)
     subject = "#{project.unit.name}: Portfolio ready to review"
-    mail(to: email_with_name, from: convenor_email, subject: subject)
+    mail(
+      { to: email_with_name, subject: subject }.merge(
+        outbound_sender_headers(development_from: convenor_email, reply_to: convenor_email)
+      )
+    )
   end
 
   def portfolio_failed(project)
@@ -97,6 +117,10 @@ class PortfolioEvidenceMailer < ApplicationMailer
     email_with_name = %("#{@student.name}" <#{@student.email}>)
     convenor_email = %("#{@convenor.name}" <#{@convenor.email}>)
     subject = "#{project.unit.name}: Portfolio failed to compile"
-    mail(to: email_with_name, from: convenor_email, subject: subject)
+    mail(
+      { to: email_with_name, subject: subject }.merge(
+        outbound_sender_headers(development_from: convenor_email, reply_to: convenor_email)
+      )
+    )
   end
 end

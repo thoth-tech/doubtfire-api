@@ -1,0 +1,11 @@
+Hi <%= @user.name %>,
+
+Your tutorial has changed.
+
+<%= @notification.message %>
+
+Please use the new tutorial day and time for your next class.
+<% if @notification.link.present? -%>
+
+Open your unit in <%= @doubtfire_product_name %>: <%= @doubtfire_host %><%= @notification.link %>
+<% end -%>

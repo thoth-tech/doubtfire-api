@@ -1,0 +1,18 @@
+<p>Hi <%= @user.first_name %>,</p>
+
+<p><%= @notification.message %></p>
+
+<% if @notification.link.present? %>
+  <p>
+    <a href="<%= @doubtfire_host %><%= @notification.link %>">
+      Open the task in <%= @doubtfire_product_name %>
+    </a>
+  </p>
+<% end %>
+
+<p>The submission and any assessment content are not included in this email.</p>
+
+<p>
+  You can manage your notification preferences in
+  <a href="<%= @unsubscribe_url %>">your profile</a>.
+</p>

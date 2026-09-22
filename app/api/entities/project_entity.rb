@@ -21,7 +21,7 @@ module Entities
 
     expose :task_stats, as: :stats, unless: :for_student
 
-    expose :tasks, using: TaskEntity, unless: :summary_only do |project, options|
+    expose :tasks, using: TaskEntity, if: ->(project, options) { !options[:summary_only] || options[:include_task_definitions] } do |project, options|
       project.task_details_for_shallow_serializer(options[:user])
     end
 

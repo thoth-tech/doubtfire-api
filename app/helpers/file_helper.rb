@@ -14,6 +14,13 @@ module FileHelper
   extend TimeoutHelper
   extend MimeCheckHelpers
 
+  DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  DOCX_MAIN_DOCUMENT_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml'
+  OOXML_CONTENT_TYPES_NAMESPACE = 'http://schemas.openxmlformats.org/package/2006/content-types'
+  ACCEPTED_FILE_KINDS = %w[image code document word_document zip archive audio comment_attachment video csv].freeze
+
+  CODE_UPLOAD_EXTENSIONS = %w[pas cpp c cs csv h hpp java py js html coffee rb css scss yaml yml xml json ts r rmd rnw rhtml rpres tex vb sql txt md jack hack asm hdl tst out cmp vm sh bat dat ipynb pml vue].freeze
+
   ZIP_NESTED_ARCHIVE_EXTENSIONS = %w[
     .7z .bz2 .ear .gz .jar .rar .tar .tar.bz2 .tar.gz .tar.xz .tbz .tbz2 .tgz .txz .war .xz .zip
   ].freeze
@@ -29,7 +36,10 @@ module FileHelper
   # Test if a file should be accepted based on an expected kind
   # - file is passed the file uploaded to Doubtfire (a hash with all relevant data about the file)
   #
-  def accept_file(file, name, kind)
+  def accept_file(file, _name, kind)
+    return CommentAttachmentPolicy.validate(file) if kind == 'comment_attachment'
+    return SpreadsheetUploadPolicy.validate(file) if kind == 'csv'
+
     case kind
     when 'image'
       mime_allow_list = ['image/png', 'image/gif', 'image/bmp', 'image/tiff', 'image/jpeg', 'image/x-ms-bmp']
@@ -40,6 +50,8 @@ module FileHelper
                 'application/tst', 'text/x-cmp', 'text/x-vm', 'application/x-sh', 'application/x-bat', 'application/dat', 'application/x-wine-extension-ini']
     when 'document'
       mime_allow_list = [ 'application/pdf' ]
+    when 'word_document'
+      mime_allow_list = [DOCX_MIME_TYPE]
     when 'zip', 'archive'
       mime_allow_list = [
         'application/zip',
@@ -53,17 +65,34 @@ module FileHelper
     when 'audio'
       mime_allow_list = ['audio/', 'video/webm', 'application/ogg', 'application/octet-stream']
     when 'comment_attachment'
-      mime_allow_list = ['audio/', 'video/webm', 'application/ogg', 'image/', 'application/pdf', 'application/octet-stream']
+      mime_allow_list = [
+        'audio/',
+        'video/webm',
+        'application/ogg',
+        'image/',
+        'application/pdf',
+        DOCX_MIME_TYPE,
+        'application/octet-stream'
+      ]
     when 'video'
       mime_allow_list = ['video/mp4']
     else
-      logger.error "Unknown type '#{kind}' provided for '#{name}'"
+      log_file_rejection('Unknown file type', 'unknown', file)
+      return {
+        accepted: false,
+        msg: 'unsupported file type.'
+      }
     end
 
-    extension_check = FileHelper.known_extension?(File.extname(file['tempfile']).downcase[1..])
+    uploaded_filename = file['filename'] || file[:filename] || file['tempfile'].path
+    uploaded_extension = File.extname(uploaded_filename.to_s).downcase.delete_prefix('.')
+    extension_check = FileHelper.known_extension?(uploaded_extension)
+    extension_check ||= uploaded_extension == 'docx' && %w[comment_attachment word_document].include?(kind)
+    extension_check &&= uploaded_extension == 'docx' if kind == 'word_document'
+    extension_check &&= CODE_UPLOAD_EXTENSIONS.include?(uploaded_extension) if kind == 'code'
     unless extension_check
       msg = 'invalid file extension.'
-      logger.debug 'File extension check failed'
+      log_file_rejection('File extension check failed', kind, file)
       return {
         accepted: false,
         msg: msg
@@ -73,11 +102,24 @@ module FileHelper
     mime_check = mime_in_list?(file['tempfile'].path, mime_allow_list)
     unless mime_check
       msg = 'invalid file MIME type, file is likely corrupted.'
-      logger.debug 'File MIME check failed'
+      log_file_rejection('File MIME check failed', kind, file,
+                         detected_mime: mime_type(file['tempfile'].path), allowed_mime: mime_allow_list)
       return {
         accepted: false,
         msg: msg
       }
+    end
+
+    if uploaded_extension == 'docx'
+      docx_validation_result = validate_docx(file['tempfile'].path)
+
+      unless docx_validation_result[:valid]
+        log_file_rejection('Word document is invalid', kind, file)
+        return {
+          accepted: false,
+          msg: docx_validation_result[:msg]
+        }
+      end
     end
 
     # Extra checks for PDF documents
@@ -86,7 +128,7 @@ module FileHelper
 
       if pdf_validation_result[:encrypted]
         msg = 'PDF file is encrypted, encrypted files are not supported.'
-        logger.debug 'PDF file is encrypted'
+        log_file_rejection('PDF file is encrypted', kind, file)
         return {
           accepted: false,
           msg: msg
@@ -95,7 +137,7 @@ module FileHelper
 
       unless pdf_validation_result[:valid]
         msg = 'PDF file is corrupted.'
-        logger.debug 'PDF file is corrupted'
+        log_file_rejection('PDF file is corrupted', kind, file)
         return {
           accepted: false,
           msg: msg
@@ -107,7 +149,7 @@ module FileHelper
       zip_validation_result = validate_zip_upload(file['tempfile'].path, File.basename(file[:filename].to_s))
 
       unless zip_validation_result[:valid]
-        logger.debug "Zip file is invalid: #{zip_validation_result[:msg]}"
+        log_file_rejection('Zip file is invalid', kind, file)
         return {
           accepted: false,
           msg: zip_validation_result[:msg]
@@ -122,6 +164,21 @@ module FileHelper
       accepted: true,
       msg: 'success'
     }
+  end
+
+  # Upload names and requirement labels can contain student information. Log
+  # only bounded extensions and validation metadata, never content or paths.
+  # JSON escaping also prevents client-controlled extensions forging log lines.
+  def log_file_rejection(reason, kind, file, **details)
+    extension = lambda do |value|
+      suffix = File.extname(value.to_s).downcase
+      suffix.match?(/\A\.[a-z0-9]{1,12}\z/) ? suffix : '[none or invalid]'
+    end
+    safe_kind = ACCEPTED_FILE_KINDS.include?(kind) ? kind : 'unknown'
+    details = details.merge(kind: safe_kind,
+                            uploaded_extension: extension.call(file['filename'] || file[:filename]),
+                            temporary_extension: extension.call(file['tempfile'].path))
+    logger.info("#{reason} #{details.to_json}")
   end
 
   #
@@ -152,6 +209,23 @@ module FileHelper
       # or periods with underscore
       name.gsub! /[^\w\.\-]/, '_'
     end
+  end
+
+  # Preserve a human-readable upload name for display and Content-Disposition,
+  # while removing path and header-injection material. Storage never uses this
+  # value: comment attachments remain in an id-based internal path.
+  def safe_upload_filename(file_upload, fallback: 'attachment')
+    raw_name = file_upload['filename'] || file_upload[:filename] || fallback
+    utf8_name = raw_name.to_s.encode('UTF-8', invalid: :replace, undef: :replace, replace: '_')
+    basename = utf8_name.tr('\\', '/').split('/').last.to_s
+    basename = basename.gsub(/[[:cntrl:]]/, '').strip
+    basename = fallback if basename.blank? || %w[. ..].include?(basename)
+
+    return basename if basename.length <= 255
+
+    extension = File.extname(basename)
+    stem_length = [255 - extension.length, 1].max
+    "#{File.basename(basename, extension)[0, stem_length]}#{extension}"
   end
 
   def task_file_dir_for_unit(unit, create = true)
@@ -562,6 +636,102 @@ module FileHelper
     rescue StandardError => e
       { valid: false, msg: e.message }
     end
+  end
+
+  # A DOCX file is an OOXML zip package. libmagic can identify an arbitrary zip
+  # as a Word document from its filename or a small subset of entries, so check
+  # the package itself before accepting it as a comment attachment.
+  def validate_docx(path, format: 'docx', max_file_size: nil)
+    main_part = format == 'xlsx' ? 'xl/workbook.xml' : 'word/document.xml'
+    required_entries = [
+      '[Content_Types].xml',
+      '_rels/.rels',
+      main_part
+    ].freeze
+    max_file_size ||= Doubtfire::Application.config.max_file_size.to_i
+    max_file_size = 10_000_000 if max_file_size <= 0
+    max_uncompressed_size = max_file_size * zip_uncompressed_size_multiplier
+
+    return { valid: false, msg: "Word document exceeds the #{max_file_size / 1_000_000}MB file limit." } if File.size(path) > max_file_size
+
+    stats = { entries: 0, total_uncompressed_size: 0 }
+    entry_names = []
+    content_types = nil
+    main_xml = nil
+
+    Zip::File.open(path) do |zip_file|
+      zip_file.each do |entry|
+        raise 'Encrypted Word document entries are not supported.' if entry.respond_to?(:encrypted?) && entry.encrypted?
+        raise 'Word document contains an unsupported link entry.' if entry.respond_to?(:ftype) && entry.ftype == :symlink
+        safe_entry_name = entry.directory? ? entry.name.sub(%r{/+\z}, '') : entry.name
+        raise 'Word document contains a file with an unsafe path.' unless zip_path_safe?(safe_entry_name)
+        next if entry.directory?
+
+        validate_zip_upload_entry!(entry.name, entry.size, stats, max_file_size, max_uncompressed_size)
+        raise 'Office document contains unsupported active or embedded content.' if entry.name.match?(%r{(?:vba|activex|embeddings|macrosheets|dialogsheets|externallinks|connections|querytables)|\.bin$}i)
+        raise 'Office document contains duplicate entries.' if entry_names.include?(entry.name)
+        entry_names << entry.name
+        content_types = entry.get_input_stream.read(1_000_000) if entry.name == '[Content_Types].xml'
+        main_xml = entry.get_input_stream.read(5_000_000) if entry.name == main_part
+        next unless entry.name.end_with?('.rels')
+
+        relationships = Nokogiri::XML(entry.get_input_stream.read(1_000_000)) { |config| config.strict.nonet }
+        raise 'Office document contains unsafe XML declarations.' if relationships.internal_subset
+        relationships.xpath('//*[local-name()="Relationship"]').each do |relationship|
+          next unless relationship['TargetMode'].to_s.casecmp?('External')
+          # Ordinary hyperlinks do not fetch content automatically; external
+          # templates, workbooks, images and objects are not accepted.
+          raise 'Office document contains external content.' unless relationship['Type'].to_s.end_with?('/hyperlink')
+        end
+      end
+    end
+
+    missing_entries = required_entries - entry_names
+    unless missing_entries.empty?
+      return { valid: false, msg: "Word document package is missing #{missing_entries.join(', ')}." }
+    end
+
+    unless docx_main_document_declared?(content_types, format: format)
+      return { valid: false, msg: 'Word document package has an invalid main document content type.' }
+    end
+
+    main_document = Nokogiri::XML(main_xml) { |config| config.strict.nonet }
+    expected_root = format == 'xlsx' ? 'workbook' : 'document'
+    expected_namespace = format == 'xlsx' ? 'http://schemas.openxmlformats.org/spreadsheetml/2006/main' : 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    unless main_document.root&.name == expected_root && main_document.root&.namespace&.href == expected_namespace && main_document.internal_subset.nil?
+      return { valid: false, msg: 'Office document contains an invalid main XML part.' }
+    end
+
+    compressed_size = [File.size(path), 1].max
+    if stats[:total_uncompressed_size] / compressed_size > zip_compression_ratio_limit
+      return { valid: false, msg: "Word document compression ratio is too high. Limit is #{zip_compression_ratio_limit}:1." }
+    end
+
+    { valid: true, msg: 'success' }
+  rescue Zip::Error, EOFError
+    { valid: false, msg: 'Word document is corrupted or is not a valid OOXML package.' }
+  rescue StandardError => e
+    { valid: false, msg: e.message }
+  end
+
+  # The main part must be declared by the Override for /word/document.xml.
+  # Matching the type as a substring would also accept it inside a comment or
+  # on some other part.
+  def docx_main_document_declared?(content_types, format: 'docx')
+    return false if content_types.blank?
+
+    document = Nokogiri::XML(content_types) { |config| config.strict.nonet }
+    return false if document.internal_subset || content_types.match?(/macroEnabled|vbaProject|activeX/i)
+
+    part = format == 'xlsx' ? '/xl/workbook.xml' : '/word/document.xml'
+    expected_type = format == 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml' : DOCX_MAIN_DOCUMENT_CONTENT_TYPE
+    override = document.at_xpath(
+      "/ct:Types/ct:Override[@PartName='#{part}']",
+      'ct' => OOXML_CONTENT_TYPES_NAMESPACE
+    )
+    override.present? && override['ContentType'] == expected_type
+  rescue Nokogiri::XML::SyntaxError
+    false
   end
 
   def zip_tree_add_path(tree, path)
@@ -1025,8 +1195,10 @@ module FileHelper
   end
   # Export functions as module functions
   module_function :accept_file
+  module_function :log_file_rejection
   module_function :sanitized_path
   module_function :sanitized_filename
+  module_function :safe_upload_filename
   module_function :task_file_dir_for_unit
   module_function :tmp_file_dir
   module_function :tmp_file
@@ -1063,6 +1235,8 @@ module FileHelper
   module_function :validate_zip_file
   module_function :validate_tar_file
   module_function :validate_zip_upload
+  module_function :validate_docx
+  module_function :docx_main_document_declared?
   module_function :zip_tree_add_path
   module_function :zip_tree_walk
   module_function :zip_file_tree

@@ -1,0 +1,12 @@
+Hi <%= @user.name %>,
+
+<%= @notification.message %>
+
+Your extension request has been assessed.
+Open the task in <%= @doubtfire_product_name %> to review the current task details.
+
+<% if @notification.link.present? -%>
+Open the task: <%= @doubtfire_host %><%= @notification.link %>
+<% end -%>
+
+This notification is sent when an extension request is assessed.

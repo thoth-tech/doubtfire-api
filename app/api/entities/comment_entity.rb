@@ -3,7 +3,7 @@ module Entities
     expose :id
     expose :comment
     expose :has_attachment do |data, options|
-      ["audio", "image", "pdf"].include?(data.content_type)
+      data.attachment?
     end
     expose :type do |data, options|
       data.content_type || "text"
@@ -16,6 +16,11 @@ module Entities
       end
     end
     expose :reply_to_id
+    expose :attachment_file_name, if: ->(data, _) { data.attachment? }
+    expose :attachment_mime_type, if: ->(data, _) { data.attachment? }
+    expose :attachment_byte_size, if: ->(data, _) { data.attachment? } do |data, _|
+      data.attachment_size
+    end
     expose :created_at
     expose :recipient_read_time, safe: true
     expose :author do |data, options|

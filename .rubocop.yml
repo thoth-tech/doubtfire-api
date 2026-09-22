@@ -5,15 +5,14 @@ AllCops:
     - db/**/*
     - vendor/**/*
     - spec/**/*
-    - test/**/*
   TargetRubyVersion: 3.1
   NewCops: disable
 
 plugins:
   - rubocop-rails
   # - rubocop-performance
-  # - rubocop-minitest
-  # - rubocop-factory_bot
+  - rubocop-minitest
+  - rubocop-factory_bot
 
 Style/HashSyntax:
   EnforcedShorthandSyntax: never

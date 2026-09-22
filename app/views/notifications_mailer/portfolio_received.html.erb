@@ -1,0 +1,21 @@
+<p>Hi <%= @user.first_name %>,</p>
+
+<p><%= @notification.message %></p>
+
+<% if @notification.link.present? %>
+  <p>
+    <a href="<%= @doubtfire_host %><%= @notification.link %>">
+      View the current status in <%= @doubtfire_product_name %>
+    </a>
+  </p>
+<% end %>
+
+<p>
+  This receipt confirms when the submission was received. It does not confirm
+  an assessment outcome.
+</p>
+
+<p>
+  You can manage your notification preferences in
+  <a href="<%= @unsubscribe_url %>">your profile</a>.
+</p>

@@ -44,6 +44,9 @@
     h1 {
       font-size: 1.1em;
     }
+    .overdue {
+      background: red;
+    }
   </style>
 </head>
 <body>
@@ -133,7 +136,7 @@
           <td><%= '%5i'   % data[:total_comments].uniq.count %></td>
           <td><%= '%5i'   % data[:sent_comments].uniq.count %></td>
           <td><%= '%8i'   % data[:tasks_awaiting_feedback_count] %></td>
-          <td <%=' style="background: red"' unless data[:oldest_task_days] < 7%>><%= '%6i'   % data[:oldest_task_days] %> days</td>
+          <td class="<%= 'overdue' unless data[:oldest_task_days] < 7 %>"><%= '%6i'   % data[:oldest_task_days] %> days</td>
           <td><%= '%5i'   % data[:total_tasks_discussed] %></td>
           <td><%= '%5i'   % data[:weekly_tasks_discussed] %></td>
         </tr>
