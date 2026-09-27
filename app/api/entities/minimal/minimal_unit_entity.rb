@@ -20,6 +20,11 @@ module Entities
       end
 
       expose :active
+      expose :allow_flexible_dates
+      expose :ordered_task_definitions,
+             as: :task_definitions,
+             using: Entities::TaskDefinitionEntity,
+             if: :include_task_definitions
       expose :grade_values
       expose :grade_definitions
     end
