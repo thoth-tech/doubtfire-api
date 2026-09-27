@@ -60,13 +60,24 @@ module Doubtfire
     # Minimum time to wait before notifying a student about an unread failed overseer assessment
     config.overseer_student_notification_grace_period = ENV.fetch('OVERSEER_STUDENT_NOTIFICATION_GRACE_PERIOD_MINUTES', 30).to_i.minutes
 
+    # Parse a positive, bounded integer from the environment. Raises at boot on a
+    # value that is not an integer, is below 1, or is above the given maximum, so
+    # a misconfiguration is caught immediately rather than at first use.
+    def self.fetch_positive_integer_env(name, default:, max:)
+      value = Integer(ENV.fetch(name, default), exception: false)
+      unless value && value >= 1 && value <= max
+        raise "#{name} must be an integer between 1 and #{max}, got #{ENV[name].inspect}"
+      end
+      value
+    end
+
     # Limit number of pdf generators to run at once
-    config.pdfgen_max_processes = ENV['DF_MAX_PDF_GEN_PROCESSES'] || 2
+    config.pdfgen_max_processes = fetch_positive_integer_env('DF_MAX_PDF_GEN_PROCESSES', default: 2, max: 100)
 
     # Date range for auditors to view
     config.auditor_unit_access_years = ENV.fetch('DF_AUDITOR_UNIT_ACCESS_YEARS', 2).to_f * 1.year
 
-    config.student_import_weeks_before = ENV.fetch('DF_IMPORT_STUDENTS_WEEKS_BEFPRE', 1).to_f * 1.week
+    config.student_import_weeks_before = ENV.fetch('DF_IMPORT_STUDENTS_WEEKS_BEFORE') { ENV.fetch('DF_IMPORT_STUDENTS_WEEKS_BEFPRE', 1) }.to_f * 1.week
 
     def self.fetch_boolean_env(name)
       %w'true 1'.include?(ENV.fetch(name, 'false').downcase)
@@ -140,6 +151,7 @@ module Doubtfire
     config.institution = YAML.load_file(Rails.root.join('config/institution.yml').to_s).with_indifferent_access
     config.institution[:name] = ENV['DF_INSTITUTION_NAME'] if ENV['DF_INSTITUTION_NAME']
     config.institution[:email_domain] = ENV['DF_INSTITUTION_EMAIL_DOMAIN'] if ENV['DF_INSTITUTION_EMAIL_DOMAIN']
+    config.institution[:email_sender] = ENV['DF_INSTITUTION_EMAIL_SENDER'] if ENV['DF_INSTITUTION_EMAIL_SENDER']
     config.institution[:host] = ENV['DF_INSTITUTION_HOST'] if ENV['DF_INSTITUTION_HOST']
     config.institution[:cookie_domain] = ENV.fetch('DF_COOKIE_DOMAIN', URI.parse(Doubtfire::Application.config.institution[:host]).host)
     config.institution[:product_name] = ENV['DF_INSTITUTION_PRODUCT_NAME'] if ENV['DF_INSTITUTION_PRODUCT_NAME']
@@ -247,17 +259,24 @@ module Doubtfire
       raise "Required keys are not set, check the following environment variables: \n  " \
             "key                          => variable set?\n  " \
             "DF_SECRET_KEY_BASE           => #{!credentials.secret_key_base.nil?}\n  " \
-            "DF_SECRET_KEY_ATTR           => #{!credentials.secret_key_base.nil?}\n  " \
-            "DF_SECRET_KEY_DEVISE         => #{!credentials.secret_key_base.nil?}"
+            "DF_SECRET_KEY_ATTR           => #{!credentials.secret_key_attr.nil?}\n  " \
+            "DF_SECRET_KEY_DEVISE         => #{!credentials.secret_key_devise.nil?}"
     end
 
     # Localization
     config.i18n.enforce_available_locales = true
     # Ensure that auth tokens do not appear in log files
     config.filter_parameters += %i(
+      authToken
       auth_token
+      ltiToken
+      lti_token
+      ltik
       password
       password_confirmation
+      refresh_token
+      SAMLResponse
+      token
     )
     # Grape Serialization
 
@@ -287,7 +306,8 @@ module Doubtfire
     config.middleware.insert_before Warden::Manager, Rack::Cors do
       allow do
         origins '*'
-        resource '*', headers: :any, methods: %i(get post put delete options)
+        resource '*', headers: :any, methods: %i(get post put delete options),
+                      expose: %w(X-Total-Count X-Page X-Per-Page X-Total-Pages)
       end
     end
 
@@ -307,6 +327,10 @@ module Doubtfire
     end
 
     config.sm_instance = nil
+
+    # Runtime rollout gate for the first-time tutorial; use 1 to enable.
+    config.tutorial_enabled = ENV['TUTORIAL_ENABLED'].present? && ENV['TUTORIAL_ENABLED'].to_s.downcase != "false" && ENV['TUTORIAL_ENABLED'].to_i != 0
+
     config.overseer_enabled = ENV['OVERSEER_ENABLED'].present? && ENV['OVERSEER_ENABLED'].to_s.downcase != "false" && ENV['OVERSEER_ENABLED'].to_i != 0
 
     config.docker_config = {

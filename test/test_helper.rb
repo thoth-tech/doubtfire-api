@@ -1,5 +1,7 @@
-require 'simplecov'
-SimpleCov.start 'rails'
+if ENV['COVERAGE'] == 'true'
+  require 'simplecov'
+  SimpleCov.start 'rails'
+end
 
 # Setup RAILS_ENV as test and expand config for test environment
 ENV["RAILS_ENV"] ||= "test"
@@ -25,6 +27,11 @@ rescue ActiveRecord::NoDatabaseError
   exit
 end
 
+# The suite relies on seed data (roles, units) created by `rake test:setup`;
+# a migrated-but-empty database lets every test fail with a confusing error
+# instead of explaining what's missing, so check for that up front.
+abort('Test database has no seed data. Run `rake test:setup` to populate it.') if Role.count.zero? || Unit.count.zero?
+
 # Setup sidekiq
 require 'sidekiq/testing'
 Sidekiq::Testing.fake!
@@ -32,13 +39,13 @@ Sidekiq::Testing.fake!
 # Require minitest extensions
 require 'minitest/pride'
 require 'minitest/around'
+require 'minitest/mock'
 
 require 'webmock/minitest'
 
 # Require all test helpers
 require_all 'test/helpers'
 require 'rails/test_help'
-require 'database_cleaner/active_record'
 
 class ActiveSupport::TestCase
   ActiveRecord::Migration.check_all_pending!
@@ -60,11 +67,7 @@ class ActiveSupport::TestCase
   # -- they do not yet inherit this setting
   fixtures :all
 
-  # Support rollback of db changes after all tests
-  DatabaseCleaner.strategy = :transaction
-
   setup do
-    DatabaseCleaner.start
     WebMock.reset!
     Sidekiq::Testing.fake!
 
@@ -74,7 +77,7 @@ class ActiveSupport::TestCase
     TestHelpers::TiiTestHelper.setup_tii_eula
     TestHelpers::TiiTestHelper.setup_tii_features_enabled
 
-    @last_unit_id = Unit.last.id
+    @last_unit_id = Unit.maximum(:id).to_i
   end
 
   teardown do
@@ -84,7 +87,6 @@ class ActiveSupport::TestCase
     # Destroy any units there were created so that files are cleaned up
     Unit.where("id > :last_unit_id", last_unit_id: @last_unit_id).destroy_all
 
-    DatabaseCleaner.clean
     Faker::UniqueGenerator.clear
     ActionMailer::Base.deliveries.clear
   end

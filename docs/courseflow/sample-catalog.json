@@ -1,0 +1,12 @@
+{
+  "code": "DEMO-CF",
+  "name": "Demonstration course — fictional planning rules",
+  "version": "QA-2026",
+  "elective_count": 1,
+  "units": [
+    {"code": "DEMO101", "name": "Demo foundations", "required": true, "prerequisites": [], "offered_trimesters": [1, 2, 3]},
+    {"code": "DEMO102", "name": "Demo follow-on study", "required": true, "prerequisites": ["DEMO101"], "offered_trimesters": [2, 3]},
+    {"code": "DEMO201", "name": "Demo elective A", "required": false, "prerequisites": [], "offered_trimesters": [1, 2, 3]},
+    {"code": "DEMO202", "name": "Demo elective B", "required": false, "prerequisites": [], "offered_trimesters": [3]}
+  ]
+}
