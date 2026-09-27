@@ -7,6 +7,7 @@ module Entities
       expose :last_name
       expose :username
       expose :nickname
+      expose :display_name
     end
   end
 end
