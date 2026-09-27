@@ -1,0 +1,10 @@
+Hello <%= @user.nickname.presence || @user.first_name %>,
+
+CONFIRM THIS ADDRESS
+Someone asked <%= @product_name %> to send a copy of your notifications to this address. Confirm it is yours to switch that on.
+
+<%= @verification_url %>
+
+The link expires after 24 hours. No notification copies are sent to this address until verification succeeds.
+
+If you did not request this, you can ignore this message.

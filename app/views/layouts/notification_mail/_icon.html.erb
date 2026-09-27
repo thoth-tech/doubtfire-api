@@ -1,0 +1,13 @@
+<%# A coloured round cell carrying a single text glyph.
+    No <img>, so nothing here waits on a client that blocks remote images by
+    default, and no SVG or icon font, which Outlook and Gmail either drop or
+    turn into tofu. Outlook ignores border-radius and draws a square, which
+    still reads as a deliberate badge.
+    The glyph is decorative. The heading beside it always carries the meaning,
+    so the message reads in full with images off and with the glyph missing. %>
+<% icon = notification_mail_style(category) %>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;">
+  <tr>
+    <td align="center" valign="middle" width="44" height="44" bgcolor="<%= icon[:accent] %>" aria-hidden="true" style="width:44px; height:44px; background-color:<%= icon[:accent] %>; border-radius:22px; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, system-ui; font-size:<%= icon[:size] %>; line-height:44px; mso-line-height-rule:exactly; letter-spacing:1px; font-weight:700; color:#ffffff; text-align:center;"><%= icon[:glyph].html_safe %></td>
+  </tr>
+</table>

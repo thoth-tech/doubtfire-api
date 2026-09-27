@@ -1,0 +1,21 @@
+<% content_for :icon do %>extension<% end %>
+<% content_for :preheader do %><%= @notification.message.to_s.truncate(90) %><% end %>
+<% content_for :heading do %>Extension request<% end %>
+
+<p style="margin:0 0 16px 0;">Hi <%= @user.first_name %>,</p>
+<p style="margin:0 0 16px 0;">A student asked for an extension that needs someone to assess it.</p>
+<%= render 'layouts/notification_mail/details', body: @notification.message %>
+
+<p style="margin:0 0 16px 0;">
+  Open the task in <%= @doubtfire_product_name %> to read the request and
+  grant or reject it. The reason the student gave is not included in this email.
+</p>
+<% if @notification_url.present? %>
+  <%= render 'layouts/notification_mail/button', url: @notification_url, label: 'Open the task' %>
+<% end %>
+<% content_for :footer do %>
+  <p style="margin:0;">
+    You can manage your notification preferences in
+    <a href="<%= @unsubscribe_url %>" style="color:#6b7280; text-decoration:underline;">your profile</a>.
+  </p>
+<% end %>

@@ -1,113 +1,35 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <style type="text/css">
-    .main {
-      font-family: "Lucida Grande", "Helvetica Neue", Helvetica, Arial, sans-serif;
-      color: #333;
-      font-size: 14px;
-      width: 100%;
-      max-width: 800px;
-      margin: 100px auto 0px auto;
+<% content_for :icon do %>comment<% end %>
+<% content_for :preheader do %>A new tutor note from <%= @from.name %> in <%= @unit.name %>.<% end %>
+<% content_for :heading do %>New tutor note<% end %>
+<% content_for :subheading do %><%= @unit.name %><% end %>
 
-      background-image: url('<%= @doubtfire_host %>/assets/images/logo.png');
-      background-size: 3.5em;
-      background-repeat: no-repeat;
-      background-position: top 40px right 45px;
-      padding: 30px 40px;
-      border: solid 1px rgb(240, 240, 240);
-      line-height: 200%;
-      text-align: justify;
-    }
-    footer, .footer {
-      font-family: "Lucida Grande", "Helvetica Neue", Helvetica, Arial, sans-serif;
-      text-align: center;
-      margin-top: 10px;
-      color: #aaa;
-      font-size: 0.7em;
-    }
-    a, a:visited {
-      color: #6a97d2;
-      text-decoration: none;
-    }
-    a:hover {
-      text-decoration: underline;
-    }
-    ul {
-      list-style: none;
-    }
-    h1 {
-      font-size: 1.1em;
-    }
-    .note-box {
-      background: #f7f7f7;
-      border-left: 4px solid #1717ff;
+<p style="margin:0 0 20px 0;">Hi <%= @recipient.first_name %>,</p>
 
-      padding: 15px 20px;
-      margin: 20px 0;
-    }
-    .note-box p {
-      font-style: italic;
-    }
-    .task-box {
-      background: #fafafa;
-      border: 1px solid #eee;
-      padding: 15px 20px;
-      margin: 20px 0;
-    }
-  </style>
-</head>
-<body>
-  <div class="main">
-    <h1><%= @doubtfire_product_name %> Notification</h1>
+<%= render 'layouts/notification_mail/details', body: simple_format(@note.note, style: 'margin:0 0 8px 0;'), category: 'comment', label: "From #{@from.name}" %>
 
-    <p>Hi <%= @recipient.first_name %>,</p>
+<% if @task.present? %>
+  <%= render 'layouts/notification_mail/facts', rows: [
+        ['Task', "#{@task.task_definition.abbreviation} - #{@task.task_definition.name}"],
+        ['Student', @task.project.user.name]
+      ] %>
+  <%= render 'layouts/notification_mail/button', url: "#{@doubtfire_host}/units/#{@task.project.unit_id}/tasks/definition/#{@task.project.user.id}/#{ERB::Util.url_encode(@task.task_definition.abbreviation)}", label: 'View the task' %>
+<% else %>
+  <%= render 'layouts/notification_mail/button', url: @doubtfire_host, label: "Open #{@doubtfire_product_name}" %>
+<% end %>
 
-    <p>
-      You have received a new tutor note from <%= @from.name %> in <%= @unit.name %>.
-    </p>
+<% if @recipient == @unit.unit_role_for(@from)&.mentor&.user %>
+  <%= render 'layouts/notification_mail/note', body: "You are receiving this because you are #{@from.name}'s mentor." %>
+<% else %>
+  <%= render 'layouts/notification_mail/note', body: "You are receiving this because #{@from.name} is your mentor." %>
+<% end %>
 
-    <% if @recipient == @unit.unit_role_for(@from)&.mentor&.user %>
-      <p>You are receiving this message because you are their mentor.</p>
-    <% else %>
-      <p>You are receiving this message because <%= @from.name %> is your mentor.</p>
-    <% end %>
+<p style="margin:24px 0 0 0;">
+  Cheers,<br/>
+  The <%= @doubtfire_product_name %> Team on behalf of <%= @from.name %>
+</p>
 
-  <div class="note-box">
-    <strong>From <%= @from.name %></strong><br>
-    <%= simple_format(@note.note) %>
-  </div>
-
-    <% if @task.present? %>
-      <div class="task-box">
-        <strong>This note relates to feedback for a task.</strong><br/><br/>
-
-        <strong>Task:</strong>
-        <%= @task.task_definition.abbreviation %> <%= @task.task_definition.name %><br/>
-
-        <strong>Student:</strong>
-        <%= @task.project.user.name %><br/><br/>
-
-        <a href="<%= @doubtfire_host %>/projects/<%= @task.project.id %>/dashboard/<%= @task.task_definition.abbreviation %>?tutor=true">
-          View this task
-        </a>
-      </div>
-    <% end %>
-
-    <p>
-      You can view and respond to this note in
-      <a href="<%= @doubtfire_host %>"><%= @doubtfire_product_name %></a>.
-    </p>
-
-    <p>
-      Cheers,<br/>
-      The <%= @doubtfire_product_name %> Team on behalf of <%= @from.name %>
-    </p>
-
-  </div>
-
-  <footer class="footer">
-    <a href="<%= @unsubscribe_url %>">Unsubscribe</a> | Generated with <%= @doubtfire_product_name %>
-  </footer>
-</body>
-</html>
+<% content_for :footer do %>
+  <p style="margin:0;">
+    <a href="<%= @unsubscribe_url %>" style="color:#6b7280; text-decoration:underline;">Unsubscribe</a> | Generated with <%= @doubtfire_product_name %>
+  </p>
+<% end %>

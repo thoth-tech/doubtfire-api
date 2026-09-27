@@ -1,0 +1,16 @@
+<%# Short labelled rows instead of a paragraph. Takes an array of [label, value]
+    pairs and drops any pair with no value, so a caller can list everything it
+    might have and let the partial decide what appears.
+    Two cells in a table row, not a definition list, because Outlook lays out
+    with the Word engine and a table is the only thing it measures reliably. %>
+<% pairs = rows.reject { |_label, value| value.blank? } %>
+<% if pairs.any? %>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px 0; border-collapse:collapse;">
+    <% pairs.each_with_index do |(label, value), index| %>
+      <tr>
+        <td valign="top" width="120" style="width:120px; padding:<%= index.zero? ? '0' : '10px' %> 16px 10px 0; border-bottom:1px solid #e5e7eb; font-size:13px; line-height:1.4; font-weight:600; letter-spacing:0.4px; text-transform:uppercase; color:#6b7280;"><%= label %></td>
+        <td valign="top" style="padding:<%= index.zero? ? '0' : '10px' %> 0 10px 0; border-bottom:1px solid #e5e7eb; font-size:15px; line-height:1.5; color:#1f2937;"><%= value %></td>
+      </tr>
+    <% end %>
+  </table>
+<% end %>

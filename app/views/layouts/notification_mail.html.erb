@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <%# One palette, always light. A dark variant only reaches the few clients that
+      honour a style block at all: Gmail and Outlook.com drop or rewrite it, and
+      several force their own inversion on top, which turned dark text on a dark
+      card. Declaring light only is also what stops Apple Mail auto-darkening a
+      template it would otherwise treat as dark-aware. %>
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <title><%= message.subject %></title>
+  <style type="text/css">
+    :root { color-scheme: light only; supported-color-schemes: light; }
+    @media only screen and (max-width: 620px) {
+      .ot-pad { padding-left: 20px !important; padding-right: 20px !important; }
+      /* At phone width a fixed label column and a fixed value column leave the
+         bar a few pixels to draw in, and the bar only ever repeats the number
+         printed beside it. Drop the bars and let the numbers carry the chart. */
+      .ot-bar { display: none !important; }
+      .ot-bar-label { width: auto !important; }
+      /* Four characters do not need ninety six pixels when the screen is three
+         hundred and twenty wide. */
+      .ot-code { width: 72px !important; }
+    }
+  </style>
+  <!--[if mso]>
+  <style type="text/css">
+    body, table, td, p, a, span, h1, h2 { font-family: 'Segoe UI', Arial, sans-serif !important; }
+  </style>
+  <![endif]-->
+</head>
+<%
+  product_name = @doubtfire_product_name.presence || @product_name.presence || 'OnTrack'
+  # A template names its category once and the badge, the rule above the card
+  # and anything else tinted all read the same entry. A template that names
+  # nothing still renders, in the neutral brand colour.
+  icon_category = content_for?(:icon) ? yield(:icon).to_s.strip : ''
+  accent = notification_mail_accent(icon_category)
+%>
+<body class="ot-bg" style="margin:0; padding:0; width:100%; background-color:#f3f4f6; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%;">
+  <% if content_for?(:preheader) %>
+    <div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#f3f4f6; opacity:0;">
+      <%= yield :preheader %>&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;
+    </div>
+  <% end %>
+  <table role="presentation" class="ot-bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f3f4f6;">
+    <tr>
+      <td align="center" style="padding:32px 12px;">
+        <%# Word ignores max-width, so on a maximised Outlook window the card
+            fills the screen and every percentage width inside it stretches with
+            it. The ghost table is a real fixed-width table that only Word sees,
+            which pins the column back to 600. %>
+        <!--[if mso | IE]><table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" align="center"><tr><td width="600"><![endif]-->
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px; width:100%;">
+          <tr>
+            <td class="ot-pad" style="padding:0 8px 16px 8px; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, system-ui;">
+              <span class="ot-wordmark" style="font-size:22px; font-weight:700; letter-spacing:-0.3px; color:#3939ff;"><%= product_name %></span>
+            </td>
+          </tr>
+          <%# A 4px rule in the category colour. It is a table cell with a bgcolor
+              attribute, so it survives Outlook, which drops a background image
+              and would leave nothing behind. %>
+          <tr>
+            <td height="4" bgcolor="<%= accent %>" style="height:4px; line-height:4px; font-size:4px; background-color:<%= accent %>; border-radius:8px 8px 0 0;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td class="ot-card ot-text ot-pad" style="background-color:#ffffff; border:1px solid #e5e7eb; border-top:none; border-radius:0 0 8px 8px; padding:28px 40px 32px 40px; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, system-ui; font-size:16px; line-height:1.5; color:#1f2937; text-align:left;">
+              <% if content_for?(:heading) %>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+                  <tr>
+                    <% if icon_category.present? %>
+                      <td valign="middle" width="44" style="width:44px; padding:0 16px 0 0;"><%= render 'layouts/notification_mail/icon', category: icon_category %></td>
+                    <% end %>
+                    <td valign="middle" style="font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, system-ui;">
+                      <h1 style="margin:0; font-size:22px; line-height:1.3; font-weight:700; color:#111827;" class="ot-text"><%= yield :heading %></h1>
+                      <% if content_for?(:subheading) %>
+                        <p class="ot-muted" style="margin:4px 0 0 0; font-size:14px; line-height:1.4; color:#6b7280;"><%= yield :subheading %></p>
+                      <% end %>
+                    </td>
+                  </tr>
+                </table>
+              <% end %>
+              <%= yield %>
+            </td>
+          </tr>
+          <tr>
+            <td class="ot-muted ot-pad" align="center" style="padding:20px 24px 0 24px; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, system-ui; font-size:13px; line-height:1.5; color:#6b7280;">
+              <% if content_for?(:footer) %>
+                <%= yield :footer %>
+              <% end %>
+              <%# Was #9ca3af, which measures 2.54 against white. #6b7280 is the
+                  same muted grey the rest of the footer already uses, at 4.83. %>
+              <p style="margin:8px 0 0 0; color:#6b7280;">Sent by <%= product_name %></p>
+            </td>
+          </tr>
+        </table>
+        <!--[if mso | IE]></td></tr></table><![endif]-->
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

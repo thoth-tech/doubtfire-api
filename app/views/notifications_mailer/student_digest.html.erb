@@ -1,0 +1,185 @@
+<%
+  section_heading = 'margin:0 0 12px 0; font-size:14px; line-height:1.4; font-weight:600; letter-spacing:0.4px; text-transform:uppercase;'
+  unit_heading = 'margin:28px 0 12px 0; font-size:17px; line-height:1.35; font-weight:700; color:#111827;'
+
+  # The absolute date is always printed next to the relative one. A phrase on its
+  # own is only true on the day it was rendered.
+  target_phrase = lambda do |date|
+    next nil if date.blank?
+
+    days = (date.to_date - Time.zone.today).to_i
+    when_text =
+      if days.negative?
+        "#{days.abs} day#{'s' unless days.abs == 1} past"
+      elsif days.zero?
+        'today'
+      elsif days == 1
+        'tomorrow'
+      else
+        "in #{days} days"
+      end
+    "#{date.to_date.strftime('%a %-d %b')}, #{when_text}"
+  end
+
+  lead_category =
+    if @show_trend
+      @completed_in_window.positive? ? 'submission' : 'summary'
+    elsif @overdue_total.positive?
+      'overdue'
+    elsif @next_up.present?
+      'due'
+    else
+      'submission'
+    end
+%>
+<% content_for :icon do %><%= lead_category %><% end %>
+<% content_for :heading do %>Your <%= @cadence %> digest<% end %>
+<% content_for :subheading do %><%= @units.count %> unit<%= "s" unless @units.count == 1 %><% if @show_deadlines && @overdue_total.positive? %> &middot; <%= @overdue_total %> behind target<% end %><% end %>
+<% content_for :preheader do %><%= @show_trend ? "#{@completed_in_window} task#{'s' unless @completed_in_window == 1} finished #{@window[:since]}." : (@overdue_total.positive? ? "#{@overdue_total} task#{'s' unless @overdue_total == 1} behind target." : 'Here is what is next across your units.') %><% end %>
+
+<p style="margin:0 0 20px 0;">Hi <%= @student.first_name %>,</p>
+
+<% if @show_trend %>
+  <%# A monthly email must not lead on a deadline. It leads on the trend, and on
+      whether that trend gets the student to the end of the unit. %>
+  <% trend = capture do %>
+    <p style="margin:0 0 6px 0;"><strong style="font-size:20px;"><%= @completed_in_window %></strong>
+      task<%= "s" unless @completed_in_window == 1 %> finished <%= @window[:since] %>, across <%= @units.count %> unit<%= "s" unless @units.count == 1 %>.</p>
+    <% if @remaining_total.positive? %>
+      <p style="margin:0;">
+        <strong><%= @remaining_total %></strong> still to go.
+        <% if @projected_shortfall.present? && @projected_shortfall.positive? %>
+          At that rate you finish about <strong><%= @projected_shortfall %></strong> short before your earliest unit ends.
+        <% elsif @projected_finish.present? %>
+          At that rate you finish with room to spare.
+        <% end %>
+      </p>
+    <% else %>
+      <p style="margin:0;">Nothing is left outstanding across your units.</p>
+    <% end %>
+  <% end %>
+  <%= render 'layouts/notification_mail/details', body: trend, category: lead_category, label: "Your month" %>
+<% elsif @overdue_total.positive? %>
+  <% oldest = @next_up.first %>
+  <% lead = capture do %>
+    <p style="margin:0 0 6px 0;"><strong style="font-size:20px;"><%= @overdue_total %></strong>
+      task<%= "s" unless @overdue_total == 1 %> across your units <%= @overdue_total == 1 ? 'is' : 'are' %> past <%= @overdue_total == 1 ? 'its' : 'their' %> target date.</p>
+    <% if oldest.present? %>
+      <p style="margin:0;">Start with <strong><%= oldest[:unit].code %> <%= oldest[:task_definition].abbreviation %></strong>, targeted <%= target_phrase.call(oldest[:target_date]) %>.</p>
+    <% end %>
+  <% end %>
+  <%= render 'layouts/notification_mail/details', body: lead, category: 'overdue', label: 'Start here' %>
+<% elsif @next_up.present? %>
+  <% upcoming = @next_up.first %>
+  <% lead = capture do %>
+    <p style="margin:0 0 6px 0;"><strong style="font-size:18px;"><%= upcoming[:unit].code %> <%= upcoming[:task_definition].abbreviation %> <%= upcoming[:task_definition].name %></strong></p>
+    <p style="margin:0;">is next, targeted <%= target_phrase.call(upcoming[:target_date]) %>. Nothing has slipped.</p>
+  <% end %>
+  <%= render 'layouts/notification_mail/details', body: lead, category: 'due', label: 'Next up' %>
+<% else %>
+  <%= render 'layouts/notification_mail/details', body: 'Nothing is past its target date and nothing is targeted soon in any of your units.', category: 'submission', label: 'All clear' %>
+<% end %>
+
+<% if @needs_response_total.positive? && @show_standing %>
+  <% returned = capture do %>
+    <strong style="font-size:20px;"><%= @needs_response_total %></strong>
+    task<%= "s" unless @needs_response_total == 1 %> <%= @needs_response_total == 1 ? 'has' : 'have' %> come back from a tutor and <%= @needs_response_total == 1 ? 'is' : 'are' %> waiting on you to resubmit, redo or talk through.
+  <% end %>
+  <%= render 'layouts/notification_mail/details', body: returned, category: 'status:fix-and-resubmit', label: 'Feedback waiting for you' %>
+<% end %>
+
+<% if @show_deadlines && @next_up.present? %>
+  <%# The one list that makes combining the units worth doing: every deadline in
+      date order, whichever unit it belongs to. %>
+  <h2 style="<%= section_heading %> color:#6b7280;">What to do next</h2>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px 0; border-collapse:collapse;">
+    <% @next_up.each_with_index do |entry, index| %>
+      <% definition = entry[:task_definition] %>
+      <% status_category = notification_mail_status_category(entry[:status]) %>
+      <% overdue_row = entry[:reason] == :overdue %>
+      <tr>
+        <td class="ot-code" valign="top" width="96" style="width:96px; padding:<%= index.zero? ? '10px' : '12px' %> 14px 12px 0; border-bottom:1px solid #e5e7eb;">
+          <%= render 'layouts/notification_mail/code_chip', code: definition.abbreviation %>
+        </td>
+        <td valign="top" style="padding:<%= index.zero? ? '0' : '2px' %> 0 2px 0; border-bottom:1px solid #e5e7eb; font-size:15px; line-height:1.5;">
+          <a href="<%= @doubtfire_host %>/projects/<%= entry[:project].id %>/dashboard/<%= ERB::Util.url_encode(definition.abbreviation) %>" class="ot-link" style="display:inline-block; min-height:24px; padding:10px 0; color:#3939ff; text-decoration:underline;"><%= definition.name %></a>
+          <br />
+          <span class="ot-muted" style="font-size:13px; color:#6b7280;">
+            <strong style="color:#374151;"><%= entry[:unit].code %></strong>
+            &middot; Target <span style="<%= "color:#{notification_mail_text_accent(notification_mail_accent('status:time-exceeded'))}; font-weight:600;" if overdue_row %>"><%= target_phrase.call(entry[:target_date]) %></span><% if status_category.present? %>
+            &middot; <span style="color:<%= notification_mail_text_accent(notification_mail_accent(status_category)) %>; font-weight:600;"><%= entry[:status].to_s.tr('_', ' ').capitalize %></span><% end %>
+          </span>
+        </td>
+      </tr>
+    <% end %>
+  </table>
+<% end %>
+
+<%= render 'layouts/notification_mail/button', url: "#{@doubtfire_host}/home", label: "Open #{@doubtfire_product_name}" %>
+
+<% if @show_standing %>
+  <h2 style="<%= section_heading %> color:#6b7280;">Across your units</h2>
+  <%= render 'layouts/notification_mail/bar_chart', scale: @grade_task_total, rows: [
+        ['Complete', @tasks_complete_total, notification_mail_accent('status:complete')],
+        ['With a tutor to mark', @waiting_on_tutor_total, notification_mail_accent('status:ready-for-feedback')],
+        ['Handed back to you', @needs_response_total, notification_mail_accent('status:fix-and-resubmit')],
+        ['Past target date, open', @overdue_total, notification_mail_accent('status:time-exceeded')]
+      ] %>
+
+  <%# One block per unit. Each names its own tutor with a mailto, because a
+      digest spanning several units cannot put any one of them in Reply-To. %>
+  <% @units.each do |summary| %>
+    <h2 style="<%= unit_heading %>"><%= summary[:unit].code %> <%= summary[:unit].name %></h2>
+
+    <% if @show_deadlines && (summary[:overdue].present? || summary[:soon].present?) %>
+      <p style="margin:0 0 12px 0; font-size:14px; line-height:1.5; color:#4b5563;">
+        <% if summary[:behind_target].positive? %>
+          <strong style="color:<%= notification_mail_text_accent(notification_mail_accent('status:time-exceeded')) %>;"><%= summary[:behind_target] %></strong> past target date and open.
+        <% end %>
+        <% if summary[:soon].present? %>
+          <strong><%= summary[:soon].count %></strong> targeted in the next week.
+        <% end %>
+      </p>
+    <% end %>
+
+    <%= render 'layouts/notification_mail/progress', value: summary[:tasks_complete], total: summary[:grade_task_total], accent: notification_mail_accent('status:complete') %>
+    <p style="margin:0 0 12px 0; font-size:15px; line-height:1.5;">
+      <strong><%= summary[:tasks_complete] %> of <%= summary[:grade_task_total] %></strong> tasks complete for your
+      <strong><%= summary[:project].target_grade_desc %></strong> target.
+      <% if @show_trend %>
+        <strong><%= summary[:completed_in_window] %></strong> finished <%= @window[:since] %>.
+      <% end %>
+    </p>
+
+    <% if @show_trend && summary[:status_summary].present? %>
+      <%= render 'layouts/notification_mail/bar_chart', scale: summary[:grade_task_total], rows: summary[:status_summary].map { |status_key, label, count|
+            [label.to_s.capitalize, count, notification_mail_accent(notification_mail_status_category(status_key) || '')]
+          } %>
+    <% end %>
+
+    <p style="margin:0 0 4px 0; font-size:14px; line-height:1.5; color:#6b7280;">
+      <a href="<%= @doubtfire_host %>/projects/<%= summary[:project].id %>/dashboard" class="ot-link" style="color:#3939ff; text-decoration:underline;">Open <%= summary[:unit].code %></a>
+      <% if summary[:tutor].present? && summary[:tutor].email.present? %>
+        &middot; Your tutor is
+        <a href="mailto:<%= summary[:tutor].email %>" class="ot-link" style="color:#3939ff; text-decoration:underline;"><%= summary[:tutor].name %></a>
+      <% end %>
+    </p>
+  <% end %>
+<% end %>
+
+<% if @show_standing && @comments_in_window.zero? %>
+  <%= render 'layouts/notification_mail/note', body: "You posted no comments #{@window[:since]}. Asking a tutor a question is the fastest way to get unstuck." %>
+<% end %>
+
+<p style="margin:24px 0 0 0;">
+  Cheers, <br />
+  The <%= @doubtfire_product_name %> Team
+</p>
+
+<% content_for :footer do %>
+  <p style="margin:0;">
+    You are getting this <%= @cadence %> because that is your digest setting.
+    You can change it or turn it off in
+    <a href="<%= @unsubscribe_url %>" style="color:#6b7280; text-decoration:underline;">your profile</a>.
+  </p>
+<% end %>

@@ -187,10 +187,20 @@ class TaskDefinitionTest < ActiveSupport::TestCase
     group_set.save!
 
     path = Rails.root.join('test_files', 'unit_csv_imports', 'import_group_tasks.csv')
-    u.import_tasks_from_csv File.new(path)
+    assert_difference(
+      -> { NewTaskAvailableNotificationJob.jobs.size },
+      1
+    ) do
+      u.import_tasks_from_csv File.new(path)
+    end
 
     assert_equal 1, group_set.task_definitions.count
     assert_equal initial_count + 1, u.task_definitions.count
+    assert_not_nil group_set.task_definitions.first.new_task_notifications_from
+
+    assert_no_difference -> { NewTaskAvailableNotificationJob.jobs.size } do
+      u.import_tasks_from_csv File.new(path)
+    end
   end
 
   def test_export_task_definitions_csv

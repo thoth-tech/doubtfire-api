@@ -1,0 +1,12 @@
+Hi <%= @user.first_name %>,
+
+<%= @notification.message %>
+
+The portfolio itself is not attached to this email.
+<% if @notification_url.present? -%>
+
+Open the portfolio: <%= @notification_url %>
+<% end -%>
+
+You can manage your notification preferences here:
+<%= @unsubscribe_url %>

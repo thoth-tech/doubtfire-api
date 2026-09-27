@@ -1,0 +1,11 @@
+<%# The padding lives on the td, not on the anchor. Word drops padding from an
+    inline-block anchor, which left the label touching the edges of the fill in
+    Outlook; on the cell it is honoured. The anchor still fills the cell, so the
+    whole coloured area stays clickable everywhere else. %>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 20px 0;">
+  <tr>
+    <td align="center" bgcolor="#3939ff" style="border-radius:6px; background-color:#3939ff; padding:13px 26px; mso-padding-alt:13px 26px;">
+      <a href="<%= url %>" target="_blank" style="display:block; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, system-ui; font-size:16px; line-height:1.25; font-weight:600; color:#ffffff; text-decoration:none;"><%= label %></a>
+    </td>
+  </tr>
+</table>

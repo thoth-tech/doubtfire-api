@@ -1,0 +1,13 @@
+Hi <%= @user.name %>,
+
+NEW TASK
+<%= @notification.message %>
+<% if @notification.link.present? -%>
+
+Open the task: <%= @doubtfire_host %><%= @notification.link %>
+<% end -%>
+
+Open the task to review its details and when it is due.
+
+You are receiving this because your task notifications are turned on.
+You can turn these emails off at <%= @unsubscribe_url %>.

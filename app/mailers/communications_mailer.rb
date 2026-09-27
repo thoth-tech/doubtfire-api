@@ -1,4 +1,6 @@
 class CommunicationsMailer < ApplicationMailer
+  layout "notification_mail"
+
   def communication_email(to:, from:, subject:, body:, recipient:, sender:, unit:, rule:)
     @recipient = recipient
     @sender = sender
@@ -11,7 +13,11 @@ class CommunicationsMailer < ApplicationMailer
     @doubtfire_product_name = Doubtfire::Application.config.institution[:product_name]
     @unsubscribe_url = "#{@doubtfire_host}/edit_profile"
 
-    mail(to: to, from: from, subject: subject)
+    mail(
+      { to: to, subject: subject }.merge(
+        outbound_sender_headers(development_from: from, reply_to: from)
+      )
+    )
   end
 
   def action_log_email(payload)
@@ -32,6 +38,10 @@ class CommunicationsMailer < ApplicationMailer
       content: payload[:csv_content]
     }
 
-    mail(to: payload[:to], from: payload[:from], subject: payload[:subject])
+    mail(
+      { to: payload[:to], subject: payload[:subject] }.merge(
+        outbound_sender_headers(development_from: payload[:from], reply_to: payload[:from])
+      )
+    )
   end
 end

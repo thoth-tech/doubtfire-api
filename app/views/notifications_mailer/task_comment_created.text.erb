@@ -1,0 +1,12 @@
+Hi <%= @user.name %>,
+
+NEW COMMENT
+<%= @notification.message %>
+
+The comment is not included in this email. Open the task in <%= @doubtfire_product_name %> to read it and reply.
+<% if @notification_url.present? -%>
+
+Open the task: <%= @notification_url %>
+<% end -%>
+
+You can turn these emails off at <%= @unsubscribe_url %>.

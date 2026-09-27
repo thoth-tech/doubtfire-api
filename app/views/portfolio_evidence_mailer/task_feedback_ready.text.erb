@@ -1,10 +1,16 @@
 Hi <%= @student.first_name %>,
 
-I have checked your tasks and provided some feedback. Login and check the status<%= @has_comments ? ' and comments' : ''%> of the following tasks:
+WHAT TO DO
+I have checked your tasks and left feedback. Open each one to see its new status<%= @has_comments ? ' and read the comments' : ''%>.
 
+TASKS CHECKED
 <% @tasks.each do |task| %>
   * <%= task.task_definition.abbreviation %> - <%=task.task_definition.name%> <%= task.is_last_comment_by?(@tutor) ? ' - with comments' : ''%>
+    <%= @doubtfire_host %>/projects/<%= @project.id %>/dashboard/<%= ERB::Util.url_encode(task.task_definition.abbreviation) %>
 <% end %>
+
+Open your tasks in <%= @doubtfire_product_name %>:
+<%= @doubtfire_host %>/projects/<%= @project.id %>/dashboard
 
 Cheers,
 The <%= @doubtfire_product_name %> Team on behalf of <%= @tutor.name %>

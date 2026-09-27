@@ -1,4 +1,8 @@
 # config/schedule.yml
+#
+# Sidekiq-cron owns the in-process scheduled jobs listed below.
+# The container's rake schedule lives in .ci-setup/crontab.
+# Edit this file for a Ruby job, .ci-setup/crontab for a rake task.
 
 register_webhooks:
   cron: "every day at 5"
@@ -16,14 +20,111 @@ refresh_moderation_feedback_timestamps:
   cron: "every 60 minutes"
   class: "RefreshModerationFeedbackTimestampsJob"
 
+aggregate_peer_progress:
+  cron: "every day at 11:45pm"
+  class: "AggregatePeerProgressJob"
+
 aggregate_task_completion_stats:
   cron: "every day at 11:55pm"
   class: "AggregateTaskCompletionStatsJob"
+
+# Nightly plagiarism scan. This is the run that used to live only in the
+# container crontab, moved here so it is visible next to the other recurring
+# jobs. The same scan can now be triggered on demand from the unit, which is
+# why it belongs in Sidekiq rather than cron.
+check_unit_similarity:
+  cron: "every day at 5"
+  class: "CheckUnitSimilarityJob"
 
 poll_communication_set_schedules:
   cron: "every 5 minutes"
   class: "PollCommunicationSetSchedulesJob"
 
+# Recheck effective task start dates once a day. Directly created, copied and
+# imported tasks are queued immediately; this sweep handles students whose
+# flexible or future-dated start arrives later, with a bounded catch-up window
+# for short worker outages and late enrolment.
+send_new_task_available_notifications:
+  cron: "every day at 8:10am"
+  class: "SendNewTaskAvailableNotificationsJob"
+
+# Once a day, in the morning.
+#
+# A deadline moves once a day, so nothing is gained by sweeping for one every
+# half hour, and every notification this job raises sends an email. Pinning it
+# to a time also pins when the emails arrive: on a shorter interval a student
+# gets theirs at whatever hour the task happened to cross into the window,
+# which is 3am about as often as any other hour.
+#
+# Missing a run costs nothing. The job only asks whether a task is due within
+# the next three days, so the following morning still catches everything the
+# skipped run would have.
+#
+# 8am is 8am wherever the Sidekiq process thinks it is. There is no timezone in
+# this file and no config.time_zone in the app, so the hour comes from TZ in the
+# process environment. development/api.env sets TZ=Australia/Melbourne, which is
+# what makes this a morning; a deployment that leaves TZ unset gets the image
+# default of UTC and sends these in the evening. The entry above it, at 11:55pm,
+# depends on the same thing.
+send_due_soon_reminders:
+  cron: "every day at 8am"
+  class: "SendDueSoonRemindersJob"
+
 # archive_old_units:
 #   cron: "every 6 months"
 #   class: "ArchiveOldUnitsJob"
+
+# Default off: the worker returns immediately until an administrator configures
+# the approved student-visible channels and Graph application credentials.
+sync_teams_announcements:
+  cron: "every 5 minutes"
+  class: "SyncTeamsAnnouncementsJob"
+
+# Unit Hub session reminders for people who opted in. Every five minutes because
+# the reminder is 30 minutes before a start time, so a daily sweep cannot land
+# it. Each occurrence is reminded once per person however many runs see it.
+send_unit_session_reminders:
+  cron: "every 5 minutes"
+  class: "SendUnitSessionRemindersJob"
+
+# The student digest, once per cadence a student can choose.
+#
+# These three replace `0 7 * * 1 send_weekly_emails.sh` in .ci-setup/crontab,
+# which is deleted. That line ran the older per-unit mail, which is still there
+# and still works but is no longer on any schedule, because a student on both
+# would get the digest and a mail per unit in the same morning.
+#
+# Scheduled here and not in that crontab because the crontab is only installed
+# inside the pdfgen container, so a deployment without LaTeX has never sent a
+# summary at all. CheckUnitSimilarityJob above moved for the same reason.
+#
+# All three at 7am, which is the hour the weekly one has always used, so a
+# student who switches cadence sees the mail arrive at the same time of day. It
+# is early enough to be waiting when they start and late enough not to buzz a
+# phone overnight, which is the whole reason this is pinned to an hour instead
+# of running on an interval. Five minutes apart so that on a Monday the 1st the
+# three do not all land on the mailers queue at once, and so a log line says
+# which one ran.
+#
+# The hour is 7am wherever the Sidekiq process thinks it is, the same as
+# send_due_soon_reminders above. There is no timezone in this file and no
+# config.time_zone in the app, so TZ in the process environment decides.
+# development/api.env sets TZ=Australia/Melbourne; a deployment that leaves TZ
+# unset gets the image default of UTC and mails these in the evening.
+#
+# The 1st for the monthly run because it is the one day of the month every month
+# has, and a summary that arrives on the 1st covers the month that just ended.
+send_daily_digest_emails:
+  cron: "every day at 7am"
+  class: "SendDigestEmailsJob"
+  args: ["daily"]
+
+send_weekly_digest_emails:
+  cron: "every monday at 7:05am"
+  class: "SendDigestEmailsJob"
+  args: ["weekly"]
+
+send_monthly_digest_emails:
+  cron: "every month on the 1st at 7:10am"
+  class: "SendDigestEmailsJob"
+  args: ["monthly"]

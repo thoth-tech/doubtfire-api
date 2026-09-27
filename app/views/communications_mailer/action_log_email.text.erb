@@ -1,14 +1,13 @@
 Hi <%= @recipient&.nickname.presence || @recipient&.first_name || @recipient&.name %>,
 
+RESULT
+<%= @affected_students_count %> student<%= "s" unless @affected_students_count == 1 %> matched this rule and were affected by the configured actions.
+
 <% @body_paragraphs.each do |paragraph| %>
 <%= paragraph %>
 
 <% end %>
----
-
-<%= @affected_students_count %> students matched this rule and were affected by the configured actions.
-
-A full log of actions has been attached as a CSV.
+A full log of actions is attached as a CSV.
 
 Cheers,
 The <%= @doubtfire_product_name %> Team

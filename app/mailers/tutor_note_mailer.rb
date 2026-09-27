@@ -1,4 +1,6 @@
 class TutorNoteMailer < ApplicationMailer
+  layout "notification_mail"
+
   def add_general
     @doubtfire_host = Doubtfire::Application.config.institution[:host]
     @doubtfire_product_name = Doubtfire::Application.config.institution[:product_name]
@@ -18,10 +20,14 @@ class TutorNoteMailer < ApplicationMailer
 
     @task = tutor_note.task
 
-    recipient_email_with_name = %("#{recipient.name}" <#{recipient.email}>)
-    tutor_email = %("#{@from.name}" <#{@from.email}>)
+    recipient_email_with_name = address_with_name(recipient)
+    tutor_email = address_with_name(@from)
     subject = "#{@unit.name}: New tutor note from #{@from.name}"
-    mail(to: recipient_email_with_name, from: tutor_email, subject: subject)
+    mail(
+      { to: recipient_email_with_name, subject: subject }.merge(
+        outbound_sender_headers(development_from: tutor_email, reply_to: tutor_email)
+      )
+    )
   end
 
 end

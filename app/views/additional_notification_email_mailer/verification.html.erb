@@ -1,0 +1,17 @@
+<% content_for :icon do %>verification<% end %>
+<% content_for :preheader do %>Verify the additional email address requested in <%= @product_name %>.<% end %>
+<% content_for :heading do %>Verify your additional email<% end %>
+
+<p style="margin:0 0 20px 0;">Hello <%= @user.nickname.presence || @user.first_name %>,</p>
+
+<%= render 'layouts/notification_mail/details', body: "Someone asked #{@product_name} to send a copy of your notifications to this address. Confirm it is yours to switch that on.", category: 'verification', label: 'Confirm this address' %>
+
+<%= render 'layouts/notification_mail/button', url: @verification_url, label: 'Verify this email address' %>
+
+<%= render 'layouts/notification_mail/note', body: 'The link expires after 24 hours. No notification copies are sent to this address until verification succeeds.' %>
+
+<% content_for :footer do %>
+  <p style="margin:0;">
+    If you did not request this, you can ignore this message.
+  </p>
+<% end %>

@@ -1,11 +1,16 @@
 Hi <%= @student.first_name %>,
 
-Something went wrong with the processing of the following tasks. Please check what you have submitted and try uploading them again. Watch out for character encodings, and file formats.
+WHAT TO DO
+Check what you submitted and upload it again. Character encodings and file formats are the usual cause.
 
-The tasks with issues are:
+TASKS WITH ISSUES
 <% @tasks.each do |task| %>
   * <%= task.task_definition.abbreviation %> - <%=task.task_definition.name%>
+    <%= @doubtfire_host %>/projects/<%= @project.id %>/dashboard/<%= ERB::Util.url_encode(task.task_definition.abbreviation) %>
 <% end %>
+
+Open your tasks in <%= @doubtfire_product_name %>:
+<%= @doubtfire_host %>/projects/<%= @project.id %>/dashboard
 
 Cheers,
 The <%= @doubtfire_product_name %> Team on behalf of <%= @tutor.name %>

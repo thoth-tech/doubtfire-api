@@ -1,0 +1,32 @@
+<%# A horizontal bar chart made of nested tables. Each bar is a table cell with a
+    percentage width and a bgcolor, which is the only way to draw a filled shape
+    that Outlook, Gmail and Apple Mail all render: a background image is ignored,
+    an SVG is dropped and an <img> is blocked before it loads.
+    rows: [label, value, accent] triples. scale: what a full bar is worth, so
+    several charts in one message can share an axis.
+    The value is printed as "10 of 16" rather than "10", so the bar is decoration
+    and never the only place the proportion exists. That covers a screen reader,
+    a phone where the bars are hidden, and Word where they may not draw. %>
+<% bars = rows.reject { |_label, value, _accent| value.to_i.negative? } %>
+<% top = [scale.to_i, 1].max %>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px 0; border-collapse:collapse; border:1px solid #e5e7eb; border-radius:6px;">
+  <% bars.each_with_index do |(label, value, accent), index| %>
+    <% pct = [(value.to_i * 100.0 / top).round, 100].min %>
+    <tr>
+      <td class="ot-bar-label" valign="middle" width="150" style="width:150px; padding:<%= index.zero? ? '12px' : '10px' %> 12px 10px 16px; <%= 'border-top:1px solid #f3f4f6;' unless index.zero? %> font-size:13px; line-height:1.4; color:#4b5563;"><%= label %></td>
+      <td class="ot-bar" valign="middle" style="padding:<%= index.zero? ? '12px' : '10px' %> 10px 10px 0; <%= 'border-top:1px solid #f3f4f6;' unless index.zero? %>">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+          <tr>
+            <% if pct.positive? %>
+              <td width="<%= pct %>%" height="14" bgcolor="<%= accent %>" style="width:<%= pct %>%; height:14px; line-height:14px; mso-line-height-rule:exactly; font-size:1px; background-color:<%= accent %>; border-radius:3px;">&nbsp;</td>
+            <% end %>
+            <% if pct < 100 %>
+              <td width="<%= 100 - pct %>%" height="14" style="width:<%= 100 - pct %>%; height:14px; line-height:14px; mso-line-height-rule:exactly; font-size:1px;">&nbsp;</td>
+            <% end %>
+          </tr>
+        </table>
+      </td>
+      <td valign="middle" align="right" width="78" style="width:78px; padding:<%= index.zero? ? '12px' : '10px' %> 16px 10px 0; <%= 'border-top:1px solid #f3f4f6;' unless index.zero? %> font-size:15px; line-height:1.4; white-space:nowrap; color:#4b5563;"><strong style="color:<%= accent %>;"><%= value %></strong> of <%= top %></td>
+    </tr>
+  <% end %>
+</table>

@@ -1,0 +1,18 @@
+<% content_for :icon do %>portfolio<% end %>
+<% content_for :preheader do %><%= @notification.message.to_s.truncate(90) %><% end %>
+<% content_for :heading do %>Portfolio submitted<% end %>
+
+<p style="margin:0 0 16px 0;">Hi <%= @user.first_name %>,</p>
+<p style="margin:0 0 16px 0;">A student you teach has submitted their portfolio.</p>
+<%= render 'layouts/notification_mail/details', body: @notification.message %>
+
+<p style="margin:0 0 16px 0;">The portfolio itself is not attached to this email.</p>
+<% if @notification_url.present? %>
+  <%= render 'layouts/notification_mail/button', url: @notification_url, label: 'Open the portfolio' %>
+<% end %>
+<% content_for :footer do %>
+  <p style="margin:0;">
+    You can manage your notification preferences in
+    <a href="<%= @unsubscribe_url %>" style="color:#6b7280; text-decoration:underline;">your profile</a>.
+  </p>
+<% end %>

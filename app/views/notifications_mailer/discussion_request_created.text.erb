@@ -1,0 +1,13 @@
+Hi <%= @user.name %>,
+
+DISCUSSION PROMPT
+<%= @notification.message %>
+<% if @notification.link.present? -%>
+
+Open the task: <%= @doubtfire_host %><%= @notification.link %>
+<% end -%>
+
+The prompt is not included in this email. Open the task to listen and respond.
+
+You are receiving this because your feedback notifications are turned on.
+You can turn these emails off at <%= @unsubscribe_url %>.

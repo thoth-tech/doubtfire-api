@@ -1,0 +1,23 @@
+<%# A scannable list of tasks. Four messages used to render the same bulleted
+    list with the abbreviation bolded inline, which made the task code and the
+    task name run together. Here the code sits in its own column so a recipient
+    can find the one they care about without reading the names.
+    note_for is optional. Pass a proc to put a short trailing note on a row. %>
+<% note_for = local_assigns[:note_for] %>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px 0; border-collapse:collapse;">
+  <% tasks.each_with_index do |task, index| %>
+    <% task_url = "#{host}/projects/#{project.id}/dashboard/#{ERB::Util.url_encode(task.task_definition.abbreviation)}" %>
+    <% note = note_for.nil? ? nil : note_for.call(task) %>
+    <tr>
+      <td class="ot-code" valign="top" width="96" style="width:96px; padding:<%= index.zero? ? '10px' : '12px' %> 14px 12px 0; border-bottom:1px solid #e5e7eb;">
+        <%= render 'layouts/notification_mail/code_chip', code: task.task_definition.abbreviation %>
+            </td>
+      <td valign="top" style="padding:<%= index.zero? ? '0' : '2px' %> 0 2px 0; border-bottom:1px solid #e5e7eb; font-size:15px; line-height:1.5;">
+        <a href="<%= task_url %>" class="ot-link" style="display:inline-block; min-height:24px; padding:10px 0; color:#3939ff; text-decoration:underline;"><%= task.task_definition.name %></a>
+        <% if note.present? %>
+          <span class="ot-muted" style="color:#6b7280;"><%= note %></span>
+        <% end %>
+      </td>
+    </tr>
+  <% end %>
+</table>

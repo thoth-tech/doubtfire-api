@@ -1,69 +1,23 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <style type="text/css">
-    .main {
-      font-family: "Lucida Grande", "Helvetica Neue", Helvetica, Arial, sans-serif;
-      color: #333;
-      font-size: 14px;
-      width: 100%;
-      max-width: 800px;
-      margin: 100px auto 0px auto;
-      background-image: url('<%= @doubtfire_host %>/assets/images/logo.png');
-      background-size: 3.5em;
-      background-repeat: no-repeat;
-      background-position: top 40px right 45px;
-      padding: 30px 40px;
-      border: solid 1px rgb(240, 240, 240);
-      line-height: 200%;
-      text-align: justify;
-    }
-    footer, .footer {
-      font-family: "Lucida Grande", "Helvetica Neue", Helvetica, Arial, sans-serif;
-      text-align: center;
-      margin-top: 10px;
-      color: #aaa;
-      font-size: 0.7em;
-    }
-    a, a:visited {
-      color: #6a97d2;
-      text-decoration: none;
-    }
-    a:hover {
-      text-decoration: underline;
-    }
-    ul {
-      list-style: none;
-    }
-    h1 {
-      font-size: 1.1em;
-    }
-  </style>
-</head>
-<body>
-  <div class="main">
-    <h1><%= @doubtfire_product_name %> Notification</h1>
+<% content_for :icon do %>summary<% end %>
+<% content_for :preheader do %><%= @affected_students_count %> students matched this rule.<% end %>
+<% content_for :heading do %>Communication rule ran<% end %>
+<% if @unit&.name.present? %><% content_for :subheading do %><%= @unit.name %><% end %><% end %>
 
-    <p>Hi <%= @recipient&.nickname.presence || @recipient&.first_name || @recipient&.name %>,</p>
+<p style="margin:0 0 20px 0;">Hi <%= @recipient&.nickname.presence || @recipient&.first_name || @recipient&.name %>,</p>
 
-    <% @body_paragraphs.each do |paragraph| %>
-      <p><%= paragraph %></p>
-    <% end %>
+<% affected_summary = capture do %>
+  <strong style="font-size:20px;"><%= @affected_students_count %></strong>
+  student<%= "s" unless @affected_students_count == 1 %> matched this rule and were affected by the configured actions.
+<% end %>
+<%= render 'layouts/notification_mail/details', body: affected_summary, category: 'summary', label: 'Result' %>
 
-    <hr style="border: 0; border-top: 1px solid rgb(226, 232, 240); margin: 24px 0;" />
+<% @body_paragraphs.each do |paragraph| %>
+  <p style="margin:0 0 16px 0;"><%= paragraph %></p>
+<% end %>
 
-    <p>
-      <strong><%= @affected_students_count %></strong>
-      students matched this rule and were affected by the configured actions.
-    </p>
+<%= render 'layouts/notification_mail/note', body: 'A full log of actions is attached as a CSV.' %>
 
-    <p>A full log of actions has been attached as a CSV.</p>
-
-    <p>
-      Cheers,<br />
-      The <%= @doubtfire_product_name %> Team
-    </p>
-
-  </div>
-</body>
-</html>
+<p style="margin:24px 0 0 0;">
+  Cheers,<br />
+  The <%= @doubtfire_product_name %> Team
+</p>

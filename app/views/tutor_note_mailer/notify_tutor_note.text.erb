@@ -1,30 +1,28 @@
 Hi <%= @recipient.first_name %>,
 
-You have received a new tutor note from <%= @from.name %> in <%= @unit.name %>.
+New tutor note in <%= @unit.name %>.
 
-<% if @recipient == @unit.unit_role_for(@from)&.mentor&.user %>
-You are receiving this message because you are their mentor.
-<% else %>
-You are receiving this message because <%= @from.name %> is your mentor.
-<% end %>
-
-Note:
-
+FROM <%= @from.name.upcase %>
 <%= @note.note %>
+<% if @task.present? -%>
 
-<% if @task.present? %>
+TASK: <%= @task.task_definition.abbreviation %> - <%= @task.task_definition.name %>
+STUDENT: <%= @task.project.user.name %>
 
-This note relates to feedback for a task.
+View the task:
+<%= @doubtfire_host%>/units/<%=@task.project.unit_id%>/tasks/definition/<%=@task.project.user.id%>/<%= ERB::Util.url_encode(@task.task_definition.abbreviation) %>
+<% else -%>
 
-Task: <%= @task.task_definition.abbreviation %> <%= @task.task_definition.name %>
-Student: <%= @task.project.user.name %>
+View and respond to this note in <%= @doubtfire_product_name %>:
+<%= @doubtfire_host %>
+<% end -%>
+<% if @recipient == @unit.unit_role_for(@from)&.mentor&.user -%>
 
-You can view this task here:
-<%= @doubtfire_host%>/projects/<%=@task.project.id%>/dashboard/<%=@task.task_definition.abbreviation%>?tutor=true
+You are receiving this because you are <%= @from.name %>'s mentor.
+<% else -%>
 
-<% end %>
-
-You can view and respond to this note in <%= @doubtfire_product_name %>.
+You are receiving this because <%= @from.name %> is your mentor.
+<% end -%>
 
 Cheers,
 The <%= @doubtfire_product_name %> Team on behalf of <%= @from.name %>

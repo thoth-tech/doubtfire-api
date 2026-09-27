@@ -1,0 +1,104 @@
+<%
+  target_phrase = lambda do |date|
+    next nil if date.blank?
+
+    days = (date.to_date - Time.zone.today).to_i
+    when_text =
+      if days.negative?
+        "#{days.abs} day#{'s' unless days.abs == 1} past"
+      elsif days.zero?
+        'today'
+      elsif days == 1
+        'tomorrow'
+      else
+        "in #{days} days"
+      end
+    "#{date.to_date.strftime('%a %-d %b')}, #{when_text}"
+  end
+  bar = ->(value, scale) { ('#' * [(value.to_i * 24.0 / [scale.to_i, 1].max).round, 0].max).ljust(24, '.') }
+-%>
+Hi <%= @student.first_name %>,
+
+YOUR <%= @cadence.upcase %> DIGEST
+<%= @units.count %> unit<%= "s" unless @units.count == 1 %>
+<% if @show_trend -%>
+
+YOUR MONTH
+<%= @completed_in_window %> task<%= "s" unless @completed_in_window == 1 %> finished <%= @window[:since] %>, across <%= @units.count %> unit<%= "s" unless @units.count == 1 %>.
+<% if @remaining_total.positive? -%>
+<%= @remaining_total %> still to go.<% if @projected_shortfall.present? && @projected_shortfall.positive? %> At that rate you finish about <%= @projected_shortfall %> short before your earliest unit ends.<% elsif @projected_finish.present? %> At that rate you finish with room to spare.<% end %>
+<% else -%>
+Nothing is left outstanding across your units.
+<% end -%>
+<% elsif @overdue_total.positive? -%>
+
+START HERE
+<%= @overdue_total %> task<%= "s" unless @overdue_total == 1 %> across your units <%= @overdue_total == 1 ? 'is' : 'are' %> past <%= @overdue_total == 1 ? 'its' : 'their' %> target date.
+<% if @next_up.present? -%>
+Start with <%= @next_up.first[:unit].code %> <%= @next_up.first[:task_definition].abbreviation %>, targeted <%= target_phrase.call(@next_up.first[:target_date]) %>.
+<% end -%>
+<% elsif @next_up.present? -%>
+
+NEXT UP
+<%= @next_up.first[:unit].code %> <%= @next_up.first[:task_definition].abbreviation %> <%= @next_up.first[:task_definition].name %> is next, targeted <%= target_phrase.call(@next_up.first[:target_date]) %>. Nothing has slipped.
+<% else -%>
+
+ALL CLEAR
+Nothing is past its target date and nothing is targeted soon in any of your units.
+<% end -%>
+<% if @needs_response_total.positive? && @show_standing -%>
+
+FEEDBACK WAITING FOR YOU
+<%= @needs_response_total %> task<%= "s" unless @needs_response_total == 1 %> <%= @needs_response_total == 1 ? 'has' : 'have' %> come back from a tutor and <%= @needs_response_total == 1 ? 'is' : 'are' %> waiting on you to resubmit, redo or talk through.
+<% end -%>
+<% if @show_deadlines && @next_up.present? -%>
+
+WHAT TO DO NEXT
+<% @next_up.each do |entry| -%>
+* <%= entry[:unit].code %> <%= entry[:task_definition].abbreviation %> - <%= entry[:task_definition].name %>
+  Target <%= target_phrase.call(entry[:target_date]) %> - <%= entry[:status].to_s.tr('_', ' ').capitalize %>
+  <%= @doubtfire_host %>/projects/<%= entry[:project].id %>/dashboard/<%= ERB::Util.url_encode(entry[:task_definition].abbreviation) %>
+<% end -%>
+<% end -%>
+
+Open <%= @doubtfire_product_name %>:
+<%= @doubtfire_host %>/home
+<% if @show_standing -%>
+
+ACROSS YOUR UNITS
+Complete                <%= bar.call(@tasks_complete_total, @grade_task_total) %> <%= @tasks_complete_total %> of <%= @grade_task_total %>
+With a tutor to mark    <%= bar.call(@waiting_on_tutor_total, @grade_task_total) %> <%= @waiting_on_tutor_total %> of <%= @grade_task_total %>
+Handed back to you      <%= bar.call(@needs_response_total, @grade_task_total) %> <%= @needs_response_total %> of <%= @grade_task_total %>
+Past target date, open  <%= bar.call(@overdue_total, @grade_task_total) %> <%= @overdue_total %> of <%= @grade_task_total %>
+<% @units.each do |summary| -%>
+
+<%= summary[:unit].code %> <%= summary[:unit].name %>
+<% if @show_deadlines && summary[:behind_target].positive? -%>
+<%= summary[:behind_target] %> past target date and open.<% if summary[:soon].present? %> <%= summary[:soon].count %> targeted in the next week.<% end %>
+<% elsif @show_deadlines && summary[:soon].present? -%>
+<%= summary[:soon].count %> targeted in the next week.
+<% end -%>
+<%= summary[:tasks_complete] %> of <%= summary[:grade_task_total] %> tasks complete for your <%= summary[:project].target_grade_desc %> target.<% if @show_trend %> <%= summary[:completed_in_window] %> finished <%= @window[:since] %>.<% end %>
+<% if @show_trend && summary[:status_summary].present? -%>
+<% summary[:status_summary].each do |_key, label, count| -%>
+  <%= label.to_s.capitalize.ljust(32) %> <%= bar.call(count, summary[:grade_task_total]) %> <%= count %> of <%= summary[:grade_task_total] %>
+<% end -%>
+<% end -%>
+Open <%= summary[:unit].code %>: <%= @doubtfire_host %>/projects/<%= summary[:project].id %>/dashboard
+<% if summary[:tutor].present? && summary[:tutor].email.present? -%>
+Your tutor is <%= summary[:tutor].name %> <<%= summary[:tutor].email %>>
+<% end -%>
+<% end -%>
+<% end -%>
+<% if @show_standing && @comments_in_window.zero? -%>
+
+You posted no comments <%= @window[:since] %>. Asking a tutor a question is the fastest way to get unstuck.
+<% end -%>
+
+Cheers,
+The <%= @doubtfire_product_name %> Team
+
+---
+
+You are getting this <%= @cadence %> because that is your digest setting.
+Change it or turn it off at <%= @unsubscribe_url %>.

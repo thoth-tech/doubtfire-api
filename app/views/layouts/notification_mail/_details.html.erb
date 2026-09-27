@@ -1,0 +1,18 @@
+<%# The one fact the message is about, in a tinted block with a rule down the
+    left. It is the first thing the eye lands on after the heading, so the
+    recipient can stop reading there and still have the point.
+    An optional category tints it to match the badge, and an optional label
+    names what the block is. Both default to the neutral brand styling, so the
+    existing calls that pass only a body keep rendering as they did. %>
+<% callout = notification_mail_style(local_assigns.fetch(:category, '')) %>
+<% callout_label = local_assigns[:label] %>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px 0;">
+  <tr>
+    <td class="ot-details" style="background-color:<%= callout[:tint] %>; border-left:4px solid <%= callout[:accent] %>; border-radius:4px; padding:14px 18px; font-size:16px; line-height:1.5; color:#1f2937;">
+      <% if callout_label.present? %>
+        <p style="margin:0 0 6px 0; font-size:12px; line-height:1.3; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:<%= notification_mail_text_accent(callout[:accent]) %>;"><%= callout_label %></p>
+      <% end %>
+      <%= body %>
+    </td>
+  </tr>
+</table>

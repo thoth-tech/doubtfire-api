@@ -1,0 +1,8 @@
+<%# The task code in a bordered pill. A one-cell table rather than a span with
+    display:inline-block, because Word drops padding from an inline-block and
+    left the code touching its own border in Outlook. %>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;">
+  <tr>
+    <td bgcolor="#f9fafb" style="padding:4px 9px; mso-padding-alt:4px 9px; border:1px solid #e5e7eb; border-radius:4px; background-color:#f9fafb; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, system-ui; font-size:13px; line-height:1.3; font-weight:700; color:#374151;"><%= code %></td>
+  </tr>
+</table>

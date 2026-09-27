@@ -1,0 +1,23 @@
+<%# The notifiable is the task itself, so this message can carry the colour of
+    the status it is announcing and match what the student sees on the task in
+    the app. It reads the task's current status, which is the announced one in
+    all but the rare case where the status moves again before the mail is sent.
+    Anything unrecognised falls back to the neutral feedback styling. %>
+<% status_category = @notification.notifiable.respond_to?(:status) ? notification_mail_status_category(@notification.notifiable.status) : nil %>
+<% status_category ||= 'feedback' %>
+<% content_for :icon do %><%= status_category %><% end %>
+<% content_for :preheader do %>The status of one of your tasks has changed.<% end %>
+<% content_for :heading do %>Task status changed<% end %>
+
+<p style="margin:0 0 20px 0;">Hi <%= @user.name %>,</p>
+<%= render 'layouts/notification_mail/details', body: @notification.message, category: status_category, label: 'What changed' %>
+<% if @notification.link.present? %>
+  <%= render 'layouts/notification_mail/button', url: "#{@doubtfire_host}#{@notification.link}", label: 'Open the task' %>
+<% end %>
+<%= render 'layouts/notification_mail/note', body: "The new status is not included in this email. Open the task in #{@doubtfire_product_name} to see it." %>
+<% content_for :footer do %>
+  <p style="margin:0;">
+    You are receiving this because your task notifications are turned on.
+    You can change that at <a href="<%= @unsubscribe_url %>" style="color:#6b7280; text-decoration:underline;">your profile</a>.
+  </p>
+<% end %>

@@ -200,7 +200,13 @@ class UnitModelTest < ActiveSupport::TestCase
     @unit.draft_task_definition = lsr
     @unit.save
 
-    unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil, nil
+    unit2 = nil
+    assert_difference(
+      -> { NewTaskAvailableNotificationJob.jobs.size },
+      @unit.task_definitions.count
+    ) do
+      unit2 = @unit.rollover TeachingPeriod.find(2), nil, nil, nil
+    end
 
     assert_not_nil unit2.draft_task_definition
     refute_equal lsr, unit2.draft_task_definition

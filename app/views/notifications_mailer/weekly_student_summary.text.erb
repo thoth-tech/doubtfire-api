@@ -1,61 +1,128 @@
+<%
+  overdue_count = @overdue_top.to_a.count
+  due_date_for = ->(definition) { @task_due_dates[definition.id] || definition.target_date }
+  due_phrase = lambda do |date|
+    next nil if date.blank?
+
+    days = (date.to_date - Time.zone.today).to_i
+    when_text =
+      if days.negative?
+        "#{days.abs} day#{'s' unless days.abs == 1} past"
+      elsif days.zero?
+        'today'
+      elsif days == 1
+        'tomorrow'
+      else
+        "in #{days} days"
+      end
+    "#{date.to_date.strftime('%a %-d %b')}, #{when_text}"
+  end
+  next_due = (@overdue_top.to_a + @soon_top.to_a + @ahead_top.to_a).first
+  bar = ->(value) { ('#' * [(value.to_i * 24.0 / [@grade_task_total.to_i, 1].max).round, 0].max).ljust(24, '.') }
+-%>
 Hi <%= @student.first_name %>,
 
 <%= @summary_stats[:unit].name %> - Weekly Summary
 <%= "#{@summary_stats[:week_start].day.ordinalize} #{@summary_stats[:week_start].strftime("%B %Y")}" %> to <%= "#{@summary_stats[:week_end].day.ordinalize} #{@summary_stats[:week_end].strftime("%B %Y")}" %>
+<% if @did_revert_to_pass -%>
 
-<% if @did_revert_to_pass %>
-Hope you had a good week!
+FALLING BEHIND ON PASS TASKS
+Your target grade has been reset to Pass while you catch up. Every Pass task has to be marked Complete to pass this unit, so work through them in order. Once you have caught up you can set your target grade back and return to the higher grade tasks you skipped.
+<% end -%>
+<% if @project.tutorial_enrolments.blank? -%>
 
-Before we get into the summary, it seems that you are falling behind in your Pass Tasks. It is really important that you catch up with these tasks, as you must have all Pass tasks marked as Complete to Pass the unit. I've reset your Target Grade to Pass for the moment, to help you focus on these tasks. I would like to encourage you to work through the Pass tasks in order to catch up as quickly as you can. Once you have caught up, you can upgrade your Target Grade again, and go back and complete any higher grade tasks you skipped.
+NO TUTOR SET
+You are not assigned a tutor. Set your tutorial so your work reaches someone:
+<%= @doubtfire_host %>/projects/<%= @project.id %>/tutorials
+<% end -%>
+<% if overdue_count.positive? -%>
 
-With that out of the way, here's a summary of what has happened in this unit over the last week and some notes on what you should do next.
-<% else %>
-Hope you had a good week! Here's a summary of what has happened in this unit over the last week and some notes on what you should do next.
-<% end %>
+START HERE
+<%= @overdue_top.first[:task_definition].abbreviation %> <%= @overdue_top.first[:task_definition].name %> is the one furthest past its target date, targeted <%= due_phrase.call(due_date_for.call(@overdue_top.first[:task_definition])) %>. Start there.
+<% elsif @behind_target.to_i.positive? -%>
 
-<% if @project.tutorial_enrolments.blank? %>
+BEHIND THE TARGET SCHEDULE
+<%= @behind_target %> task<%= "s" unless @behind_target == 1 %> <%= @behind_target == 1 ? 'is' : 'are' %> past <%= @behind_target == 1 ? 'its' : 'their' %> target date and not finished. None of them is on the list below, so open your dashboard to find them.
+<% elsif next_due.present? -%>
 
-Firstly... it looks like you are not assigned a tutor! Please login and make sure your tutorial is correctly set. You should be able to do that here: <%= @doubtfire_host %>/#/projects/<%= @project.id %>/tutorials
+NEXT TARGET DATE
+<%= next_due[:task_definition].abbreviation %> <%= next_due[:task_definition].name %> is next, targeted <%= due_phrase.call(due_date_for.call(next_due[:task_definition])) %>. Nothing has slipped.
+<% elsif @waiting_on_student.to_i.zero? && @project.portfolio_exists? -%>
 
-Here is what you should focus on right now.
-<% else %>
+ALL CAUGHT UP
+Every task is done and your portfolio is prepared. Nothing is outstanding.
+<% elsif @waiting_on_student.to_i.zero? -%>
 
-Firstly, here is what you should focus on right now.
-<% end %>
+ALMOST THERE
+Every task is done. Prepare your portfolio to finish up.
+<% else -%>
 
-<%  if @top_tasks && @top_tasks.count > 0 %>
-<%      if @overdue_top && @overdue_top.count > 0 %>
-Catch up by completing the following *overdue* task<%="s" if @overdue_top.count > 1%>!
-<%          @overdue_top.each do |ot| %>
-* <%= top_task_desc(ot) %>
-<%          end %>
-<%      end %>
-<%      if @soon_top && @soon_top.count > 0 %>
-Work to get the following task<%="s" if @soon_top.count > 1%> done, as these are *due* soon!
-<%          @soon_top.each do |st| %>
-* <%= top_task_desc(st) %>
-<%          end %>
-<%      end %>
-<%      if @ahead_top && @ahead_top.count > 0 %>
-Get ahead by working on the following task<%="s" if @ahead_top.count > 1%> next!
-<%          @ahead_top.each do |at| %>
-* <%= top_task_desc(at) %>
-<%          end %>
-<%      end %>
-<%  elsif @project.portfolio_exists? %>
-Its time to Party! You have completed all of the tasks and prepared your portfolio.
-<%  else %>
-Its almost party time... You have completed all of the tasks, now make sure you login and prepare your portfolio.
-<%  end %>
+NOTHING TARGETED THIS WEEK
+Nothing has slipped past its target date and nothing is targeted this week. <%= @waiting_on_student %> task<%= "s" unless @waiting_on_student == 1 %> <%= @waiting_on_student == 1 ? 'is' : 'are' %> still with you, so this is a good week to get ahead.
+<% end -%>
+<% [['PAST TARGET DATE', @overdue_top], ['TARGET DATE THIS WEEK', @soon_top], ['GET AHEAD', @ahead_top]].each do |group_label, group_tasks| -%>
+<% next if group_tasks.blank? -%>
 
-What has happened in <%= @doubtfire_product_name %> this week:
+<%= group_label %>
+<% group_tasks.each do |tt| -%>
+* <%= tt[:task_definition].abbreviation %> - <%= tt[:task_definition].name %>
+  Target <%= due_phrase.call(due_date_for.call(tt[:task_definition])) %> - <%= tt[:status].to_s.tr('_', ' ').capitalize %>
+  <%= @doubtfire_host %>/projects/<%= @project.id %>/dashboard/<%= ERB::Util.url_encode(tt[:task_definition].abbreviation) %>
+<% end -%>
+<% end -%>
+<% if @top_tasks_truncated -%>
 
-* In total, there <%= were_was(@summary_stats[:unit_week_comments]) %> <%= @summary_stats[:unit_week_comments] %> comment<%= "s" if @summary_stats[:unit_week_comments] != 1 %> made in this unit.
-* You posted a total of <%= @sent_comments %> comment<%= "s" if @sent_comments != 1 %>, and received back <%= @received_comments %> comment<%= "s" if @received_comments != 1 %> <%= "- try posting some comments this week" if @sent_comments == 0 %>
-* Tasks changed state <%= @summary_stats[:unit_week_engagements] %> time<%= "s" unless @summary_stats[:unit_week_engagements] == 1 %> in this unit.
-* Your tasks changed state <%= @engagements_count %> time<%= "s" unless @engagements_count == 1 %> <%= "- looks like you need to be more active" if @student_engagements == 0%>
+These are the <%= NotificationsMailer::TOP_TASK_LIMIT %> most urgent. Your dashboard has the rest.
+<% end -%>
+<% if @needs_your_response.to_i.positive? -%>
 
-We hope your studies are going well, and look forward to your submissions over the next week!
+FEEDBACK WAITING FOR YOU
+<%= @needs_your_response %> task<%= "s" unless @needs_your_response == 1 %> <%= @needs_your_response == 1 ? 'has' : 'have' %> come back from your tutor and <%= @needs_your_response == 1 ? 'is' : 'are' %> waiting on you to resubmit, redo or talk it through.
+<% end -%>
+
+Open your unit in <%= @doubtfire_product_name %>:
+<%= @doubtfire_host %>/projects/<%= @project.id %>/dashboard
+<% if @grade_task_total.to_i.positive? -%>
+
+YOUR <%= @project.target_grade_desc.to_s.upcase %> TARGET
+<%= @tasks_complete %> of <%= @grade_task_total %> tasks complete.
+<% if @behind_target.to_i.positive? -%>
+<%= @behind_target %> of the <%= @targets_passed %> whose target date has passed <%= @behind_target == 1 ? 'is' : 'are' %> still open.
+<% elsif @targets_passed.to_i.positive? -%>
+All <%= @targets_passed %> whose target date has passed are done.
+<% end -%>
+
+PACE
+Target date passed  <%= bar.call(@targets_passed) %> <%= @targets_passed %> of <%= @grade_task_total %>
+Of those, finished  <%= bar.call(@on_target) %> <%= @on_target %> of <%= @grade_task_total %>
+<% end -%>
+<% if @status_summary.present? -%>
+
+EVERY TASK, BY STATUS
+<% @status_summary.each do |_status_key, label, count| -%>
+<%= label.to_s.capitalize.ljust(32) %> <%= bar.call(count) %> <%= count %> of <%= @grade_task_total %>
+<% end -%>
+<% end -%>
+
+WHOSE MOVE
+* <%= @waiting_on_tutor %> with your tutor, waiting to be marked
+* <%= @needs_your_response %> handed back for you to act on
+* <%= @waiting_on_student %> still with you in total
+<% if @sent_comments.zero? -%>
+* 0 comments posted this week - asking your tutor a question is the fastest way to get unstuck
+<% end -%>
+<% if @weeks_left.present? && @weeks_left.positive? -%>
+
+<%= @weeks_left %> week<%= "s" unless @weeks_left == 1 %> left in this unit.
+<% end -%>
+<% if @project.portfolio_exists? -%>
+
+Your portfolio is prepared.<%= " You can keep changing it for another #{@portfolio_days_left} day#{'s' unless @portfolio_days_left == 1}." if @portfolio_days_left.present? && @portfolio_days_left >= 0 %>
+<% elsif @portfolio_days_left.present? && @portfolio_days_left.between?(0, 42) -%>
+
+PORTFOLIO
+Your portfolio is not prepared yet and the deadline is <%= @portfolio_due.to_date.strftime('%a %-d %b') %>, <%= @portfolio_days_left.zero? ? 'today' : "in #{@portfolio_days_left} day#{'s' unless @portfolio_days_left == 1}" %>.
+<% end -%>
 
 Cheers,
 The <%= @doubtfire_product_name %> Team on behalf of <%= @tutor.name %>

@@ -1,0 +1,16 @@
+<%# A progress bar as two table cells with percentage widths and a bgcolor on
+    each. No background image and no border trick, so Outlook draws it too.
+    A bar at nought or full renders as a single cell, because a cell at zero
+    per cent is a cell some clients will still give a pixel or two to. %>
+<% filled = [[value.to_i, 0].max, total.to_i].min %>
+<% pct = total.to_i.positive? ? (filled * 100.0 / total.to_i).round : 0 %>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse; margin:0 0 10px 0;">
+  <tr>
+    <% if pct.positive? %>
+      <td height="10" width="<%= pct %>%" bgcolor="<%= accent %>" style="height:10px; line-height:10px; mso-line-height-rule:exactly; font-size:1px; background-color:<%= accent %>; border-radius:<%= pct == 100 ? '5px' : '5px 0 0 5px' %>;">&nbsp;</td>
+    <% end %>
+    <% if pct < 100 %>
+      <td height="10" width="<%= 100 - pct %>%" bgcolor="#e5e7eb" style="height:10px; line-height:10px; mso-line-height-rule:exactly; font-size:1px; background-color:#e5e7eb; border-radius:<%= pct.zero? ? '5px' : '0 5px 5px 0' %>;">&nbsp;</td>
+    <% end %>
+  </tr>
+</table>

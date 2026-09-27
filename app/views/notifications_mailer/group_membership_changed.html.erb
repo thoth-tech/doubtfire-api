@@ -1,0 +1,16 @@
+<% content_for :icon do %>group<% end %>
+<% content_for :preheader do %>Your group membership changed in <%= @doubtfire_product_name %>.<% end %>
+<% content_for :heading do %>Group membership changed<% end %>
+
+<p style="margin:0 0 20px 0;">Hi <%= @user.name %>,</p>
+<%= render 'layouts/notification_mail/details', body: @notification.message, category: 'group', label: 'What changed' %>
+<% if @notification.link.present? %>
+  <%= render 'layouts/notification_mail/button', url: "#{@doubtfire_host}#{@notification.link}", label: "Open your group in #{@doubtfire_product_name}" %>
+<% end %>
+<%= render 'layouts/notification_mail/note', body: "You can view your current group information in #{@doubtfire_product_name}." %>
+<% content_for :footer do %>
+  <p style="margin:0;">
+    This notification was sent because your group membership changed in
+    <%= @doubtfire_product_name %>.
+  </p>
+<% end %>

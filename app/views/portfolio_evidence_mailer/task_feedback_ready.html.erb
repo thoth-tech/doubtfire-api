@@ -1,70 +1,27 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <style type="text/css">
-    .main {
-      font-family: "Lucida Grande", "Helvetica Neue", Helvetica, Arial, sans-serif;
-      color: #333;
-      font-size: 14px;
-      width: 100%;
-      max-width: 800px;
-      margin: 100px auto 0px auto;
-      background-image: url('<%= @doubtfire_host %>/assets/images/logo.png');
-      background-size: 3.5em;
-      background-repeat: no-repeat;
-      background-position: top 40px right 45px;
-      padding: 30px 40px;
-      border: solid 1px rgb(240, 240, 240);
-      line-height: 200%;
-      text-align: justify;
-    }
-    footer, .footer {
-      font-family: "Lucida Grande", "Helvetica Neue", Helvetica, Arial, sans-serif;
-      text-align: center;
-      margin-top: 10px;
-      color: #aaa;
-      font-size: 0.7em;
-    }
-    a, a:visited {
-      color: #6a97d2;
-      text-decoration: none;
-    }
-    a:hover {
-      text-decoration: underline;
-    }
-    ul {
-      list-style: none;
-    }
-    h1 {
-      font-size: 1.1em;
-    }
-  </style>
-</head>
-<body>
-  <div class="main">
-    <h1> <%= @doubtfire_product_name %> Notification </h1>
-    <p>Hi <%= @student.first_name %>,</p>
-    <p>
-        I have checked your tasks and provided some feedback. Login and check the status <%= @hasComments ? 'and comments' : ''%> of the following tasks:
-        <ul>
-            <% @tasks.each do |task| %>
-            <li>
-                <strong><%= task.task_definition.abbreviation %> - </strong>
-                <a href="<%= @doubtfire_host %>/#/projects/<%=@project.id%>/dashboard/<%=task.task_definition.abbreviation%>">
-                    <%=task.task_definition.name%>
-                </a>
-                <%= task.is_last_comment_by?(@tutor) ? ' with comments' : ''%>
-            </li>
-            <% end %>
-        </ul>
-    </p>
-    <p>
-        Cheers, <br />
-        The <%= @doubtfire_product_name %> Team on behalf of <%= @tutor.name %>
-    </p>
-  </div>
-  <footer class="footer">
-    <a href="<%= @unsubscribe_url %>">Unsubscribe</a> | Generated with <%= @doubtfire_product_name %>
-  </footer>
-</body>
-</html>
+<% content_for :icon do %>feedback<% end %>
+<% content_for :preheader do %>Your tutor has checked your tasks and provided feedback.<% end %>
+<% content_for :heading do %>Feedback ready to review<% end %>
+<% content_for :subheading do %><%= @tasks.count %> task<%= "s" unless @tasks.count == 1 %> checked by <%= @tutor.name %><% end %>
+
+<p style="margin:0 0 20px 0;">Hi <%= @student.first_name %>,</p>
+<%= render 'layouts/notification_mail/details', body: "I have checked your tasks and left feedback. Open each one to see its new status#{@has_comments ? ' and read the comments' : ''}.", category: 'feedback', label: 'What to do' %>
+
+<p style="margin:0 0 12px 0; font-size:14px; font-weight:600; letter-spacing:0.4px; text-transform:uppercase; color:#6b7280;">Tasks checked</p>
+<%= render 'layouts/notification_mail/task_rows',
+      tasks: @tasks,
+      project: @project,
+      host: @doubtfire_host,
+      note_for: ->(task) { task.is_last_comment_by?(@tutor) ? '- with comments' : nil } %>
+
+<%= render 'layouts/notification_mail/button', url: "#{@doubtfire_host}/projects/#{@project.id}/dashboard", label: "Open your tasks in #{@doubtfire_product_name}" %>
+
+<p style="margin:24px 0 0 0;">
+  Cheers, <br />
+  The <%= @doubtfire_product_name %> Team on behalf of <%= @tutor.name %>
+</p>
+
+<% content_for :footer do %>
+  <p style="margin:0;">
+    <a href="<%= @unsubscribe_url %>" style="color:#6b7280; text-decoration:underline;">Unsubscribe</a> | Generated with <%= @doubtfire_product_name %>
+  </p>
+<% end %>

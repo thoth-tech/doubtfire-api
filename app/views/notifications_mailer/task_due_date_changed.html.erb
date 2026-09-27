@@ -1,0 +1,16 @@
+<% content_for :icon do %>change<% end %>
+<% content_for :preheader do %>A task due date has changed.<% end %>
+<% content_for :heading do %>Task due date changed<% end %>
+
+<p style="margin:0 0 20px 0;">Hi <%= @user.name %>,</p>
+<%= render 'layouts/notification_mail/details', body: @notification.message, category: 'change', label: 'What changed' %>
+<% if @notification.link.present? %>
+  <%= render 'layouts/notification_mail/button', url: "#{@doubtfire_host}#{@notification.link}", label: 'Open the task' %>
+<% end %>
+<%= render 'layouts/notification_mail/note', body: "The new due date is not included in this email. Open the task in #{@doubtfire_product_name} to see it." %>
+<% content_for :footer do %>
+  <p style="margin:0;">
+    You are receiving this because your task notifications are turned on.
+    You can change that at <a href="<%= @unsubscribe_url %>" style="color:#6b7280; text-decoration:underline;">your profile</a>.
+  </p>
+<% end %>
