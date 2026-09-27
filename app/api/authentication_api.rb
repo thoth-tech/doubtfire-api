@@ -13,6 +13,7 @@ class AuthenticationApi < Grape::API
   helpers AuthenticationHelpers
   helpers AuthorisationHelpers
   helpers LtiHelper
+  helpers FederatedIdentityHelper
 
   #
   # Sign in - only mounted if AAF and SAML auth is NOT used (database auth)
@@ -79,7 +80,7 @@ class AuthenticationApi < Grape::API
       token = user.generate_authentication_token!
 
       # Return user details
-      present :user, user, with: Entities::UserEntity
+      present :user, user, with: Entities::UserEntity, theme_owner_id: user.id
       present :auth_token, token.authentication_token
       present :auth_token_expiry, token.auth_token_expiry
       set_refresh_cookie_in_response(remember)
@@ -108,12 +109,11 @@ class AuthenticationApi < Grape::API
 
       logger.info "Authenticate #{user_id_data[:email]} from #{request.ip}"
 
-      # Lookup using login_id if it exists
-      # Lookup using email otherwise and set login_id
-      # Otherwise create new
-      user = User.find_by(login_id: user_id_data[:login_id]) ||
-             User.find_by(username: user_id_data[:username]) ||
-             User.find_by(email: user_id_data[:email]) ||
+      # Lookup on what the identity provider asserted, otherwise create new
+      user = user_for_asserted_identity(login_id: user_id_data[:login_id],
+                                        email: user_id_data[:email],
+                                        derived_username: user_id_data[:username],
+                                        source: request.ip) ||
              User.create do |new_user|
                # Update new user with details from the SAML response
                Doubtfire::Application.config.institution_settings.update_user_from_saml_response(
@@ -154,7 +154,11 @@ class AuthenticationApi < Grape::API
         protocol = Rails.env.development? ? 'http' : 'https'
         host = "#{protocol}://#{host}"
       end
-      redirect "#{host}/sign_in?authToken=#{onetime_token.authentication_token}&username=#{user.username}"
+      redirect AuthenticationHelpers.frontend_sign_in_url(
+        host: host,
+        auth_token: onetime_token.authentication_token,
+        username: user.username
+      )
     end
 
     # Saml 2 logout callback
@@ -215,12 +219,11 @@ class AuthenticationApi < Grape::API
 
       logger.info "Authenticate #{user_id_data[:email]} from #{request.ip}"
 
-      # Lookup using login_id if it exists
-      # Lookup using email otherwise and set login_id
-      # Otherwise create new
-      user = User.find_by(login_id: user_id_data[:login_id]) ||
-             User.find_by(username: user_id_data[:username]) ||
-             User.find_by(email: user_id_data[:email]) ||
+      # Lookup on what the identity provider asserted, otherwise create new
+      user = user_for_asserted_identity(login_id: user_id_data[:login_id],
+                                        email: user_id_data[:email],
+                                        derived_username: user_id_data[:username],
+                                        source: request.ip) ||
              User.create do |new_user|
                # Update new user with details from the LTI response
                Doubtfire::Application.config.institution_settings.update_user_from_lti_response(
@@ -294,12 +297,11 @@ class AuthenticationApi < Grape::API
 
       logger.info "Authenticate #{email} from #{request.ip}"
 
-      # Lookup using login_id if it exists
-      # Lookup using email otherwise and set login_id
-      # Otherwise create new
-      user = User.find_by(login_id: login_id) ||
-             User.find_by(username: email[/(.*)@/, 1]) ||
-             User.find_by(email: email) ||
+      # Lookup on what the identity provider asserted, otherwise create new
+      user = user_for_asserted_identity(login_id: login_id,
+                                        email: email,
+                                        derived_username: email[/(.*)@/, 1],
+                                        source: request.ip) ||
              User.find_or_create_by(login_id: login_id) do |new_user|
                role = Role.aaf_affiliation_to_role_id(attrs[:edupersonscopedaffiliation])
                first_name = (attrs[:givenname] || attrs[:cn]).capitalize
@@ -344,7 +346,11 @@ class AuthenticationApi < Grape::API
         protocol = Rails.env.development? ? 'http' : 'https'
         host = "#{protocol}://#{host}"
       end
-      redirect "#{host}/sign_in?authToken=#{onetime_token.authentication_token}&username=#{user.username}"
+      redirect AuthenticationHelpers.frontend_sign_in_url(
+        host: host,
+        auth_token: onetime_token.authentication_token,
+        username: user.username
+      )
     end
   end
 
@@ -375,7 +381,7 @@ class AuthenticationApi < Grape::API
         logger.info "Login #{params[:username]} from #{request.ip}"
 
         # Respond user details with new auth token
-        present :user, user, with: Entities::UserEntity
+        present :user, user, with: Entities::UserEntity, theme_owner_id: user.id
         present :auth_token, token.authentication_token
         present :auth_token_expiry, token.auth_token_expiry
         set_refresh_cookie_in_response(params[:remember])
@@ -502,7 +508,7 @@ class AuthenticationApi < Grape::API
       end
       # Return user details
       token = current_user.generate_authentication_token!(token_type: :general, force_new: false)
-      present :user, current_user, with: Entities::UserEntity
+      present :user, current_user, with: Entities::UserEntity, theme_owner_id: current_user.id
       present :auth_token, token.authentication_token
       present :auth_token_expiry, token.auth_token_expiry
     else
