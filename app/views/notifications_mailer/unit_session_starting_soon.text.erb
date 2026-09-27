@@ -1,0 +1,18 @@
+<% session = @notification.notifiable -%>
+Hi <%= @user.first_name %>,
+
+<%= @notification.message %>
+<% if session -%>
+
+<% UnitHub::Notifications.session_details(session, at: @notification.created_at).each do |label, value| -%>
+<%= label %>: <%= value %>
+<% end -%>
+<% end -%>
+<% if @notification_url.present? -%>
+
+Open the session: <%= @notification_url %>
+<% end -%>
+
+You are getting this because session reminders are on in your notification settings.
+You can turn them off here:
+<%= @unsubscribe_url %>

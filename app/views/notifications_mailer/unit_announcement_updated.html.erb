@@ -1,0 +1,21 @@
+<% content_for :icon do %>announcement<% end %>
+<% announcement = @notification.notifiable %>
+<% content_for :preheader do %><%= @notification.message.to_s.truncate(90) %><% end %>
+<% content_for :heading do %>Announcement updated<% if announcement %> in <%= announcement.unit.code %><% end %><% end %>
+
+<p style="margin:0 0 16px 0;">Hi <%= @user.first_name %>,</p>
+<% if announcement %>
+  <p style="margin:0 0 16px 0;">Your teaching team changed an announcement on the Unit Hub.</p>
+  <%= render 'notifications_mailer/unit_hub/details', rows: {
+        'Unit' => "#{announcement.unit.code} #{announcement.unit.name}",
+        'Title' => announcement.title,
+        'Summary' => announcement.body.to_s.squish.truncate(280)
+      } %>
+  <p style="margin:0 0 16px 0;">Open the Unit Hub to read the current version.</p>
+<% else %>
+  <%= render 'layouts/notification_mail/details', body: @notification.message %>
+<% end %>
+<% if @notification_url.present? %>
+  <%= render 'layouts/notification_mail/button', url: @notification_url, label: 'Read the announcement' %>
+<% end %>
+<%= render 'notifications_mailer/unit_hub/footer' %>

@@ -1,0 +1,21 @@
+<% content_for :icon do %>session<% end %>
+<% session = @notification.notifiable %>
+<% content_for :preheader do %><%= @notification.message.to_s.truncate(90) %><% end %>
+<% content_for :heading do %>Session starting soon<% if session %> in <%= session.unit.code %><% end %><% end %>
+
+<p style="margin:0 0 16px 0;">Hi <%= @user.first_name %>,</p>
+<% if session %>
+  <p style="margin:0 0 16px 0;">A session you asked to be reminded about starts in about <%= UnitHub::Notifications::REMINDER_LEAD.in_minutes.to_i %> minutes.</p>
+  <%= render 'notifications_mailer/unit_hub/details', rows: UnitHub::Notifications.session_details(session, at: @notification.created_at) %>
+<% else %>
+  <%= render 'layouts/notification_mail/details', body: @notification.message %>
+<% end %>
+<% if @notification_url.present? %>
+  <%= render 'layouts/notification_mail/button', url: @notification_url, label: 'Open the session' %>
+<% end %>
+<% content_for :footer do %>
+  <p style="margin:0;">
+    You are getting this because session reminders are on in your notification settings.
+    You can turn them off in <a href="<%= @unsubscribe_url %>" style="color:#6b7280; text-decoration:underline;">your profile</a>.
+  </p>
+<% end %>

@@ -1,0 +1,7 @@
+<%# rows: an ordered hash of label => value, all plain text and escaped here. %>
+<% body = capture do %>
+  <% rows.each_with_index do |(label, value), index| %>
+    <p style="margin:<%= index.zero? ? '0' : '6px' %> 0 0 0;"><strong><%= label %>:</strong> <%= value %></p>
+  <% end %>
+<% end %>
+<%= render 'layouts/notification_mail/details', body: body %>

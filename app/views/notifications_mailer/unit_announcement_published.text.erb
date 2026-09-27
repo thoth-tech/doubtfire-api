@@ -1,0 +1,20 @@
+<% announcement = @notification.notifiable -%>
+Hi <%= @user.first_name %>,
+
+<%= @notification.message %>
+<% if announcement -%>
+
+Unit: <%= announcement.unit.code %> <%= announcement.unit.name %>
+Title: <%= announcement.title %>
+Summary: <%= announcement.body.to_s.squish.truncate(280) %>
+
+Open the Unit Hub to read all of it.
+<% end -%>
+<% if @notification_url.present? -%>
+
+Read the announcement: <%= @notification_url %>
+<% end -%>
+
+You are getting this because Unit Hub updates are on in your notification settings.
+You can change them here:
+<%= @unsubscribe_url %>

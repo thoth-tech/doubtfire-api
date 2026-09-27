@@ -1,0 +1,22 @@
+<% session = @notification.notifiable -%>
+Hi <%= @user.first_name %>,
+
+<%= @notification.message %>
+<% if session&.cancelled -%>
+
+This session will not run.<% if session.join_url.present? %> Its join link has been taken off the Unit Hub.<% end %>
+<% end -%>
+<% if session -%>
+
+<% UnitHub::Notifications.session_details(session, at: session.cancelled ? @notification.created_at : Time.current).each do |label, value| -%>
+<%= label %>: <%= value %>
+<% end -%>
+<% end -%>
+<% if @notification_url.present? -%>
+
+Open the session: <%= @notification_url %>
+<% end -%>
+
+You are getting this because Unit Hub updates are on in your notification settings.
+You can change them here:
+<%= @unsubscribe_url %>
