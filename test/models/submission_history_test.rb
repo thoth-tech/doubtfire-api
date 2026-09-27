@@ -1,6 +1,7 @@
 require 'test_helper'
 require 'tmpdir'
 require 'zip'
+require 'spreadsheet'
 
 class SubmissionHistoryTest < ActiveSupport::TestCase
   def test_creates_archive_with_only_selected_upload_requirements
@@ -34,6 +35,63 @@ class SubmissionHistoryTest < ActiveSupport::TestCase
         Zip::File.open_buffer(StringIO.new(history.submission_zip_data)) do |download|
           assert download.find_entry("#{task.id}/000-code.rb")
           assert_nil download.find_entry("#{task.id}/001-document.pdf")
+        end
+      end
+    end
+  end
+
+  def test_retains_spreadsheet_originals_alongside_existing_selected_types
+    unit = FactoryBot.create(:unit, task_count: 1, student_count: 1)
+    task = unit.active_projects.first.task_for_task_definition(unit.task_definitions.first)
+    kinds = %w[csv csv csv code document image zip archive csv]
+    task.task_definition.update!(
+      assessment_enabled: false,
+      upload_requirements: kinds.each_with_index.map do |kind, index|
+        { 'key' => "file#{index}", 'name' => "Evidence #{index}", 'type' => kind, 'submission_history' => index != 8 }
+      end
+    )
+
+    legacy_workbook = Spreadsheet::Workbook.new
+    legacy_workbook.create_worksheet(name: 'Results').row(0).push('Name', 7)
+    legacy_bytes = StringIO.new(''.b)
+    legacy_workbook.write(legacy_bytes)
+    originals = {
+      '000-csv.csv' => "Name,Value\r\nCafé,7\r\n".b,
+      '001-csv.xlsx' => File.binread(Rails.root.join('test_files/csv_test_files/COS10001-Tasks.xlsx')),
+      '002-csv.xls' => legacy_bytes.string,
+      '003-code.rb' => 'puts "retained"',
+      '004-document.pdf' => '%PDF-original',
+      '005-image.png' => "\x89PNG\r\n".b,
+      '006-zip.zip' => 'original zip bytes',
+      '007-archive.zip' => 'original archive bytes'
+    }
+
+    Dir.mktmpdir do |dir|
+      source_path = File.join(dir, 'done.zip')
+      Zip::File.open(source_path, create: true) do |archive|
+        originals.merge('008-csv.csv' => 'not selected', 'metadata.json' => '{}').each do |name, bytes|
+          archive.get_output_stream("#{task.id}/#{name}") { |output| output.write(bytes) }
+        end
+      end
+      with_file_helper_methods(
+        zip_file_path_for_done_task: source_path,
+        task_submission_identifier_path: File.join(dir, 'history')
+      ) do
+        history = SubmissionHistory.create_archive!(task, '54321')
+        assert history.has_submission_files?
+        Zip::File.open(history.archive_file_name) do |archive|
+          assert_equal originals.length, archive.entries.length
+          originals.each do |name, bytes|
+            assert_equal bytes, archive.read("54321/#{task.id}/#{name}").b
+          end
+        end
+        Zip::File.open_buffer(StringIO.new(history.submission_zip_data)) do |download|
+          assert_equal originals.length, download.entries.length
+          originals.each do |name, bytes|
+            assert_equal bytes, download.read("#{task.id}/#{name}").b
+          end
+          assert_nil download.find_entry("#{task.id}/008-csv.csv")
+          assert_nil download.find_entry("#{task.id}/metadata.json")
         end
       end
     end

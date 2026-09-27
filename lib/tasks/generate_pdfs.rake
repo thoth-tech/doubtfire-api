@@ -9,7 +9,7 @@ namespace :submission do
   end
 
   def is_process_running?(pid)
-    rreturn false if pid == 0
+    return false if pid == 0
 
     Process.getpgid(pid)
     true

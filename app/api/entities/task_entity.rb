@@ -18,6 +18,11 @@ module Entities
       expose :target_start_date, expose_nil: false
     end
 
+    expose :effective_deadline
+    expose :effective_deadline_reason
+    expose :effective_deadline_source_id
+    expose :effective_deadline_date, format_with: :date_only, expose_nil: false
+
     expose :extensions
     expose :scorm_extensions
 
@@ -32,6 +37,7 @@ module Entities
     expose :similarity_flag, unless: :update_only
 
     expose :num_new_comments, unless: :update_only
+    expose :has_feedback, unless: :update_only
 
     # Attributes only included in "update only"
 

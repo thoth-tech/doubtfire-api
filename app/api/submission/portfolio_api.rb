@@ -13,8 +13,8 @@ module Submission
 
     desc "Upload documents for inclusion in a project's portfolio"
     params do
-      requires :name,  type: String,                        desc: 'Name of the part being uploaded'
-      requires :kind,  type: String,                        desc: 'The kind of file being uploaded: document, code, or image'
+      requires :name, type: String, desc: 'Name of the part being uploaded'
+      requires :kind,  type: String, values: %w[document code image], desc: 'The kind of file being uploaded: document, code, or image'
       requires :file0, type: File, desc: 'file 0.'
     end
     post '/submission/project/:id/portfolio' do
@@ -34,6 +34,14 @@ module Submission
         error!({ error: "'#{file[:filename]}': #{file_result[:msg]}" }, 403)
       end
 
+      max_file_size = Doubtfire::Application.config.max_file_size.to_i
+      max_file_size = 10_000_000 if max_file_size <= 0
+      size_in_mb = max_file_size / 1_000_000
+
+      if File.size(file[:tempfile].path) > max_file_size
+        error!({ error: "'#{file[:filename]}' exceeds the #{size_in_mb}MB file limit." }, 413)
+      end
+
       # Move file into place
       result = project.move_to_portfolio(file, name, kind) # returns details of file
 
@@ -43,7 +51,7 @@ module Submission
     desc 'Remove a file from the portfolio files for a unit'
     params do
       optional :idx,   type: Integer, desc: 'The index of the file'
-      optional :kind,  type: String, desc: 'The kind of file being removed: document, code, or image'
+      optional :kind,  type: String, values: %w[document code image], desc: 'The kind of file being removed: document, code, or image'
       optional :name,  type: String, desc: 'Name of file to remove'
     end
     delete '/submission/project/:id/portfolio' do
