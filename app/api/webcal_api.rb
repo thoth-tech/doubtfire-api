@@ -33,6 +33,7 @@ class WebcalApi < Grape::API
     requires :webcal, type: Hash do
       optional :enabled,             type: Boolean,                                 desc: 'Is the webcal enabled?'
       optional :should_change_guid,  type: Boolean,                                 desc: 'Should the GUID of the webcal be changed?'
+      optional :include_learning_sessions, type: Boolean, desc: 'Include HelpHub and class times and their join links (opt in)'
       optional :include_start_dates, type: Boolean,                                 desc: 'Should events for start dates be included?'
       optional :unit_exclusions,     type: Array[Integer],                          desc: 'IDs of units that must be excluded from the webcal'
 
@@ -89,6 +90,7 @@ class WebcalApi < Grape::API
     # Set any other properties that have to be updated verbatim.
     webcal_update_params.merge! ActionController::Parameters.new(webcal_params).permit(
       :include_start_dates,
+      :include_learning_sessions,
       :reminder_time,
       :reminder_unit
     )
